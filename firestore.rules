@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- 1. GLOBAL DENY-BY-DEFAULT CATCH-ALL ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- 2. STANDARD SECURED FUNCTIONS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && (request.auth.uid == userId || request.auth.token.email == userId);
+    }
+    
+    function isEmailAdmin() {
+      return isSignedIn() && (request.auth.token.email == "wafulak435@gmail.com" || request.auth.token.email == "wafula435@gmail.com");
+    }
+
+    function isAdmin() {
+      return isEmailAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- 3. MATCH ENTITIES COLLECTIONS ---
+
+    // Users Profiles database
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (
+        (isOwner(userId) && incoming().role != "admin") || isEmailAdmin()
+      );
+      allow update: if isSignedIn() && (
+        (isOwner(userId) && incoming().role == existing().role) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Digital Books collection
+    match /books/{bookId} {
+      allow read: if resource == null || resource.data.status == "active" || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // eBook reviews - public reading, creator writing
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().rating >= 1 && incoming().rating <= 5;
+      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+    }
+
+    // eBook thread comments
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isOwner(incoming().userId);
+      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+    }
+
+    // Community Chat Forum Messages
+    match /communityMessages/{messageId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().text.size() > 0;
+      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+    }
+
+    // Saved Document Studio PDF/DOC extracts
+    match /savedDocuments/{docId} {
+      allow read: if isSignedIn() && isOwner(resource.data.userId);
+      allow create: if isSignedIn() && isOwner(incoming().userId);
+      allow update: if isSignedIn() && isOwner(existing().userId) && isOwner(incoming().userId);
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+
+    // Members File Upload Request moderations queue
+    match /uploadRequests/{requestId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update: if isSignedIn() && (
+        isAdmin() || (isOwner(existing().userId) && incoming().status == "pending_delete")
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Book page annotations and highlights
+    match /annotations/{annotationId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId);
+      allow update: if isSignedIn() && isOwner(existing().userId) && isOwner(incoming().userId);
+      allow delete: if isSignedIn() && isOwner(existing().userId) || isAdmin();
+    }
+  }
+}

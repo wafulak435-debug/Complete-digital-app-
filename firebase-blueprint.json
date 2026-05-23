@@ -1,0 +1,173 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with reading streaks and daily goals",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "User email address" },
+        "name": { "type": "string", "description": "User full name" },
+        "role": { "type": "string", "enum": ["admin", "member"], "description": "The user access level" },
+        "avatarUrl": { "type": "string", "description": "Optional image avatar reference URL" },
+        "readingStreak": { "type": "integer", "description": "Continuous streak of active reading" },
+        "dailyGoalMinutes": { "type": "integer", "description": "User personal reading minutes objective target" }
+      },
+      "required": ["email", "name", "role", "readingStreak", "dailyGoalMinutes"]
+    },
+    "Book": {
+      "title": "Book",
+      "description": "Digital books stored in active catalog library",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the book" },
+        "title": { "type": "string", "description": "Main title of digital handbook" },
+        "author": { "type": "string", "description": "Book main writer or publisher" },
+        "price": { "type": "number", "description": "Sale pricing for eBook format in KES currency" },
+        "category": { "type": "string", "description": "Taxonomy category of the book" },
+        "description": { "type": "string", "description": "Synopsis and outline details" },
+        "coverImage": { "type": "string", "description": "Public cover graphic illustration Unsplash URL" },
+        "fileSize": { "type": "string", "description": "Size of PDF content payload" },
+        "pages": { "type": "integer", "description": "Page count" },
+        "publishedDate": { "type": "string", "description": "Launch publishing day tag" },
+        "isFeatured": { "type": "boolean", "description": "True if featured on homepage panels" },
+        "status": { "type": "string", "enum": ["active", "draft"], "description": "Inventory status" },
+        "rating": { "type": "number", "description": "Average review grade scored dynamically" },
+        "reviewsCount": { "type": "integer", "description": "Total user responses tally count" }
+      },
+      "required": ["id", "title", "author", "price", "category", "description", "coverImage", "fileSize", "pages", "publishedDate", "isFeatured", "status", "rating", "reviewsCount"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "E-Book critique comments and scores from users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Review unique node ID" },
+        "productId": { "type": "string", "description": "Book document ID" },
+        "userId": { "type": "string", "description": "Creator user UID index" },
+        "userName": { "type": "string", "description": "Creator display name tag" },
+        "rating": { "type": "integer", "description": "Star score ranking between 1 and 5" },
+        "text": { "type": "string", "description": "Written response text content body" },
+        "date": { "type": "string", "description": "Submission ISO date marker" }
+      },
+      "required": ["id", "productId", "userId", "userName", "rating", "text", "date"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Threaded discussions on digital book resources",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Comment leaf ID" },
+        "targetId": { "type": "string", "description": "Reference catalog item ID" },
+        "userId": { "type": "string", "description": "Authenticated writer ID" },
+        "userName": { "type": "string", "description": "Authenticated writer name" },
+        "text": { "type": "string", "description": "Body message wording text" },
+        "date": { "type": "string", "description": "Creation date" },
+        "parentId": { "type": "string", "description": "Optional parent node identifier for nesting" }
+      },
+      "required": ["id", "targetId", "userId", "userName", "text", "date"]
+    },
+    "CommunityMessage": {
+      "title": "CommunityMessage",
+      "description": "Discussions and group lessons in Bungoma Community",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique chat node identifier" },
+        "channel": { "type": "string", "enum": ["#General", "#Book Talks", "#Leadership", "#Publishing"], "description": "Group channel name" },
+        "userId": { "type": "string", "description": "Sender user ID" },
+        "userName": { "type": "string", "description": "Sender display name" },
+        "userAvatar": { "type": "string", "description": "Optional profile photo endpoint" },
+        "isAdmin": { "type": "boolean", "description": "Privilege sign of the sender" },
+        "text": { "type": "string", "description": "Chat message wording" },
+        "date": { "type": "string", "description": "Calendar day note" },
+        "time": { "type": "string", "description": "Clock time stamp" },
+        "parentId": { "type": "string", "description": "Optional nesting root" }
+      },
+      "required": ["id", "channel", "userId", "userName", "text", "date", "time"]
+    },
+    "SavedDocument": {
+      "title": "SavedDocument",
+      "description": "Personal document extracts generated on Document Studio",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique keying token" },
+        "userId": { "type": "string", "description": "Owner identifier index" },
+        "title": { "type": "string", "description": "Personal label" },
+        "content": { "type": "string", "description": "Main document text content" },
+        "type": { "type": "string", "enum": ["pdf", "doc", "video", "photo"], "description": "Category file type classification" },
+        "folder": { "type": "string", "description": "Directory folder placement name" },
+        "date": { "type": "string", "description": "Creation day tag" },
+        "fileSize": { "type": "string", "description": "Size designation string format" },
+        "downloadUrl": { "type": "string", "description": "Endpoint URL" }
+      },
+      "required": ["id", "userId", "title", "content", "type", "folder", "date", "fileSize"]
+    },
+    "MemberUploadRequest": {
+      "title": "MemberUploadRequest",
+      "description": "Files uploaded by users requiring approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Upload transaction key" },
+        "userId": { "type": "string", "description": "Member owner UID" },
+        "userName": { "type": "string", "description": "Member display moniker" },
+        "title": { "type": "string", "description": "Upload document label title" },
+        "type": { "type": "string", "enum": ["pdf", "video", "photo"], "description": "File format category" },
+        "fileSize": { "type": "string", "description": "Standard storage size scale" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "pending_delete"], "description": "Approval progression status" },
+        "allowedToPublic": { "type": "boolean", "description": "Toggles public library visibility" },
+        "date": { "type": "string", "description": "Action timestamp record" },
+        "contentUrl": { "type": "string", "description": "Secured content download link" }
+      },
+      "required": ["id", "userId", "userName", "title", "type", "fileSize", "status", "allowedToPublic", "date"]
+    },
+    "Annotation": {
+      "title": "Annotation",
+      "description": "User highlights and notes for digital books",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique key token" },
+        "userId": { "type": "string", "description": "Creator user identifier" },
+        "bookId": { "type": "string", "description": "Book ID reference" },
+        "page": { "type": "integer", "description": "Page number reference" },
+        "text": { "type": "string", "description": "Highlighted text content" },
+        "comment": { "type": "string", "description": "Optional comment annotation text" },
+        "color": { "type": "string", "description": "Highlight color code" },
+        "date": { "type": "string", "description": "Timestamp ISO representation" }
+      },
+      "required": ["id", "userId", "bookId", "page", "text", "date"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles database"
+    },
+    "/books/{bookId}": {
+      "schema": "Book",
+      "description": "Digital eBooks database"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Dynamic eBook critical reviews"
+    },
+    "/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Contextual eBook comments tree"
+    },
+    "/communityMessages/{messageId}": {
+      "schema": "CommunityMessage",
+      "description": "Universal discussion channels"
+    },
+    "/savedDocuments/{docId}": {
+      "schema": "SavedDocument",
+      "description": "Document Studio generator documents Vault"
+    },
+    "/uploadRequests/{requestId}": {
+      "schema": "MemberUploadRequest",
+      "description": "Member uploaded content and reviews backlog queue"
+    },
+    "/annotations/{annotationId}": {
+      "schema": "Annotation",
+      "description": "User highlights and annotations"
+    }
+  }
+}
