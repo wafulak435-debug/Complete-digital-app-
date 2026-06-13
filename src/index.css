@@ -29,29 +29,144 @@
   
   --color-blue-600: #3B82F6;
   --color-blue-700: #2563EB;
+  
+  /* Class-based dark mode configuration for Tailwind CSS v4 */
+  --variant-dark: class;
 }
 
 :root {
-  --bg-app: #F1F5F9;
-  --bg-card: #FFFFFF;
-  --text-primary: #1E293B;
-  --text-muted: #64748B;
-  --border-primary: #E2E8F0;
+  --bg-app: #f0f4f8; /* Soft bluish off-white canvas */
+  --bg-card: #ffffff; /* Elegant card backdrop */
+  --text-primary: #0f172a; /* Deep elegant slate navy */
+  --text-muted: #475569; /* Balanced slate gray */
+  --border-primary: #cbd5e1; /* Clear slate gray lines */
 }
 
 .dark {
-  --bg-app: #0B0F19;
-  --bg-card: #151F32;
-  --text-primary: #F1F5F9;
-  --text-muted: #94A3B8;
-  --border-primary: #1E293B;
+  --bg-app: #0f172a; /* Rich dark slate blue */
+  --bg-card: #17223b; /* Elegant slightly deep slate card base */
+  --text-primary: #f8fafc; /* Crisp readable bright element text */
+  --text-muted: #94a3b8; /* Gentle contrast muted slate text */
+  --border-primary: #2d3a4f; /* Subdued borders */
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--font-current, "Inter", ui-sans-serif, system-ui, sans-serif);
   background-color: var(--bg-app);
   color: var(--text-primary);
   transition: background-color 0.2s ease, color 0.2s ease;
+  font-weight: 700 !important;
+}
+
+/* Custom color overrides to resolve non-standard Tailwind class issues and pale rendering */
+.text-stone-850 { color: #1c1917 !important; }
+.dark .text-stone-850:not(.light-only *) { color: #f5f5f4 !important; }
+
+.text-stone-450 { color: #6b6661 !important; }
+.dark .text-stone-450:not(.light-only *) { color: #cbd5e1 !important; }
+
+.text-stone-250 { color: #d6d3d1 !important; }
+.dark .text-stone-250:not(.light-only *) { color: #57534e !important; }
+
+.text-stone-650 { color: #57534e !important; }
+.dark .text-stone-650:not(.light-only *) { color: #cbd5e1 !important; }
+
+.text-slate-850 { color: #1e293b !important; }
+.dark .text-slate-850:not(.light-only *) { color: #f1f5f9 !important; }
+
+.text-slate-650 { color: #334155 !important; }
+.dark .text-slate-650:not(.light-only *) { color: #e2e8f0 !important; }
+
+.text-neutral-850 { color: #171717 !important; }
+.dark .text-neutral-850:not(.light-only *) { color: #fafafa !important; }
+
+.text-slate-500 { color: #475569 !important; }
+.dark .text-slate-500:not(.light-only *) { color: #cbd5e1 !important; }
+
+/* Real-time automated contrast protection overrides for seamless dark mode readability */
+.dark .text-stone-900:not(.light-only *), 
+.dark .text-neutral-900:not(.light-only *), 
+.dark .text-slate-900:not(.light-only *),
+.dark h1:not(.light-only *),
+.dark h2:not(.light-only *),
+.dark h3:not(.light-only *),
+.dark h4:not(.light-only *) {
+  color: #f8fafc !important; /* Force high contrast light slate */
+}
+
+.dark .text-stone-800:not(.light-only *), 
+.dark .text-neutral-800:not(.light-only *), 
+.dark .text-slate-800:not(.light-only *) {
+  color: #f1f5f9 !important; /* Force light gray */
+}
+
+.dark .text-stone-700:not(.light-only *), 
+.dark .text-neutral-700:not(.light-only *), 
+.dark .text-slate-705:not(.light-only *), 
+.dark .text-slate-700:not(.light-only *) {
+  color: #e2e8f0 !important;
+}
+
+.dark .text-stone-600:not(.light-only *), 
+.dark .text-neutral-600:not(.light-only *), 
+.dark .text-slate-600:not(.light-only *) {
+  color: #cbd5e1 !important; /* Force readable muted gray */
+}
+
+.dark .text-stone-500:not(.light-only *), 
+.dark .text-neutral-500:not(.light-only *), 
+.dark .text-slate-500:not(.light-only *) {
+  color: #cbd5e1 !important;
+}
+
+/* Base borders & background protection */
+.dark .bg-white:not(.light-only *),
+.dark .bg-stone-50:not(.light-only *),
+.dark .bg-neutral-50:not(.light-only *) {
+  background-color: var(--bg-card) !important;
+}
+
+.dark .border-stone-100:not(.light-only *),
+.dark .border-stone-150:not(.light-only *),
+.dark .border-stone-200:not(.light-only *),
+.dark .border-slate-200:not(.light-only *),
+.dark .border-neutral-200:not(.light-only *) {
+  border-color: var(--border-primary) !important;
+}
+
+/* Force input and selection text to be high contrast, visible, and bold */
+input, select, textarea {
+  color: #0f172a !important;
+  font-weight: 800 !important;
+}
+.dark input:not(.light-only *), .dark select:not(.light-only *), .dark textarea:not(.light-only *) {
+  color: #f8fafc !important;
+  font-weight: 800 !important;
+}
+
+/* Boldness Enforcer for all visual components */
+body, input, textarea, select, button, span, p, h1, h2, h3, h4, h5, h6, a, li, label, div, option {
+  font-weight: 700 !important;
+}
+
+.font-medium, .font-semibold, .font-bold {
+  font-weight: 700 !important;
+}
+
+.font-display, h1, h2, h3, .font-black, .font-extrabold {
+  font-weight: 800 !important;
+}
+
+/* Placeholder contrast styling */
+::placeholder {
+  color: #4b5563 !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
+}
+.dark ::placeholder:not(.light-only *) {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+  font-weight: 700 !important;
 }
 
 /* Glass panel blur background styling */
@@ -100,3 +215,94 @@ body {
   right: 2rem;
   z-index: 50;
 }
+
+/* Precise Bible verse text legibility enhancement rule */
+#bible_reader_panel p, .bible-component p {
+  font-weight: 900 !important;
+}
+
+/* Focus Mode: Interactive selector for bookstore item cards */
+.bookstore-item-card {
+  position: relative;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-style: preserve-3d;
+  will-change: transform, box-shadow;
+  backface-visibility: hidden;
+}
+
+.bookstore-item-card img {
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.bookstore-item-card:hover {
+  transform: perspective(1000px) translateY(-10px) scale(1.04) rotateX(6deg);
+  border-color: #f59e0b !important;
+  box-shadow: 
+    0 10px 20px -5px rgba(0, 0, 0, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.18),
+    0 40px 80px -15px rgba(0, 0, 0, 0.25);
+}
+
+.bookstore-item-card:hover img {
+  transform: scale(1.08) !important;
+}
+
+/* Dynamic SVG-based custom tooltips for Bookstore items - only active on non-touch desktop layouts */
+@media (hover: hover) and (min-width: 1024px) {
+  .bookstore-item-card[data-tooltip-price]::after {
+    content: " Price: " attr(data-tooltip-price) " \a  Rating: " attr(data-tooltip-rating) " \a  Size: " attr(data-tooltip-size) " ";
+    white-space: pre-wrap;
+    position: absolute;
+    top: -85px;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px) scale(0.95);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2050/svg' width='100%' height='100%' viewBox='0 0 160 80' preserveAspectRatio='none'><rect x='0' y='0' width='160' height='68' rx='8' fill='%231c1917'/><polygon points='75,68 85,68 80,76' fill='%231c1917'/></svg>");
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    color: #fef08a; /* Soft amber/yellow text */
+    padding: 12px 14px 22px 14px;
+    font-family: monospace;
+    font-size: 9.5px;
+    line-height: 1.5;
+    text-align: left;
+    font-weight: bold !important;
+    pointer-events: none;
+    opacity: 0;
+    width: 160px;
+    height: 80px;
+    z-index: 99;
+    transition: opacity 0.25s ease-in-out, transform 0.25s ease-in-out;
+  }
+
+  .bookstore-item-card[data-tooltip-price]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+/* Highly visible premium styled scrollbars for horizontal slider containers */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(206, 17, 38, 0.4) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 9999px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgba(206, 17, 38, 0.35);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(206, 17, 38, 0.6);
+}
+

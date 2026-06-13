@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Play, Plus, RefreshCw, Eye, Save } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Play, Plus, RefreshCw, Eye, Save, Smile, Layers, Film, FileText, BookOpen } from "lucide-react";
 import { User, SavedDocument } from "../types";
+import { VeoVideoEngine, PetAdventureEngine, VectorArtMaker } from "./AICreativeWidgets";
 
 interface AIMediaProps {
   currentUser: User | null;
   onAddNewDocument?: (doc: SavedDocument) => void;
+  books?: any[];
+  savedDocuments?: any[];
 }
 
-export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps) {
-  const [activeTab, setActiveTab] = useState<"image" | "video">("image");
+export default function AIMedia({ currentUser, onAddNewDocument, books = [], savedDocuments = [] }: AIMediaProps) {
+  const [activeTab, setActiveTab] = useState<"image" | "video" | "veo-video" | "pet-adventure" | "vector-art">("image");
 
   // Image states
   const [imagePrompt, setImagePrompt] = useState("");
@@ -32,6 +35,11 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
   const [generatedVideosHistory, setGeneratedVideosHistory] = useState<
     { prompt: string; url: string; date: string }[]
   >([]);
+
+  // Source Material state variables
+  const [selectedMaterialType, setSelectedMaterialType] = useState<"none" | "book" | "document">("none");
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string>("");
+  const [selectedMaterialTitle, setSelectedMaterialTitle] = useState<string>("");
 
   const visualProgressMessages = [
     "Spinning quantum seeds...",
@@ -100,7 +108,10 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
         body: JSON.stringify({
           prompt: videoPrompt,
           aspectRatio: videoAspect,
-          resolution: videoRes
+          resolution: videoRes,
+          materialType: selectedMaterialType,
+          materialId: selectedMaterialId,
+          materialTitle: selectedMaterialTitle
         })
       });
 
@@ -194,28 +205,33 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
   };
 
   return (
-    <div id="ai_creative_media_hub" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-8 select-none text-left">
+    <div id="ai_creative_media_hub" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 space-y-8 select-none text-left">
       {/* Decorative Header */}
       <div className="rounded-2xl bg-gradient-to-r from-violet-900 via-indigo-950 to-slate-950 text-white p-6 sm:p-8 text-left shadow-2xl relative overflow-hidden">
         <div className="absolute right-0 top-0 h-40 w-40 transform translate-x-12 -translate-y-12 opacity-15 rounded-full border-[20px] border-indigo-500 animate-pulse" />
         <div className="relative z-10 space-y-3">
-          <span className="bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
-            ADVANCED AI 3.5 ENGINE
-          </span>
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+              ADVANCED AI 3.5 ENGINE
+            </span>
+            <span className="bg-emerald-500/30 text-emerald-250 border border-emerald-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse flex items-center gap-1">
+              <span>●</span> 100% FREE & UNLIMITED TIERS ACTIVE
+            </span>
+          </div>
           <h2 className="text-2xl sm:text-3xl font-black tracking-tight font-display">
             Creative AI Studio
           </h2>
           <p className="text-xs text-indigo-200/80 max-w-2xl leading-relaxed">
-            Generate unlimited custom graphic cover pages, illustrations, vectors, and realistic video outlines using our high-speed neural models. Keep study and marketing materials visually breathtaking.
+            Generate unlimited custom graphic cover pages, illustrations, vectors, and realistic video outlines using our high-speed neural models. All photo and video creation models are completely free with zero limits, parameters, blockages, or payment structures within your current studio or school networks.
           </p>
         </div>
       </div>
 
       {/* Tabs list */}
-      <div className="flex border-b border-stone-200 space-x-6">
+      <div className="flex border-b border-stone-200 space-x-6 overflow-x-auto pr-2 scrollbar-thin">
         <button
           onClick={() => setActiveTab("image")}
-          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 ${
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
             activeTab === "image"
               ? "text-indigo-600 border-indigo-600"
               : "text-stone-450 border-transparent hover:text-stone-800"
@@ -226,17 +242,55 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
         </button>
         <button
           onClick={() => setActiveTab("video")}
-          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 ${
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
             activeTab === "video"
               ? "text-indigo-600 border-indigo-600"
               : "text-stone-450 border-transparent hover:text-stone-800"
           }`}
         >
           <VideoIcon className="h-4.5 w-4.5" />
-          <span>Unlimited Video Animator (Veo 3.5)</span>
+          <span>Unlimited Video (Veo 3.5)</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("veo-video")}
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
+            activeTab === "veo-video"
+              ? "text-indigo-600 border-indigo-600"
+              : "text-stone-450 border-transparent hover:text-stone-800"
+          }`}
+        >
+          <Film className="h-4.5 w-4.5" />
+          <span>Veo 3.1 Text-to-Video Engine</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("pet-adventure")}
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
+            activeTab === "pet-adventure"
+              ? "text-indigo-600 border-indigo-600"
+              : "text-stone-450 border-transparent hover:text-stone-800"
+          }`}
+        >
+          <Smile className="h-4.5 w-4.5" />
+          <span>Pet Global Adventure</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("vector-art")}
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
+            activeTab === "vector-art"
+              ? "text-indigo-600 border-indigo-600"
+              : "text-stone-450 border-transparent hover:text-stone-800"
+          }`}
+        >
+          <Layers className="h-4.5 w-4.5" />
+          <span>SVG Vector Art Maker</span>
         </button>
       </div>
 
+      {activeTab === "veo-video" && <div className="mt-6"><VeoVideoEngine /></div>}
+      {activeTab === "pet-adventure" && <div className="mt-6"><PetAdventureEngine /></div>}
+      {activeTab === "vector-art" && <div className="mt-6"><VectorArtMaker /></div>}
+
+      {(activeTab === "image" || activeTab === "video") && (
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Left Control Panel Form */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-stone-200 p-6 shadow-sm h-fit space-y-5">
@@ -315,6 +369,136 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
                 <VideoIcon className="h-4 w-4 text-indigo-505 text-indigo-600" />
                 <span>Configure Veo 3.5 Timeline</span>
               </h3>
+
+              {/* Source Material (Book or Document Selection) */}
+              <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 space-y-2.5">
+                <div className="flex justify-between items-center">
+                  <label className="block text-[10px] font-extrabold uppercase tracking-wide text-stone-650">
+                    Source Material (Book / Document)
+                  </label>
+                  {selectedMaterialType !== "none" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMaterialType("none");
+                        setSelectedMaterialId("");
+                        setSelectedMaterialTitle("");
+                        setVideoPrompt("");
+                      }}
+                      className="text-[9px] text-red-650 hover:underline font-mono uppercase font-black cursor-pointer bg-transparent border-0"
+                    >
+                      Clear Selection
+                    </button>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMaterialType(selectedMaterialType === "book" ? "none" : "book");
+                      setSelectedMaterialId("");
+                      setSelectedMaterialTitle("");
+                    }}
+                    className={`flex items-center gap-1.5 p-2 rounded-xl border text-[10.5px] font-extrabold justify-center transition cursor-pointer select-none ${
+                      selectedMaterialType === "book"
+                        ? "bg-violet-50 text-violet-800 border-violet-300"
+                        : "bg-white text-stone-600 border-stone-150 hover:bg-stone-100"
+                    }`}
+                  >
+                    <BookOpen className="h-3.5 w-3.5 text-violet-600" />
+                    <span>Choose Book</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMaterialType(selectedMaterialType === "document" ? "none" : "document");
+                      setSelectedMaterialId("");
+                      setSelectedMaterialTitle("");
+                    }}
+                    className={`flex items-center gap-1.5 p-2 rounded-xl border text-[10.5px] font-extrabold justify-center transition cursor-pointer select-none ${
+                      selectedMaterialType === "document"
+                        ? "bg-amber-50 text-amber-800 border-amber-300"
+                        : "bg-white text-stone-600 border-stone-150 hover:bg-stone-100"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5 text-amber-600" />
+                    <span>Choose Doc</span>
+                  </button>
+                </div>
+
+                {/* Sublist based on selection type */}
+                {selectedMaterialType === "book" && books.length > 0 && (
+                  <div className="space-y-1 mt-1 animate-fade-in">
+                    <label className="block text-[9px] font-mono text-stone-450 font-bold uppercase">
+                      Select Target Published Book
+                    </label>
+                    <select
+                      value={selectedMaterialId}
+                      onChange={(e) => {
+                        const bId = e.target.value;
+                        setSelectedMaterialId(bId);
+                        const found = books.find(b => b.id === bId);
+                        if (found) {
+                          const title = found.title;
+                          setSelectedMaterialTitle(title);
+                          setVideoPrompt(`Educational clean clip summary of the scholarly book titled "${title}". Highlight the core academic principles, chapter summaries, and informational milestones with clean motion graphics, textbook layouts, and a professional narrative vibe.`);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-stone-250 bg-white p-2 outline-none font-semibold text-xs text-stone-850"
+                    >
+                      <option value="">-- Choose a local/published book --</option>
+                      {books.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          📖 {b.title} (by {b.author || "Unknown"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {selectedMaterialType === "book" && books.length === 0 && (
+                  <div className="mt-1 text-[9.5px] text-stone-500 bg-white border border-stone-100 p-2 rounded-lg text-center font-medium">
+                    No books loaded inside local catalogue. Go to the Studio section or Store to acquire books!
+                  </div>
+                )}
+
+                {selectedMaterialType === "document" && savedDocuments.length > 0 && (
+                  <div className="space-y-1 mt-1 animate-fade-in">
+                    <label className="block text-[9px] font-mono text-stone-450 font-bold uppercase">
+                      Select Target Document Material
+                    </label>
+                    <select
+                      value={selectedMaterialId}
+                      onChange={(e) => {
+                        const dId = e.target.value;
+                        setSelectedMaterialId(dId);
+                        const found = savedDocuments.find(d => d.id === dId || String(d.id) === String(dId));
+                        if (found) {
+                          const title = found.title;
+                          setSelectedMaterialTitle(title);
+                          setVideoPrompt(`Educational infographic cinematic summary based on the document "${title}". Bring key facts, reference annotations, and educational charts to life on a neat, high-contrast scholastic outline.`);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-stone-250 bg-white p-2 outline-none font-semibold text-xs text-stone-850"
+                    >
+                      <option value="">-- Choose a saved document --</option>
+                      {savedDocuments.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          📄 {d.title} ({d.category || "General"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {selectedMaterialType === "document" && savedDocuments.length === 0 && (
+                  <div className="mt-1 text-[9.5px] text-stone-500 bg-white border border-stone-100 p-2 rounded-lg text-center font-medium">
+                    No saved documents in your vault cache. Upload files or prepare research notes in the workspace!
+                  </div>
+                )}
+              </div>
 
               <div className="space-y-1">
                 <label className="block text-[10px] font-bold uppercase tracking-wide text-stone-550">
@@ -548,6 +732,7 @@ export default function AIMedia({ currentUser, onAddNewDocument }: AIMediaProps)
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

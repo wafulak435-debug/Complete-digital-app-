@@ -184,7 +184,7 @@ The story of their victory was not written in boardrooms, but in the sweat of ac
               Recreation Site
             </h2>
             <p className="text-xs text-rose-100 max-w-xl leading-relaxed">
-              Engage your mind with sweet long or short AI-generated story novels, or watch selected world-class educational and sports videos across swimming, football, engineering, and reading.
+              Engage your mind with sweet long or short classic story novels, or watch selected world-class educational and sports videos across swimming, football, engineering, and reading.
             </p>
           </div>
 

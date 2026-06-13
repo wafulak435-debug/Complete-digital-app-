@@ -134,9 +134,71 @@
         "date": { "type": "string", "description": "Timestamp ISO representation" }
       },
       "required": ["id", "userId", "bookId", "page", "text", "date"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global application environment preferences",
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string", "description": "Hex color string for --color-accent decoration" },
+        "fontSizeMultiplier": { "type": "number", "description": "Font scaling multiplier factor between 0.8 and 1.5" },
+        "customLogoUrl": { "type": "string", "description": "Custom global enterprise brand launcher logo base64 or Unsplash URL" }
+      },
+      "required": ["primaryColor", "fontSizeMultiplier"]
+    },
+    "BookOrder": {
+      "title": "BookOrder",
+      "description": "Purchased eBook order requiring manual administration payment clearance confirmation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Order reference node token" },
+        "userId": { "type": "string", "description": "Purchasing user's email ID" },
+        "userName": { "type": "string", "description": "Purchasing user's display moniker" },
+        "bookId": { "type": "string", "description": "Target book product lookup ID" },
+        "bookTitle": { "type": "string", "description": "Target book product designation title name" },
+        "price": { "type": "number", "description": "Stipulated cost amount paid in KES currency" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Order progression milestone" },
+        "date": { "type": "string", "description": "Submission ISO date format marker" }
+      },
+      "required": ["id", "userId", "userName", "bookId", "bookTitle", "price", "status", "date"]
+    },
+    "SystemNotification": {
+      "title": "SystemNotification",
+      "description": "Alert notifications broadcasted by administrators to app users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique notification identifier" },
+        "title": { "type": "string", "description": "Short headline statement" },
+        "message": { "type": "string", "description": "Longer detail body of the notification" },
+        "type": { "type": "string", "enum": ["free_book", "wifi_alert", "general"], "description": "Notification category" },
+        "targetBookId": { "type": "string", "description": "Associated eBook ID if relevant" },
+        "date": { "type": "string", "description": "Submissions timestamp record" }
+      },
+      "required": ["id", "title", "message", "type", "date"]
+    },
+    "WifiPurchase": {
+      "title": "WifiPurchase",
+      "description": "WiFi hotspots packages purchased by users via payment gateway",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique transaction ID reference" },
+        "userId": { "type": "string", "description": "Associated member email address" },
+        "userName": { "type": "string", "description": "Member display name" },
+        "planName": { "type": "string", "description": "Package designator" },
+        "price": { "type": "number", "description": "Charge amount paid in KES" },
+        "phoneNumber": { "type": "string", "description": "M-Pesa registered subscriber number used for STK Push" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Transaction clear status" },
+        "expiresAt": { "type": "string", "description": "Calculated pack expire date/time" },
+        "date": { "type": "string", "description": "Purchase transaction day tag" }
+      },
+      "required": ["id", "userId", "userName", "planName", "price", "phoneNumber", "status", "expiresAt", "date"]
     }
   },
   "firestore": {
+    "/appSettings/{settingsId}": {
+      "schema": "AppSettings",
+      "description": "Global settings database"
+    },
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles database"
@@ -168,6 +230,18 @@
     "/annotations/{annotationId}": {
       "schema": "Annotation",
       "description": "User highlights and annotations"
+    },
+    "/bookOrders/{orderId}": {
+      "schema": "BookOrder",
+      "description": "Purchased eBook order verification queues"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "SystemNotification",
+      "description": "Broadcasted notifications for free books and wi-fi alerts"
+    },
+    "/wifiPurchases/{purchaseId}": {
+      "schema": "WifiPurchase",
+      "description": "WiFi network bundle credentials and hotspot receipts"
     }
   }
 }

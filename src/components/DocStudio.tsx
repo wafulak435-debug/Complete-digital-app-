@@ -2,14 +2,15 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   FileText, Image, Mic, PenTool, FolderPlus, Download, Trash, FileVideo, 
   RefreshCw, Sparkles, Plus, Folder, AlertCircle, Mail, CheckCircle2, 
-  Eye, Printer, ZoomIn, ZoomOut, Cloud, CloudOff 
+  Eye, Printer, ZoomIn, ZoomOut, Cloud, CloudOff, Upload 
 } from "lucide-react";
 import { SavedDocument } from "../types";
 import { getAccessToken, googleSignIn, sendGmailMessage } from "../lib/firebase";
 import { saveDocumentToFirestore, deleteSavedDocumentFromFirestore } from "../lib/firestoreUtils";
+import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
 
 interface DocStudioProps {
-  currentUser: { email: string; name: string } | null;
+  currentUser: { email: string; name: string; role?: string } | null;
   onAddNewDocument: (doc: SavedDocument) => void;
   savedDocuments: SavedDocument[];
   onDeleteDocument: (id: string) => void;
@@ -17,12 +18,64 @@ interface DocStudioProps {
 
 export default function DocStudio({ currentUser, onAddNewDocument, savedDocuments, onDeleteDocument }: DocStudioProps) {
   const [editorContent, setEditorContent] = useState("");
-  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media">("ocr");
+  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media" | "curriculum">("ocr");
   const [docTitle, setDocTitle] = useState("My Document");
+  const [autoSaveStatus, setAutoSaveStatus] = useState("Draft saved");
+
+  // Syllabus and Curricular Note Generation states
+  const [curriculumSubject, setCurriculumSubject] = useState("");
+  const [isGeneratingCurriculum, setIsGeneratingCurriculum] = useState(false);
+  const [curriculumError, setCurriculumError] = useState("");
+
+  // Keep track of latest text using refs to avoid stale interval closures
+  const editorContentRef = useRef(editorContent);
+  const docTitleRef = useRef(docTitle);
+
+  useEffect(() => {
+    editorContentRef.current = editorContent;
+  }, [editorContent]);
+
+  useEffect(() => {
+    docTitleRef.current = docTitle;
+  }, [docTitle]);
+
+  // Highlight and Text Selection Reference State
+  const [currentHighlights, setCurrentHighlights] = useState<{ id: string; text: string; color: string }[]>([]);
+  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleApplyHighlight = (color: 'yellow' | 'cyan') => {
+    const textarea = editorTextareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    
+    if (start === end || start === undefined || end === undefined) {
+      alert("Please highlight/select some text within the Direct Outliner textarea first!");
+      return;
+    }
+    
+    const textSelected = editorContent.substring(start, end).trim();
+    if (!textSelected) return;
+
+    // Avoid duplicating exact same slice and color
+    const isDup = currentHighlights.some(hl => hl.text === textSelected && hl.color === color);
+    if (isDup) return;
+
+    const newHl = {
+      id: "hl_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+      text: textSelected,
+      color: color
+    };
+
+    setCurrentHighlights(prev => [...prev, newHl]);
+  };
 
   // Sync and Network States
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<{ id: string; title: string } | null>(null);
   const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(null);
 
@@ -34,11 +87,11 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
 
   // Load editor content crash-saving local states
   useEffect(() => {
-    const cachedDraft = localStorage.getItem("WAFULA_EDIT_DRAFT_CONTENT");
+    const cachedDraft = localStorage.getItem("WAFULA_AUTOSAVE_CONTENT") || localStorage.getItem("WAFULA_EDIT_DRAFT_CONTENT");
     if (cachedDraft) {
       setEditorContent(cachedDraft);
     }
-    const cachedTitle = localStorage.getItem("WAFULA_EDIT_DRAFT_TITLE");
+    const cachedTitle = localStorage.getItem("WAFULA_AUTOSAVE_TITLE") || localStorage.getItem("WAFULA_EDIT_DRAFT_TITLE");
     if (cachedTitle) {
       setDocTitle(cachedTitle);
     }
@@ -49,6 +102,33 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     localStorage.setItem("WAFULA_EDIT_DRAFT_CONTENT", editorContent);
     localStorage.setItem("WAFULA_EDIT_DRAFT_TITLE", docTitle);
   }, [editorContent, docTitle]);
+
+  // Periodic Auto-Save mechanism: Persists the current editor content and title to localStorage every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      try {
+        const content = editorContentRef.current;
+        const title = docTitleRef.current;
+        
+        localStorage.setItem("WAFULA_AUTOSAVE_CONTENT", content);
+        localStorage.setItem("WAFULA_AUTOSAVE_TITLE", title);
+        
+        // Ensure synchronization with basic draft keys as well
+        localStorage.setItem("WAFULA_EDIT_DRAFT_CONTENT", content);
+        localStorage.setItem("WAFULA_EDIT_DRAFT_TITLE", title);
+
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setAutoSaveStatus(`Auto-saved at ${timeStr}`);
+      } catch (err) {
+        console.warn("Auto-save periodic interval failed:", err);
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, []);
 
   // Monitor network online/offline status listeners
   useEffect(() => {
@@ -343,8 +423,17 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
   const [selectedFolder, setSelectedFolder] = useState("General");
   const [newFolderName, setNewFolderName] = useState("");
 
-  // States for Photos -> PDF
+  // Vault Uploader states
+  const [vaultUploadMode, setVaultUploadMode] = useState<"files" | "link">("files");
+  const [vaultUploadedFiles, setVaultUploadedFiles] = useState<File[]>([]);
+  const [vaultUploadedPreview, setVaultUploadedPreview] = useState<{ name: string; size: number }[]>([]);
+  const [linkInputTitle, setLinkInputTitle] = useState("");
+  const [linkInputUrl, setLinkInputUrl] = useState("");
+
+  // States for Photos & Videos -> PDF and Media Extraction
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]); // Base64 list
+  const [mediaFiles, setMediaFiles] = useState<{ id: string; type: "photo" | "video"; name: string; dataUrl: string; size: string }[]>([]);
+  const [isMediaProcessing, setIsMediaProcessing] = useState(false);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [extractedOcrText, setExtractedOcrText] = useState("");
 
@@ -354,6 +443,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
   const [convertTo, setConvertTo] = useState("PDF");
   const [isConverting, setIsConverting] = useState(false);
   const [conversionOutput, setConversionOutput] = useState("");
+  const [conversionFile, setConversionFile] = useState<{ name: string; dataUrl: string; size: string } | null>(null);
 
   // States for Voice Transcription (Mic Recorder)
   const [isRecording, setIsRecording] = useState(false);
@@ -364,6 +454,79 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
   // States for Document Creator
   const [isSaving, setIsSaving] = useState(false);
 
+  const handleVaultFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const fileArray = Array.from(files) as File[];
+      setVaultUploadedFiles((prev) => [...prev, ...fileArray]);
+      const prevMetadata = fileArray.map((f) => ({ name: f.name, size: Math.round(f.size / 1024) }));
+      setVaultUploadedPreview((prev) => [...prev, ...prevMetadata]);
+    }
+  };
+
+  const handleProcessVaultLinkSave = () => {
+    if (!linkInputTitle.trim() || !linkInputUrl.trim()) return;
+    const newDoc: SavedDocument = {
+      id: "vault_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+      userId: currentUser?.email || "anonymous",
+      title: linkInputTitle.trim(),
+      content: linkInputUrl.trim(),
+      type: "link",
+      folder: selectedFolder,
+      date: new Date().toISOString().split("T")[0],
+      fileSize: "URI Link"
+    };
+    onAddNewDocument(newDoc);
+    setLinkInputTitle("");
+    setLinkInputUrl("");
+  };
+
+  const handleProcessVaultBatchUpload = () => {
+    if (vaultUploadedFiles.length === 0) return;
+    
+    vaultUploadedFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64Data = reader.result ? (reader.result as string) : "";
+        
+        // Detect document type
+        const extension = file.name.split(".").pop()?.toLowerCase() || "";
+        let docType: 'pdf' | 'doc' | 'video' | 'photo' | 'audio' | 'link' | 'book' = "doc";
+        
+        if (["pdf"].includes(extension)) {
+          docType = "pdf";
+        } else if (["doc", "docx", "txt", "rtf"].includes(extension)) {
+          docType = "doc";
+        } else if (["png", "jpg", "jpeg", "gif", "webp", "tiff", "svg"].includes(extension)) {
+          docType = "photo";
+        } else if (["mp3", "wav", "m4a", "ogg", "aac"].includes(extension)) {
+          docType = "audio";
+        } else if (["mp4", "mov", "avi", "mkv", "webm", "3gp"].includes(extension)) {
+          docType = "video";
+        } else if (["epub", "mobi", "pdf_book", "book"].includes(extension)) {
+          docType = "book";
+        }
+
+        const newDoc: SavedDocument = {
+          id: "vault_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+          userId: currentUser?.email || "anonymous",
+          title: file.name,
+          content: base64Data.slice(0, 500) || `Uploaded raw file binary placeholder for: ${file.name}`,
+          type: docType,
+          folder: selectedFolder,
+          date: new Date().toISOString().split("T")[0],
+          fileSize: (file.size / 1024).toFixed(1) + " KB",
+          downloadUrl: base64Data || undefined
+        };
+        onAddNewDocument(newDoc);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    setVaultUploadedFiles([]);
+    setVaultUploadedPreview([]);
+  };
+
   // Keyboard shortcut save event receiver (Fulfills Ctrl+S trigger requirement - Placed safely after all states declared)
   useEffect(() => {
     const handleShortcutSave = () => {
@@ -373,6 +536,17 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     document.addEventListener("WAFULA_SAVE_DRAFT", handleShortcutSave);
     return () => {
       document.removeEventListener("WAFULA_SAVE_DRAFT", handleShortcutSave);
+    };
+  }, [editorContent, docTitle, selectedFolder, currentUser, isOnline]);
+
+  // Global voice-save-document event receiver
+  useEffect(() => {
+    const handleVoiceSave = () => {
+      handleSaveDocument("doc");
+    };
+    window.addEventListener("voice-save-document", handleVoiceSave);
+    return () => {
+      window.removeEventListener("voice-save-document", handleVoiceSave);
     };
   }, [editorContent, docTitle, selectedFolder, currentUser, isOnline]);
 
@@ -494,18 +668,59 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     }
   };
 
-  // Convert photos using server-side Gemini OCR
+  // Unified Media (Photos & Videos) uploader
+  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArr = Array.from(e.target.files) as File[];
+      filesArr.forEach((file: File) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const type = file.type.startsWith("video/") ? "video" : "photo";
+          const newMedia = {
+            id: "media_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+            type: type as "photo" | "video",
+            name: file.name,
+            dataUrl: reader.result as string,
+            size: (file.size / (1024 * 1024)) < 1 
+              ? `${(file.size / 1024).toFixed(1)} KB`
+              : `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+          };
+          setMediaFiles((current) => [...current, newMedia]);
+          if (type === "photo") {
+            setSelectedPhotos((prev) => [...prev, reader.result as string]);
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  // Convert photos or videos using server-side Gemini OCR / Transcription
   const handleOcrProcess = async () => {
-    if (selectedPhotos.length === 0) return;
+    if (mediaFiles.length === 0 && selectedPhotos.length === 0) {
+      alert("Please upload at least one image or video to extract text from.");
+      return;
+    }
+    
     setIsOcrProcessing(true);
+    setIsMediaProcessing(true);
     setExtractedOcrText("");
 
     try {
+      // Process unified media if available, fallback to selectedPhotos standard OCR
+      const payloadFile = mediaFiles.length > 0 ? mediaFiles[0].dataUrl : selectedPhotos[0];
+      const payloadName = mediaFiles.length > 0 ? mediaFiles[0].name : "My_Photo.png";
+      const payloadMime = mediaFiles.length > 0 
+        ? (mediaFiles[0].type === "video" ? "video/mp4" : "image/png") 
+        : "image/png";
+
       const response = await fetch("/api/ai/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageBase64: selectedPhotos[0], // processes primary canvas
+          fileBase64: payloadFile,
+          fileName: payloadName,
+          customMimeType: payloadMime,
           docTitle
         })
       });
@@ -513,54 +728,131 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
       if (data.success) {
         setExtractedOcrText(data.text);
         setEditorContent(data.text); // load to editor instantly
+        alert(`🎉 Extraction Complete!\nAI successfully processed file "${payloadName}" and loaded text/outlines into the Direct Outliner editor.`);
+      } else {
+        alert("Extraction failed: " + (data.error || "Reason unknown"));
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert("Error reaching the extraction server: " + e.message);
     } finally {
       setIsOcrProcessing(false);
+      setIsMediaProcessing(false);
     }
   };
 
-  // Document formatting converter
+  // Physical document uploader handler for format converter
+  const handleConvertFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+      
+      if (extension === "docx") {
+        setConvertFrom("Word");
+      } else if (extension === "txt") {
+        setConvertFrom("Text");
+      } else if (extension === "pdf") {
+        setConvertFrom("PDF");
+      }
+
+      reader.onloadend = () => {
+        setConversionFile({
+          name: file.name,
+          dataUrl: reader.result as string,
+          size: `${(file.size / 1024).toFixed(1)} KB`
+        });
+        setDocTitle(file.name.replace(/\.[^/.]+$/, ""));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Document formatting converter (Supporting pasted text OR physically uploaded files!)
   const handleConvert = async () => {
-    if (!sourceCode.trim()) return;
+    if (!conversionFile && !sourceCode.trim()) {
+      alert("Please upload a file (.docx, .txt, .pdf) or paste outline text to convert first.");
+      return;
+    }
     setIsConverting(true);
+    setConversionOutput("");
     
     try {
-      const response = await fetch("/api/ai/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          originalContent: sourceCode,
-          requestedTitle: `${docTitle} (Converted)`,
-          targetCategory: "Conversion",
-          authorName: currentUser?.name || "Wafula Library Member"
-        })
-      });
+      let response;
+      if (conversionFile) {
+        response = await fetch("/api/ai/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileBase64: conversionFile.dataUrl,
+            fileName: conversionFile.name,
+            docTitle,
+            customMimeType: convertFrom === "Word" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : convertFrom === "PDF" ? "application/pdf" : "text/plain"
+          })
+        });
+      } else {
+        response = await fetch("/api/ai/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            originalContent: sourceCode,
+            requestedTitle: `${docTitle} (Converted)`,
+            targetCategory: "Conversion",
+            authorName: currentUser?.name || "Wafula Library Member"
+          })
+        });
+      }
+
       const data = await response.json();
       if (data.success) {
-        setConversionOutput(data.content);
-        setEditorContent(data.content);
+        const textValue = data.text || data.content || "";
+        setConversionOutput(textValue);
+        setEditorContent(textValue);
+        alert(`🎉 Document Format Conversion Completed Successfully!\n"${docTitle}" has been converted, structured via Zion AI, and loaded into the Direct Outliner editor.`);
+      } else {
+        alert("Conversion failed: " + (data.error || "Reason unknown"));
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert("Error occurred during document conversion: " + e.message);
     } finally {
       setIsConverting(false);
     }
   };
 
-  // Photo uploader base64 handler
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const filesArr = Array.from(e.target.files);
-      filesArr.forEach((f) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setSelectedPhotos((current) => [...current, reader.result as string]);
-        };
-        reader.readAsDataURL(f as any);
+  // AI Syllabus Note Maker handler
+  const handleGenerateCurriculumSyllabus = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!curriculumSubject.trim()) return;
+    setIsGeneratingCurriculum(true);
+    setCurriculumError("");
+
+    try {
+      const response = await fetch("/api/school/generate-curriculum", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: curriculumSubject.trim() })
       });
+      const data = await response.json();
+      if (data.success) {
+        setEditorContent(data.notes);
+        setDocTitle(`${data.subject} Curricular Notes`);
+        setActiveTab("write");
+        alert(`🎉 Complete Study Notes on "${data.subject}" Generated Successfully!\nAll 10 Topics & 50 Subtopics have been written in high-integrity academic prose and loaded directly in the Direct Outliner editor.`);
+      } else {
+        setCurriculumError(data.error || "Generation request was rejected by learning model controls.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setCurriculumError("Could not dispatch syllabus request. Check network connection status.");
+    } finally {
+      setIsGeneratingCurriculum(false);
     }
+  };
+
+  // Legacy uploader fallback
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleMediaUpload(e);
   };
 
   const queueDocumentForSync = (docObj: SavedDocument) => {
@@ -592,7 +884,8 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
       type: contentType,
       folder: selectedFolder,
       date: new Date().toISOString().split("T")[0],
-      fileSize: `${((bodyStr.length * 2) / 1024).toFixed(1)} KB`
+      fileSize: `${((bodyStr.length * 2) / 1024).toFixed(1)} KB`,
+      highlights: currentHighlights
     };
 
     onAddNewDocument(newDoc);
@@ -823,14 +1116,39 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
   };
 
   return (
-    <div id="doc_studio_dashboard" className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <div id="doc_studio_dashboard" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8">
+      {/* Zion Digital Academic Center Banner */}
+      <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-gradient-to-r from-red-900 via-neutral-900 to-amber-955 text-white rounded-2xl p-5 shadow-sm border border-stone-250">
+        <div className="flex items-center space-x-3">
+          <div className="rounded-xl bg-white text-red-900 h-12 w-12 flex items-center justify-center font-black text-xl shadow-md border-2 border-amber-300 select-all shrink-0">
+            ZION
+          </div>
+          <div>
+            <h1 className="font-display text-2xl font-black tracking-tight leading-none text-white flex items-center gap-1.5 flex-wrap">
+              Zion Digital Document Studio
+              <span className="text-[10px] bg-amber-400 text-neutral-900 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-widest font-mono">Academic R&D</span>
+            </h1>
+            <p className="text-xs text-amber-200/90 mt-1 font-sans font-medium">
+              Official academic printing & document conversion hub. Powered by the <strong>Zion Course Ranger Series</strong>. Direct Word-to-PDF formatting, multimedia AI extraction, voice lecture transcribing, and offline Firestore secure cloud syncing.
+            </p>
+          </div>
+        </div>
+        
+        {/* Course Code Ranger Indicator Widget */}
+        <div className="bg-white/10 p-3 rounded-xl border border-white/20 text-left md:text-right shrink-0">
+          <span className="block text-[9px] uppercase tracking-wider font-extrabold text-amber-300 font-mono">Registration Course Code:</span>
+          <span className="block font-mono font-black text-white text-base tracking-wide mt-0.5">ZIO01/001/26</span>
+          <span className="block text-[9px] text-neutral-300 font-medium mt-0.5">Zion IT School &bull; Bungoma, Kenya</span>
+        </div>
+      </div>
+
       <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-stone-200 pb-5 mb-6">
         <div className="flex flex-col gap-1">
           <div className="flex items-center space-x-3">
-            <h2 className="font-display text-3xl font-extrabold">Doc <span className="text-red-700">Studio</span></h2>
+            <h2 className="font-display text-xl font-bold text-neutral-800">Workspace Editor</h2>
             
             {/* Database Sync Status Indicator Badge */}
-            <div id="firestore_sync_badge" className="inline-flex items-center">
+            <div id="firestore_sync_badge" className="inline-flex items-center gap-2">
               {isSyncing ? (
                 <span className="inline-flex items-center space-x-1.5 rounded-full bg-blue-50 px-2.5 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-200 animate-pulse">
                   <RefreshCw className="h-2.5 w-2.5 animate-spin" />
@@ -857,6 +1175,12 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                   <span>Synced to Cloud</span>
                 </span>
               )}
+
+              {/* LocalStorage Auto-Save Status Badge */}
+              <span className="inline-flex items-center space-x-1.5 rounded-full bg-stone-50 dark:bg-slate-900 px-2.5 py-0.5 text-[10px] font-bold text-stone-600 dark:text-stone-300 border border-stone-200 dark:border-slate-800">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-700 animate-pulse block" />
+                <span>{autoSaveStatus}</span>
+              </span>
             </div>
           </div>
           <p className="text-xs text-neutral-500">Formulate publications, convert files, transcribe audio dictations, and save with structural folders.</p>
@@ -871,7 +1195,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
             }`}
           >
             <Image className="h-4 w-4" />
-            <span>Photos ➔ PDF</span>
+            <span>Photos & Videos ➔ Text/PDF</span>
           </button>
           <button
             onClick={() => setActiveTab("convert")}
@@ -900,6 +1224,15 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
             <Mic className="h-4 w-4" />
             <span>Voice Voice</span>
           </button>
+          <button
+            onClick={() => setActiveTab("curriculum")}
+            className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 transition ${
+              activeTab === "curriculum" ? "bg-red-700 text-white shadow-xs" : "bg-neutral-50 text-neutral-600 hover:bg-neutral-105"
+            }`}
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>AI Syllabus Note Maker</span>
+          </button>
         </div>
       </div>
 
@@ -921,90 +1254,113 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                 />
               </div>
 
-              <div>
-                <label className="block text-stone-500 font-bold mb-1.5 uppercase tracking-wider">Target Folder Vault</label>
-                <div className="flex space-x-2">
-                  <select
-                    value={selectedFolder}
-                    onChange={(e) => setSelectedFolder(e.target.value)}
-                    className="flex-1 rounded-lg border border-stone-200 bg-neutral-50 p-2.5 font-bold outline-none"
-                  >
-                    {folders.map((f) => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
+              {currentUser?.role === 'admin' ? (
+                <div>
+                  <label className="block text-stone-500 font-bold mb-1.5 uppercase tracking-wider">Target Folder Vault</label>
+                  <div className="flex space-x-2">
+                    <select
+                      value={selectedFolder}
+                      onChange={(e) => setSelectedFolder(e.target.value)}
+                      className="flex-1 rounded-lg border border-stone-200 bg-neutral-50 p-2.5 font-bold outline-none"
+                    >
+                      {folders.map((f) => (
+                        <option key={f} value={f}>{f}</option>
+                      ))}
+                    </select>
 
-                  <input
-                    type="text"
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    placeholder="New..."
-                    className="w-16 rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs outline-none"
-                  />
-                  <button
-                    onClick={handleCreateFolder}
-                    className="rounded-lg bg-red-700 text-white px-2 text-xs font-bold"
-                  >
-                    +
-                  </button>
+                    <input
+                      type="text"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder="New..."
+                      className="w-16 rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs outline-none"
+                    />
+                    <button
+                      onClick={handleCreateFolder}
+                      className="rounded-lg bg-red-700 text-white px-2 text-xs font-bold"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
 
-            {/* TAB 1: Photos -> PDF */}
+            {/* TAB 1: Photos & Videos ➔ PDF / Text Extraction */}
             {activeTab === "ocr" && (
-              <div className="space-y-4">
-                <div className="rounded-xl border-2 border-dashed border-stone-200 p-6 text-center space-y-3">
-                  <span className="text-3xl text-stone-400">🖼️</span>
+              <div className="space-y-4 text-xs">
+                <div className="rounded-xl border-2 border-dashed border-stone-200 p-6 text-center space-y-3 bg-neutral-50">
+                  <span className="text-3xl text-stone-400">📽️</span>
                   <div className="text-xs">
-                    <p className="font-bold text-neutral-800">Upload Photos of Written Texts or Word Pages</p>
-                    <p className="text-stone-400 mt-1">Accepts multiple images. Our OCR will transcribe and extract values.</p>
+                    <p className="font-bold text-neutral-800">Upload Photos or Videos for AI Extraction</p>
+                    <p className="text-stone-400 mt-1">Accepts multiple images, or video clips. Our AI transcribes and extracts text contents.</p>
                   </div>
                   <input
                     type="file"
                     multiple
-                    accept="image/*"
-                    onChange={handlePhotoUpload}
+                    accept="image/*,video/*"
+                    onChange={handleMediaUpload}
                     className="hidden"
-                    id="ocr_photo_uploader"
+                    id="ocr_multimedia_uploader"
                   />
                   <label
-                    htmlFor="ocr_photo_uploader"
-                    className="mx-auto block w-fit rounded bg-neutral-900 text-white text-xs font-bold px-4 py-2 hover:bg-neutral-800 cursor-pointer"
+                    htmlFor="ocr_multimedia_uploader"
+                    className="mx-auto block w-fit rounded bg-neutral-900 text-white text-xs font-bold px-4 py-2 hover:bg-neutral-800 cursor-pointer transition"
                   >
-                    Browse Local Photos
+                    Select Local Images & Videos
                   </label>
                 </div>
 
-                {selectedPhotos.length > 0 && (
+                {mediaFiles.length > 0 && (
                   <div className="space-y-3">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-stone-700">{selectedPhotos.length} Images Selected</span>
-                      <button onClick={() => setSelectedPhotos([])} className="text-red-700 underline font-semibold">Clear All</button>
+                      <span className="font-bold text-stone-700">{mediaFiles.length} Media File(s) Staged</span>
+                      <button 
+                        onClick={() => {
+                          setMediaFiles([]);
+                          setSelectedPhotos([]);
+                        }} 
+                        className="text-red-700 underline font-semibold cursor-pointer"
+                      >
+                        Clear All
+                      </button>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-2">
-                      {selectedPhotos.map((src, idx) => (
-                        <div key={idx} className="relative aspect-square border border-stone-200 rounded-lg overflow-hidden">
-                          <img src={src} className="w-full h-full object-cover" alt="Source photo" />
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {mediaFiles.map((med) => (
+                        <div key={med.id} className="relative border border-stone-200 rounded-xl overflow-hidden bg-stone-50 p-2 flex flex-col justify-between">
+                          <div className="aspect-video w-full rounded-lg overflow-hidden bg-black flex items-center justify-center relative">
+                            {med.type === "photo" ? (
+                              <img src={med.dataUrl} className="w-full h-full object-cover" alt={med.name} />
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center text-white bg-neutral-900 text-center p-2">
+                                <FileVideo className="h-8 w-8 text-red-500 mb-1" />
+                                <span className="text-[10px] font-mono font-bold truncate max-w-full">VIDEO CLIP</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-2 text-left">
+                            <p className="font-semibold text-neutral-800 truncate text-[10.5px]" title={med.name}>{med.name}</p>
+                            <p className="text-stone-400 text-[9.5px] uppercase font-mono font-bold">{med.type} • {med.size}</p>
+                          </div>
                         </div>
                       ))}
                     </div>
 
                     <button
                       onClick={handleOcrProcess}
-                      disabled={isOcrProcessing}
-                      className="flex w-full items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 transition"
+                      disabled={isMediaProcessing}
+                      className="flex w-full items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 text-xs font-bold text-white shadow-sm hover:bg-red-800 transition cursor-pointer"
                     >
-                      {isOcrProcessing ? (
+                      {isMediaProcessing ? (
                         <>
                           <RefreshCw className="h-4 w-4 animate-spin" />
-                          <span>AI Scanning Images & Formulating Markdown...</span>
+                          <span>AI Scanning Media & Generating Text Outline...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles className="h-4 w-4" />
-                          <span>Extract Text from Images & Export into Editor</span>
+                          <span>Extract Text / Video Audio into Editor</span>
                         </>
                       )}
                     </button>
@@ -1021,8 +1377,11 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                     <label className="block text-stone-500 mb-1 font-semibold">Convert From</label>
                     <select
                       value={convertFrom}
-                      onChange={(e) => setConvertFrom(e.target.value)}
-                      className="w-full rounded border p-2"
+                      onChange={(e) => {
+                        setConvertFrom(e.target.value);
+                        setConversionFile(null); // Reset when switching manually
+                      }}
+                      className="w-full rounded border p-2 bg-white"
                     >
                       <option value="Word">Word (.docx)</option>
                       <option value="Text">Plain Text (.txt)</option>
@@ -1041,24 +1400,81 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                   </div>
                 </div>
 
+                <div className="space-y-2">
+                  <span className="block text-stone-500 font-bold uppercase tracking-wider text-[10px] pr-1">Option A: Upload Physical Document File</span>
+                  <div className="rounded-xl border-2 border-dashed border-stone-200 p-5 text-center bg-stone-50/50 hover:bg-stone-55 transition">
+                    <span className="text-xl">📄</span>
+                    <p className="font-bold text-neutral-800 text-[11px] mt-1">Upload .docx, .txt, or .pdf</p>
+                    <input
+                      type="file"
+                      id="doc_convert_uploader"
+                      accept=".docx,.txt,.pdf"
+                      onChange={handleConvertFileUpload}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="doc_convert_uploader"
+                      className="mx-auto block w-fit rounded bg-neutral-900 hover:bg-neutral-800 text-white text-[10.5px] font-bold px-3 py-1.5 mt-2 cursor-pointer transition select-none"
+                    >
+                      Browse Physical Document
+                    </label>
+
+                    {conversionFile && (
+                      <div className="mt-3 p-2 bg-white border border-stone-200 rounded-lg flex items-center justify-between text-left max-w-md mx-auto">
+                        <div className="truncate">
+                          <p className="font-bold text-neutral-800 text-[11px] truncate">{conversionFile.name}</p>
+                          <p className="text-stone-400 text-[10px]">{conversionFile.size} • Prepared</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setConversionFile(null)}
+                          className="text-red-700 text-xs font-bold underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-stone-200"></div>
+                  <span className="flex-shrink mx-4 text-stone-400 font-bold text-[10px] uppercase">OR</span>
+                  <div className="flex-grow border-t border-stone-200"></div>
+                </div>
+
                 <div>
-                  <label className="block text-stone-500 mb-1.5 font-bold">Paste File Content or Outline Text</label>
+                  <label className="block text-stone-500 mb-1.5 font-bold uppercase tracking-wider text-[10px]">Option B: Paste File Content or Outline Text</label>
                   <textarea
                     rows={6}
                     value={sourceCode}
-                    onChange={(e) => setSourceCode(e.target.value)}
-                    placeholder="Paste the contents of your document here..."
-                    className="w-full rounded-lg border border-stone-200 bg-neutral-50 px-3 py-2 outline-none focus:bg-white focus:border-red-750"
+                    onChange={(e) => {
+                      setSourceCode(e.target.value);
+                      if (e.target.value.trim()) {
+                        setConversionFile(null); // Prefer pasted content instead
+                      }
+                    }}
+                    placeholder="Paste raw Word copy-pastes, transcripts, or plain text notes here to format..."
+                    className="w-full rounded-lg border border-stone-200 bg-neutral-50 px-3 py-2 outline-none focus:bg-white focus:border-red-750 font-mono text-xs"
                   />
                 </div>
 
                 <button
                   onClick={handleConvert}
                   disabled={isConverting}
-                  className="w-full flex items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 font-bold text-white shadow-sm hover:bg-red-800 transition"
+                  className="w-full flex items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 font-bold text-white shadow-sm hover:bg-red-800 transition cursor-pointer"
                 >
-                  {isConverting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  <span>Convert Document into Structured Work</span>
+                  {isConverting ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span>AI Parsing & Composing Structured PDF Draft...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      <span>Process & Convert Document</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}
@@ -1066,14 +1482,124 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
             {/* TAB 3: Writer Editor (Standalone) */}
             {activeTab === "write" && (
               <div className="space-y-4 text-xs">
-                <label className="block text-stone-500 font-bold mb-1">Direct Outliner & Publisher Editor</label>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3">
+                  <div>
+                    <label className="block text-stone-500 font-bold mb-0.5">Direct Outliner & Publisher Editor</label>
+                    <p className="text-[10px] text-stone-400">Design custom manuscripts, outlines, and lectures</p>
+                  </div>
+                  
+                  {/* Zion Academy Course Code Template Charger */}
+                  <div className="flex items-center gap-1.5 shrink-0 self-end">
+                    <span className="text-[10px] font-bold text-red-900 font-mono tracking-tight shrink-0">🏛️ Quick Zion Courses:</span>
+                    <select
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        const dateStr = new Date().toISOString().split("T")[0];
+                        let title = "Zion Outline";
+                        let content = "";
+
+                        if (val === "it") {
+                          title = "ZION IT Fundamental Outline";
+                          content = `🏛️ ZION DIGITAL ACADEMY\nCOURSE CODE: ZIO01/001/26\nOFFICIAL RESEARCH OUTLINE & MANUSCRIPT\nDATE: ${dateStr}\n-----------------------------------------------\n\n## TOPIC: Fundamentals of ICT Infrastructure & Local Area Servers\n\n### MODULE 1: Computer Ingress & Reverse Proxy Paradigms\n- Structural routing strategies\n- Safe local bindings for development servers\n- Port configurations in sandboxed host environments\n\n### MODULE 2: Operating System Architectures\n- Dual-stack networks\n- Persistent storage queues\n- Client-side caching and SQLite engines`;
+                        } else if (val === "db") {
+                          title = "Zion System Security notes";
+                          content = `🏛️ ZION DIGITAL ACADEMY\nCOURSE CODE: ZIO02/002/26\nOFFICIAL RESEARCH OUTLINE & MANUSCRIPT\nDATE: ${dateStr}\n-----------------------------------------------\n\n## TOPIC: Advanced Cyber Security & Firestore Real-time Queries\n\n### SECTION 1: Firestore Rule Optimization\n- Safe request.auth token verification patterns\n- Secure collection mapping and read constraints\n\n### SECTION 2: Cryptographic Hash Transcripts\n- Securing client sessions\n- Local credentials storage guidelines`;
+                        } else if (val === "sec") {
+                          title = "Zion Servant Leadership series";
+                          content = `🏛️ ZION DIGITAL ACADEMY\nCOURSE CODE: ZIO03/003/26\nOFFICIAL RESEARCH OUTLINE & MANUSCRIPT\nDATE: ${dateStr}\n-----------------------------------------------\n\n## TOPIC: Servant Leadership & Cooperative Local Empowerment\n\n### TOPIC 1: Community Empowerment\n- Bungoma Central youth leadership guidelines\n- Teamwork frameworks of digital literacy cooperatives\n\n### TOPIC 2: Ethical Decision Making\n- Maintaining horizontal accountability structures\n- Community asset ownership models`;
+                        }
+
+                        setDocTitle(title);
+                        setEditorContent(content);
+                        // Open Interactive preview immediately to see styled layout!
+                        setRightPanelTab("preview");
+                      }}
+                      className="rounded border border-stone-200 bg-neutral-50 px-2.5 py-1.5 text-[10.5px] font-bold tracking-tight text-neutral-800 outline-none cursor-pointer"
+                      defaultValue=""
+                    >
+                      <option value="">-- Load Zion Template --</option>
+                      <option value="it">ZION01 • Fundamentals of Computer IT (ZIO01/001/26)</option>
+                      <option value="db">ZION02 • System Security & Firestore (ZIO02/002/26)</option>
+                      <option value="sec">ZION03 • Servant Leadership Dynamics (ZIO03/003/26)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Interactive Highlighting Tools */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-stone-50 border border-stone-200 rounded-xl p-3">
+                  <span className="text-[10px] uppercase font-extrabold text-stone-600 font-mono">🎨 Text Selection Highlighting Tools:</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleApplyHighlight("yellow")}
+                      className="px-2.5 py-1.5 rounded-lg bg-yellow-100 hover:bg-yellow-200 border border-yellow-300 text-yellow-800 font-bold font-mono tracking-normal text-[10px] cursor-pointer flex items-center space-x-1 transition"
+                      title="Select text in editor below and click to register yellow highlight tag"
+                    >
+                      <span className="h-2 w-2 rounded-full bg-yellow-400"></span>
+                      <span>Highlight Yellow</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyHighlight("cyan")}
+                      className="px-2.5 py-1.5 rounded-lg bg-cyan-100 hover:bg-cyan-200 border border-cyan-300 text-cyan-800 font-bold font-mono tracking-normal text-[10px] cursor-pointer flex items-center space-x-1 transition"
+                      title="Select text in editor below and click to register cyan highlight tag"
+                    >
+                      <span className="h-2 w-2 rounded-full bg-cyan-400"></span>
+                      <span>Highlight Cyan</span>
+                    </button>
+                    {currentHighlights.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentHighlights([]);
+                          alert("All active highlights cleared from editor draft cache.");
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-white border border-stone-300 hover:bg-stone-50 text-stone-700 font-bold text-[10px] cursor-pointer transition font-mono"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <textarea
+                  ref={editorTextareaRef}
                   rows={8}
                   value={editorContent}
                   onChange={(e) => setEditorContent(e.target.value)}
-                  placeholder="Start composing your premium publication chapter outline..."
-                  className="w-full rounded-xl border border-stone-200 p-4 font-mono text-xs leading-relaxed outline-none focus:border-red-700"
+                  placeholder="Start composing your premium publication chapter outline... TIP: Select any phrase/sentences inside here and click highlighters above to pin tags!"
+                  className="w-full rounded-xl border border-stone-200 p-4 font-mono text-xs leading-relaxed outline-none focus:border-red-700 focus:ring-1 focus:ring-red-400"
                 />
+
+                {/* Display Current Highlighting Metadata tags */}
+                {currentHighlights.length > 0 && (
+                  <div className="bg-stone-55/40 rounded-xl border border-stone-200 p-3.5 space-y-2">
+                    <span className="text-[10px] font-extrabold text-stone-500 uppercase tracking-wider block">🏷️ Active Highlighting Metadata Tags ({currentHighlights.length}):</span>
+                    <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                      {currentHighlights.map((hl) => (
+                        <div
+                          key={hl.id}
+                          className={`flex items-center space-x-2 rounded-lg px-2.5 py-1 border text-[10.5px] leading-tight max-w-full font-mono ${
+                            hl.color === "yellow" 
+                              ? "bg-yellow-50/70 text-yellow-950 border-yellow-200" 
+                              : "bg-cyan-50/70 text-cyan-950 border-cyan-200"
+                          }`}
+                        >
+                          <span className="truncate max-w-[200px] select-all">"{hl.text}"</span>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentHighlights(currentHighlights.filter(h => h.id !== hl.id))}
+                            className="hover:text-red-700 font-extrabold text-[12px] shrink-0 p-0.5 cursor-pointer leading-none transition"
+                            title="Remove Highlight Tag"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col sm:flex-row gap-2 pt-2">
                   <button
@@ -1169,6 +1695,62 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               </div>
             )}
 
+            {activeTab === "curriculum" && (
+              <div className="space-y-4 text-xs text-left">
+                <div className="rounded-xl border border-stone-150 bg-stone-50/50 p-4 space-y-2">
+                  <h4 className="font-bold text-neutral-900 flex items-center gap-1">
+                    <Sparkles className="h-4 w-4 text-red-700 animate-pulse" />
+                    <span>Zion Digital AI Syllabus Architect</span>
+                  </h4>
+                  <p className="text-stone-500 leading-normal text-[11px]">
+                    Enter a specialized subject (e.g., <em>"Strategic Governance & Administrative Integrity in East Africa"</em> or <em>"Modern High-Performance Memory-Mapped Software Engineering in C++"</em>) and our distinguished AI instructor will formulate exactly 10 comprehensive academic topics.
+                  </p>
+                  <p className="text-stone-500 leading-normal text-[11px]">
+                    Each topic will come equipped with 5 numbered key subtopics (50 subtopics total) paired with detailed notes (equivalent of approximately 4 printed pages total) of unmatched scholarly depth.
+                  </p>
+                </div>
+
+                <form onSubmit={handleGenerateCurriculumSyllabus} className="space-y-4">
+                  <div>
+                    <label className="block text-stone-500 font-bold mb-1.5 uppercase tracking-wide">Target Scholarly Subject Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={curriculumSubject}
+                      onChange={(e) => setCurriculumSubject(e.target.value)}
+                      className="w-full rounded-lg border border-stone-200 bg-neutral-50 px-3.5 py-2.5 outline-none focus:bg-white text-xs font-semibold"
+                      placeholder="e.g. Transformational African Leadership Paradigms or Advanced Distributed Computing Systems"
+                    />
+                  </div>
+
+                  {curriculumError && (
+                    <div className="rounded-xl bg-red-50 border border-red-100 p-3.5 text-xs text-red-950 flex items-start space-x-2">
+                      <AlertCircle className="h-4 w-4 text-red-700 shrink-0 mt-0.5" />
+                      <span>{curriculumError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isGeneratingCurriculum || !curriculumSubject.trim()}
+                    className="w-full flex items-center justify-center space-x-2 rounded-lg bg-red-700 hover:bg-neutral-900 text-white font-bold py-3 shadow-md disabled:opacity-45 cursor-pointer"
+                  >
+                    {isGeneratingCurriculum ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>AI Director Creating Syllabus & Intensive Study Ledger (approx. 4 Dense Pages)...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        <span>Generate Complete 10-Topic Notes</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              </div>
+            )}
+
           </div>
         </div>
 
@@ -1188,18 +1770,20 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               <Eye className="h-4 w-4" />
               <span>Interactive Preview</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setRightPanelTab("vault")}
-              className={`flex-1 flex items-center justify-center space-x-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                rightPanelTab === "vault" 
-                  ? "bg-white text-red-755 shadow-xs font-bold" 
-                  : "text-stone-500 hover:text-stone-800"
-              }`}
-            >
-              <Folder className="h-4 w-4" />
-              <span>Vault Folders</span>
-            </button>
+            {currentUser?.role === "admin" && (
+              <button
+                type="button"
+                onClick={() => setRightPanelTab("vault")}
+                className={`flex-1 flex items-center justify-center space-x-1.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  rightPanelTab === "vault" 
+                    ? "bg-white text-red-755 shadow-xs font-bold" 
+                    : "text-stone-500 hover:text-stone-800"
+                }`}
+              >
+                <Folder className="h-4 w-4" />
+                <span>Vault Folders</span>
+              </button>
+            )}
           </div>
 
           {/* TAB 1: INTERACTIVE DOCUMENT/PDF PREVIEWER */}
@@ -1352,6 +1936,27 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                       )}
                     </div>
 
+                    {/* Active highlight metadata tags print preview */}
+                    {currentHighlights.length > 0 && (
+                      <div className="mt-6 border-t border-dashed border-stone-200 pt-3 space-y-1 text-left">
+                        <span className="text-[9px] font-bold text-stone-405 font-mono block tracking-wider uppercase">HIGHLIGHTED TRANSCRIPT SECTIONS:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {currentHighlights.map((hl) => (
+                            <span
+                              key={hl.id}
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-mono select-none border leading-normal inline-block ${
+                                hl.color === "yellow" 
+                                  ? "bg-yellow-50 text-yellow-800 border-yellow-200" 
+                                  : "bg-cyan-50 text-cyan-800 border-cyan-200"
+                              }`}
+                            >
+                              🔖 "{hl.text}"
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Footer Watermark */}
                     <div className="mt-8 border-t border-stone-100 pt-1.5 flex justify-between items-center text-[8px] text-stone-400 font-mono">
                       <span>Bungoma, Kenya</span>
@@ -1366,10 +1971,140 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           {/* TAB 2: VAULT SAVED FOLDERS */}
           {rightPanelTab === "vault" && (
             <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
-              <h3 className="font-display text-base font-bold text-stone-900 mb-3 flex items-center space-x-2">
-                <Folder className="h-4.5 w-4.5 text-red-700" />
-                <span>Vault Folders</span>
+              <h3 className="font-display text-base font-bold text-stone-900 mb-3 flex items-center justify-between">
+                <span className="flex items-center space-x-2">
+                  <Folder className="h-4.5 w-4.5 text-red-700" />
+                  <span>Vault Folders</span>
+                </span>
+                <span className="text-[9px] bg-red-50 text-red-700 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">Vault Storage</span>
               </h3>
+
+              {/* Expandable Multi-Uploader Widget */}
+              <div className="mb-4 border border-stone-150 rounded-xl bg-neutral-50 p-3.5 text-xs">
+                <h4 className="font-bold text-stone-850 mb-2 flex items-center justify-between">
+                  <span>📥 Vault Multi-Uploader</span>
+                  <span className="text-[10px] text-gray-500 font-medium">Any format supported</span>
+                </h4>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider font-extrabold font-mono text-stone-500 mb-1">Select Destination Folder:</label>
+                    <div className="flex gap-1.5">
+                      <select
+                        value={selectedFolder}
+                        onChange={(e) => setSelectedFolder(e.target.value)}
+                        className="flex-1 rounded-lg border border-stone-200 bg-white p-1.5 text-xs outline-none"
+                      >
+                        {folders.map((f) => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="New folder..."
+                        value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        className="w-24 rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newFolderName.trim() && !folders.includes(newFolderName.trim())) {
+                            setFolders([...folders, newFolderName.trim()]);
+                            setSelectedFolder(newFolderName.trim());
+                            setNewFolderName("");
+                          }
+                        }}
+                        className="rounded-lg bg-red-700 px-3 py-1 text-white font-bold cursor-pointer hover:bg-red-800 transition"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Two Sub-Tabs: Upload Files vs. Save URL Link */}
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-stone-105 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setVaultUploadMode("files")}
+                      className={`py-1 text-[10px] font-bold uppercase rounded-md transition cursor-pointer ${vaultUploadMode === "files" ? "bg-white text-stone-900 shadow-2xs" : "text-stone-500 hover:text-stone-700"}`}
+                    >
+                      Multiple Files
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVaultUploadMode("link")}
+                      className={`py-1 text-[10px] font-bold uppercase rounded-md transition cursor-pointer ${vaultUploadMode === "link" ? "bg-white text-stone-900 shadow-2xs" : "text-stone-500 hover:text-stone-700"}`}
+                    >
+                      External URL Link
+                    </button>
+                  </div>
+
+                  {vaultUploadMode === "files" ? (
+                    <div className="space-y-2">
+                      <div
+                        className="border-2 border-dashed border-stone-200 hover:border-red-400 bg-white hover:bg-neutral-100 p-4 rounded-xl text-center cursor-pointer transition relative"
+                        onClick={() => document.getElementById("vault_multi_files")?.click()}
+                      >
+                        <Upload className="h-5 w-5 text-stone-400 mx-auto mb-1 animate-bounce" />
+                        <span className="font-semibold block text-[11px] text-stone-700">Drag & Drop or Choose Files</span>
+                        <span className="text-[9px] text-stone-400 block mt-0.5">Supports PDF, Word (DOC), Photos, Audios, Videos & Books</span>
+                        <input
+                          id="vault_multi_files"
+                          type="file"
+                          multiple
+                          onChange={handleVaultFilesUpload}
+                          className="hidden"
+                        />
+                      </div>
+                      {vaultUploadedPreview.length > 0 && (
+                        <div className="space-y-1.5 max-h-[120px] overflow-y-auto bg-white p-2 rounded-lg border border-stone-150 pr-1.5">
+                          {vaultUploadedPreview.map((f, i) => (
+                            <div key={i} className="flex items-center justify-between text-[10px] font-mono text-stone-600 bg-stone-50 p-1.5 rounded border border-stone-100">
+                              <span className="truncate max-w-[150px] font-bold">{f.name}</span>
+                              <span className="text-stone-400 shrink-0">({f.size} KB)</span>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={handleProcessVaultBatchUpload}
+                            className="w-full mt-2 rounded-lg bg-red-700 text-white font-bold py-1.5 uppercase tracking-wide hover:bg-red-800 cursor-pointer transition flex items-center justify-center space-x-1"
+                          >
+                            <span>Save All to Folder "{selectedFolder}"</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Link Title (e.g. Leadership Strategy)"
+                          value={linkInputTitle}
+                          onChange={(e) => setLinkInputTitle(e.target.value)}
+                          className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-red-650 font-medium"
+                        />
+                        <input
+                          type="text"
+                          placeholder="URL (e.g. https://...)"
+                          value={linkInputUrl}
+                          onChange={(e) => setLinkInputUrl(e.target.value)}
+                          className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-red-650 font-medium"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleProcessVaultLinkSave}
+                        disabled={!linkInputTitle.trim() || !linkInputUrl.trim()}
+                        className="w-full rounded-lg bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-bold py-1.5 uppercase transition cursor-pointer text-[10px]"
+                      >
+                        Save Link to Vault
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {/* Document list grouped by Folder */}
               {savedDocuments.length === 0 ? (
@@ -1394,9 +2129,39 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                           {filtered.map((doc) => (
                             <div key={doc.id} className="rounded-lg border border-stone-100 bg-neutral-50 hover:bg-neutral-100 p-3 flex justify-between items-start text-xs text-left">
                               <div className="flex-1 pr-2">
-                                <h4 className="font-bold text-stone-850 truncate max-w-[150px]">{doc.title}</h4>
+                                <div className="flex items-center space-x-1 flex-wrap gap-1 mb-1">
+                                  {doc.type === "pdf" && <span className="bg-red-50 border border-red-200 text-red-700 px-1 rounded font-mono font-bold text-[8px] uppercase">📄 PDF</span>}
+                                  {doc.type === "doc" && <span className="bg-sky-50 border border-sky-200 text-sky-700 px-1 rounded font-mono font-bold text-[8px] uppercase">📝 DOC</span>}
+                                  {doc.type === "photo" && <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-1 rounded font-mono font-bold text-[8px] uppercase">🖼️ PHOTO</span>}
+                                  {doc.type === "audio" && <span className="bg-violet-50 border border-violet-200 text-violet-750 px-1 rounded font-mono font-bold text-[8px] uppercase">🎵 AUDIO</span>}
+                                  {doc.type === "video" && <span className="bg-amber-50 border border-amber-200 text-amber-700 px-1 rounded font-mono font-bold text-[8px] uppercase">🎬 VIDEO</span>}
+                                  {doc.type === "book" && <span className="bg-yellow-50 border border-yellow-200 text-yellow-750 px-1 rounded font-mono font-bold text-[8px] uppercase">📚 BOOK</span>}
+                                  {doc.type === "link" && <span className="bg-teal-50 border border-teal-200 text-teal-700 px-1 rounded font-mono font-bold text-[8px] uppercase">🔗 LINK</span>}
+                                  <h4 className="font-bold text-stone-850 truncate max-w-[130px] inline-block align-middle">{doc.title}</h4>
+                                </div>
                                 <p className="text-[10px] text-stone-400 font-mono mt-0.5">{doc.date} • {doc.fileSize}</p>
-                                <p className="text-[11px] text-stone-500 line-clamp-2 mt-1 italic font-mono leading-relaxed mt-1">"{doc.content}"</p>
+                                {doc.type === "link" ? (
+                                  <a href={doc.content} target="_blank" rel="noopener noreferrer" className="text-[10px] text-red-700 font-semibold underline truncate max-w-[180px] block mt-1 hover:text-red-900 leading-normal">{doc.content}</a>
+                                ) : (
+                                  <p className="text-[11px] text-stone-500 line-clamp-2 mt-1 italic font-mono leading-relaxed">"{doc.content.startsWith("data:") ? "[Document / File Data Content Preview]" : doc.content}"</p>
+                                )}
+                                {doc.highlights && doc.highlights.length > 0 && (
+                                  <div className="mt-1.5 flex flex-wrap gap-1">
+                                    {doc.highlights.map((hl: any, idx: number) => (
+                                      <span
+                                        key={idx}
+                                        className={`rounded px-1.5 py-0.5 text-[8px] font-mono select-none leading-none border inline-block ${
+                                          hl.color === "yellow" 
+                                            ? "bg-yellow-50 text-yellow-850 border-yellow-200" 
+                                            : "bg-cyan-50 text-cyan-800 border-cyan-200"
+                                        }`}
+                                        title={`Highlight tag from editor`}
+                                      >
+                                        🔖 {hl.text}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
 
                                <div className="flex flex-col space-y-1 text-[10px] shrink-0">
@@ -1419,7 +2184,10 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteCheckFirestore(doc.id)}
+                                  onClick={() => {
+                                    setDocumentToDelete({ id: doc.id, title: doc.title });
+                                    setDeleteModalOpen(true);
+                                  }}
                                   className="text-stone-400 hover:text-rose-700 font-medium tracking-wide cursor-pointer text-center text-[9px] pt-1 transition"
                                 >
                                   Delete
@@ -1557,6 +2325,27 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           </div>
         </div>
       )}
+
+      {/* Reusable custom confirmation modal for document deletion to prevent accidental clicks */}
+      <DeleteConfirmationModal
+        isOpen={deleteModalOpen}
+        title="Delete Document"
+        itemName={documentToDelete?.title || ""}
+        itemType="document"
+        onConfirm={async () => {
+          if (documentToDelete) {
+            await handleDeleteCheckFirestore(documentToDelete.id);
+            setDeleteModalOpen(false);
+            setDocumentToDelete(null);
+          }
+        }}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setDocumentToDelete(null);
+        }}
+        confirmText="Yes, Delete"
+        cancelText="No, Keep"
+      />
     </div>
   );
 }

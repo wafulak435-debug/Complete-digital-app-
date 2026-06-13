@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { GameScore } from "../types";
 import { Trophy, RefreshCw, Star, Play, HelpCircle, Flame, CheckCircle2, XCircle } from "lucide-react";
+import { NeonSnakeGame, GeminiMapsHideSeek, WebcamBubbleShooter, RetroSynthwaveRunner, ZionTerrainDriverGame, ZionPrecisionCarParkerGame, BungomaSoccerChallengeGame } from "./ZionAdventureGames";
+import EndlessTempleRunGame from "./EndlessTempleRun";
 
 interface GamesProps {
   onUnlockBadge: (badgeId: string) => void;
@@ -23,7 +25,13 @@ export default function Games({ onUnlockBadge }: GamesProps) {
         { gameId: "hangman", highScore: 0, streak: 0, playedCount: 0 },
         { gameId: "math", highScore: 0, streak: 0, playedCount: 0 },
         { gameId: "bible", highScore: 0, streak: 0, playedCount: 0 },
-        { gameId: "maze", highScore: 0, streak: 0, playedCount: 0 }
+        { gameId: "maze", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "neon-snake", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "synthwave-runner", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "terrain-driver", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "car-parking", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "soccer-challenge", highScore: 0, streak: 0, playedCount: 0 },
+        { gameId: "temple-run", highScore: 0, streak: 0, playedCount: 0 }
       ];
       setScores(initialScores);
       localStorage.setItem("WAFULA_GAME_SCORES", JSON.stringify(initialScores));
@@ -79,6 +87,14 @@ export default function Games({ onUnlockBadge }: GamesProps) {
           {activeGame === "maze" && <LeadershipMazeGame onCompleted={(points) => updateScore("maze", points)} />}
           {activeGame === "memory" && <MemoryMatchGame onCompleted={(points) => updateScore("memory", points)} />}
           {activeGame === "driving" && <BungomaHighwayDrivingGame onCompleted={(points) => updateScore("driving", points)} />}
+          {activeGame === "neon-snake" && <NeonSnakeGame onCompleted={(points) => updateScore("neon-snake", points)} />}
+          {activeGame === "maps-seeker" && <GeminiMapsHideSeek />}
+          {activeGame === "bubble-shooter" && <WebcamBubbleShooter />}
+          {activeGame === "synthwave-runner" && <RetroSynthwaveRunner onCompleted={(points) => updateScore("synthwave-runner", points)} />}
+          {activeGame === "terrain-driver" && <ZionTerrainDriverGame onCompleted={(points) => updateScore("terrain-driver", points)} />}
+          {activeGame === "car-parking" && <ZionPrecisionCarParkerGame onCompleted={(points) => updateScore("car-parking", points)} />}
+          {activeGame === "soccer-challenge" && <BungomaSoccerChallengeGame onCompleted={(points) => updateScore("soccer-challenge", points)} />}
+          {activeGame === "temple-run" && <EndlessTempleRunGame onCompleted={(points) => updateScore("temple-run", points)} />}
         </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -176,13 +192,117 @@ export default function Games({ onUnlockBadge }: GamesProps) {
           {/* 8. Highway Driving Simulator */}
           <div className="rounded-2xl border border-red-200 bg-red-50/5 p-5 flex flex-col justify-between">
             <div>
-              <span className="text-3xl">🏍️</span>
+              <span className="text-3xl">3️⃣</span>
               <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Bungoma Highway Driving</h3>
               <p className="text-xs text-neutral-500 mt-1">Drive a Bicycle, Car, or Motorbike on the highway! Dodge obstacles and collect scores.</p>
             </div>
             <div className="border-t border-red-200 pt-3 mt-4 flex items-center justify-between">
               <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "driving")?.highScore || 0} pts</span>
               <button onClick={() => setActiveGame("driving")} className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-800">Play Now</button>
+            </div>
+          </div>
+
+          {/* 9. Neon Snake Game */}
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🐍</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Neon Snake Arena</h3>
+              <p className="text-xs text-neutral-500 mt-1">Collect glowing energy orbs to dominate the neon grid against AI opponents in real-time.</p>
+            </div>
+            <div className="border-t border-emerald-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "neon-snake")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("neon-snake")} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-800">Play Now</button>
+            </div>
+          </div>
+
+          {/* 10. Gemini Maps Hide & Seek */}
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🌍</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Gemini Maps Hide & Seek</h3>
+              <p className="text-xs text-neutral-500 mt-1">Use panoramic street view prompt logs and smart direction headers to guess where Gemini is hiding.</p>
+            </div>
+            <div className="border-t border-indigo-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">GPS live track coordinates</span>
+              <button onClick={() => setActiveGame("maps-seeker")} className="rounded-lg bg-indigo-650 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">Play Seeker</button>
+            </div>
+          </div>
+
+          {/* 11. Webcam Bubble Shooter with Gemini Co-Pilot */}
+          <div className="rounded-2xl border border-sky-200 bg-sky-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">📸</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Webcam Bubble Shooter</h3>
+              <p className="text-xs text-neutral-500 mt-1">Activate your webcam and let Gemini analyze the board vectors to suggest high-impact bouncing shots.</p>
+            </div>
+            <div className="border-t border-sky-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">Strategic AI co-pilot</span>
+              <button onClick={() => setActiveGame("bubble-shooter")} className="rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-800">Boot Shooter</button>
+            </div>
+          </div>
+
+          {/* 12. Retro Cosmic Space Runner */}
+          <div className="rounded-2xl border border-purple-200 bg-purple-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🚀</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Synthwave Space Runner</h3>
+              <p className="text-xs text-neutral-500 mt-1">Dash through a neon cosmos corridor at breakneck speeds, dodging asteroids and capturing fuel prisms.</p>
+            </div>
+            <div className="border-t border-purple-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "synthwave-runner")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("synthwave-runner")} className="rounded-lg bg-purple-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-900">Blast Off</button>
+            </div>
+          </div>
+
+          {/* 13. Multi-Terrain highway Driver */}
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🏜️</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Zion Highway Driver</h3>
+              <p className="text-xs text-neutral-500 mt-1">Drive through Urban City Streets, Rural Bush Tracks or Plain Savanna Highlands on diverse engines!</p>
+            </div>
+            <div className="border-t border-indigo-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "terrain-driver")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("terrain-driver")} className="rounded-lg bg-indigo-650 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">Go Drive</button>
+            </div>
+          </div>
+
+          {/* 14. Precision Car Parker */}
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🅿️</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Valet Parking Challenge</h3>
+              <p className="text-xs text-neutral-500 mt-1">Maneuver, steer, and parallel park in narrow valet spots through infinite levels of blockades.</p>
+            </div>
+            <div className="border-t border-amber-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "car-parking")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("car-parking")} className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-800">Start Parking</button>
+            </div>
+          </div>
+
+          {/* 15. Bungoma Soccer Cup */}
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">⚽</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Bungoma Soccer Cup</h3>
+              <p className="text-xs text-neutral-500 mt-1">Dribble bypass sliding defense lines, aim, and execute penalty strikes to score goalposts!</p>
+            </div>
+            <div className="border-t border-emerald-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "soccer-challenge")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("soccer-challenge")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Kickoff Match</button>
+            </div>
+          </div>
+
+          {/* 16. Endless Temple Run */}
+          <div className="rounded-2xl border border-orange-200 bg-orange-50/5 p-5 flex flex-col justify-between">
+            <div>
+              <span className="text-3xl">🏃‍♂️</span>
+              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Endless Temple Run</h3>
+              <p className="text-xs text-neutral-500 mt-1">Sprint infinitely through Auburn Canyons or Rural Green Jungles, jumping, sliding, and dodging wild boulders!</p>
+            </div>
+            <div className="border-t border-orange-200 pt-3 mt-4 flex items-center justify-between">
+              <span className="text-xs text-stone-500 font-mono">High Score: {scores.find((s) => s.gameId === "temple-run")?.highScore || 0} pts</span>
+              <button onClick={() => setActiveGame("temple-run")} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700">Enter Temple</button>
             </div>
           </div>
         </div>

@@ -18,6 +18,17 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
   // Navigation & books data
   const [selectedBook, setSelectedBook] = useState<Book>(books[0] || INITIAL_BOOKS[0]);
   
+  // Keep selectedBook synchronized dynamically with incoming books array
+  useEffect(() => {
+    if (books && books.length > 0) {
+      if (!selectedBook || !books.some((b) => b.id === selectedBook.id)) {
+        setSelectedBook(books[0]);
+      }
+    } else {
+      setSelectedBook(null as any);
+    }
+  }, [books]);
+
   // 3D parameters
   const [rotateX, setRotateX] = useState<number>(-12);
   const [rotateY, setRotateY] = useState<number>(25);
@@ -189,7 +200,7 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
   };
 
   const currentLighting = getLightingStyles();
-  const currentAssetImage = useCustomAsset && customAssetUrl ? customAssetUrl : selectedBook.coverImage;
+  const currentAssetImage = useCustomAsset && customAssetUrl ? customAssetUrl : selectedBook?.coverImage;
 
   // Custom text handler
   const handleAssetUrlSubmit = (e: React.FormEvent) => {
@@ -256,6 +267,30 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
     setAutoRotate(true);
   };
 
+  if (!selectedBook) {
+    return (
+      <div id="ai_3d_asset_room_container" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-8 select-none text-left">
+        <div className="rounded-2xl bg-gradient-to-r from-teal-900 via-slate-900 to-indigo-950 text-white p-6 sm:p-8 text-left shadow-2xl relative overflow-hidden">
+          <div className="relative z-10 space-y-3">
+            <span className="bg-teal-500/20 text-teal-200 border border-teal-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+              INTERACTIVE WEBGL & CSS3D ROOM
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight font-display">
+              3D Interactive Book Loft
+            </h2>
+          </div>
+        </div>
+        <div className="flex flex-col items-center justify-center p-12 text-center text-stone-500 font-mono space-y-3 py-24 bg-stone-55 rounded-2xl border border-dashed border-stone-200 shadow-xs">
+          <BookOpen className="h-10 w-10 text-stone-300 mx-auto animate-pulse" />
+          <h4 className="font-bold text-stone-800 text-xs uppercase text-slate-950">No catalog books available in store</h4>
+          <p className="text-[11px] max-w-sm mx-auto text-stone-450 leading-relaxed">
+            Please navigate to the Admin Console to upload custom books onto the digital library.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="ai_3d_asset_room_container" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-8 select-none text-left">
       
@@ -306,7 +341,7 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
                     <img 
                       src={b.coverImage} 
                       alt={b.title} 
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain bg-stone-50"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
                       <span className="text-[10px] text-white font-black font-mono">LOAD</span>

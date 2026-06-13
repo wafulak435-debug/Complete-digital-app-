@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
+import { motion } from "motion/react";
 import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage } from "../types";
 import { BADGES } from "../data";
 import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye } from "lucide-react";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import SecureBookReader from "./SecureBookReader";
 
 interface DashboardProps {
@@ -15,7 +17,27 @@ interface DashboardProps {
   uploadRequests: MemberUploadRequest[];
   communityMessages: CommunityMessage[];
   onRemoveWishlist: (id: string) => void;
+  onAddNewDocument?: (doc: SavedDocument) => void;
 }
+
+const getBookProgress = (bookId: string, totalPages: number) => {
+  const saved = localStorage.getItem(`wafula_bookmark_${bookId}`);
+  if (saved) {
+    const pageNum = parseInt(saved, 10);
+    if (!isNaN(pageNum) && pageNum > 0 && totalPages > 0) {
+      return Math.min(100, Math.round((pageNum / totalPages) * 100));
+    }
+  }
+  return 0; // Not started
+};
+
+const getBookLastReadPage = (bookId: string) => {
+  const saved = localStorage.getItem(`wafula_bookmark_${bookId}`);
+  if (saved) {
+    return parseInt(saved, 10) || 1;
+  }
+  return 1;
+};
 
 export default function Dashboard({
   currentUser,
@@ -27,12 +49,146 @@ export default function Dashboard({
   savedDocuments,
   uploadRequests,
   communityMessages,
-  onRemoveWishlist
+  onRemoveWishlist,
+  onAddNewDocument
 }: DashboardProps) {
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState(30);
   const [userStreak, setUserStreak] = useState(5);
   const [loggedMinutes, setLoggedMinutes] = useState(15);
   const [readingBook, setReadingBook] = useState<Book | null>(null);
+
+  const [monthlyLogs, setMonthlyLogs] = useState<{ dateStr: string; label: string; minutes: number }[]>([]);
+  const [syllabusProgress, setSyllabusProgress] = useState<any[]>([]);
+
+  useEffect(() => {
+    const userMail = currentUser?.email || "guest@wafula.com";
+    const gradesKey = `WAFULA_STUDENT_GRADES_${userMail}`;
+    const gradesStr = localStorage.getItem(gradesKey);
+    let grades: Record<string, any> = {};
+    if (gradesStr) {
+      try {
+        grades = JSON.parse(gradesStr);
+      } catch (_) {}
+    }
+
+    const defaultTopics = [
+      { id: "visionary_leadership", name: "Visionary Leadership" },
+      { id: "effective_communication", name: "Effective Communication" },
+      { id: "project_finance", name: "Project Finance & Audit" },
+      { id: "conflict_resolution", name: "Conflict Resolution" },
+      { id: "it_infrastructure", name: "IT Infrastructure" },
+      { id: "software_engineering", name: "Software Engineering" }
+    ];
+
+    const customList = Object.keys(grades)
+      .filter(id => id.startsWith("ai_class_"))
+      .map(id => ({
+        id,
+        name: grades[id].topic
+      }));
+
+    const allSyllabusTopics = [...defaultTopics, ...customList];
+
+    const chartData = allSyllabusTopics.map(topic => {
+      const record = grades[topic.id];
+      return {
+        name: topic.name.split(" ").slice(0, 2).join(" "),
+        fullName: topic.name,
+        Score: record ? record.score : 0,
+        Completed: record ? 100 : 0
+      };
+    });
+
+    setSyllabusProgress(chartData);
+  }, [currentUser]);
+
+  // Generate date list for past 30 days
+  const generatePast30Days = () => {
+    const list = [];
+    const today = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(today.getDate() - i);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+      const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      list.push({ dateStr, label, minutes: 0 });
+    }
+    return list;
+  };
+
+  useEffect(() => {
+    const baseDays = generatePast30Days();
+    const stored = localStorage.getItem("WAFULA_MONTHLY_READS_LOG");
+    let logsMap: Record<string, number> = {};
+    
+    if (stored) {
+      try {
+        logsMap = JSON.parse(stored);
+      } catch (e) {
+        console.warn("Could not parse WAFULA_MONTHLY_READS_LOG, initializing", e);
+      }
+    } else {
+      const seeded: Record<string, number> = {};
+      baseDays.forEach((day, idx) => {
+        if (idx === baseDays.length - 1) {
+          seeded[day.dateStr] = loggedMinutes;
+        } else {
+          const randSeed = (idx * 11) % 13;
+          seeded[day.dateStr] = randSeed === 0 ? 0 : Math.round(10 + randSeed * 3);
+        }
+      });
+      localStorage.setItem("WAFULA_MONTHLY_READS_LOG", JSON.stringify(seeded));
+      logsMap = seeded;
+    }
+
+    const todayStr = new Date().toISOString().split("T")[0];
+    logsMap[todayStr] = loggedMinutes;
+
+    const merged = baseDays.map(day => ({
+      ...day,
+      minutes: typeof logsMap[day.dateStr] === 'number' ? logsMap[day.dateStr] : 0
+    }));
+
+    setMonthlyLogs(merged);
+  }, [loggedMinutes]);
+
+  const updateMonthlyLog = (additionalMins: number) => {
+    try {
+      const stored = localStorage.getItem("WAFULA_MONTHLY_READS_LOG") || "{}";
+      const logsMap: Record<string, number> = JSON.parse(stored);
+      const todayStr = new Date().toISOString().split("T")[0];
+      const todayMins = logsMap[todayStr] || 0;
+      logsMap[todayStr] = Math.max(0, todayMins + additionalMins);
+      localStorage.setItem("WAFULA_MONTHLY_READS_LOG", JSON.stringify(logsMap));
+    } catch (e) {
+      console.warn("Failed to update monthly logs in localStorage:", e);
+    }
+  };
+
+  const resetTodayMonthlyLog = () => {
+    try {
+      const stored = localStorage.getItem("WAFULA_MONTHLY_READS_LOG") || "{}";
+      const logsMap: Record<string, number> = JSON.parse(stored);
+      const todayStr = new Date().toISOString().split("T")[0];
+      logsMap[todayStr] = 0;
+      localStorage.setItem("WAFULA_MONTHLY_READS_LOG", JSON.stringify(logsMap));
+    } catch (e) {
+      console.warn("Failed to reset monthly log entry:", e);
+    }
+  };
+
+  const mockWeekData = [
+    { name: "Mon", MinutesRead: 25, Goal: 30 },
+    { name: "Tue", MinutesRead: 40, Goal: 30 },
+    { name: "Wed", MinutesRead: 15, Goal: 35 },
+    { name: "Thu", MinutesRead: 35, Goal: 35 },
+    { name: "Fri", MinutesRead: 55, Goal: 40 },
+    { name: "Sat", MinutesRead: 20, Goal: 40 },
+    { name: "Today", MinutesRead: loggedMinutes, Goal: dailyGoalMinutes }
+  ];
 
   // Resume Reading bookmark states
   const [lastReadBook, setLastReadBook] = useState<Book | null>(null);
@@ -119,11 +275,13 @@ export default function Dashboard({
     const updated = Math.max(0, loggedMinutes + mins);
     setLoggedMinutes(updated);
     localStorage.setItem("WAFULA_LOGGED_MINUTES_TODAY", updated.toString());
+    updateMonthlyLog(mins);
   };
 
   const handleResetMinutes = () => {
     setLoggedMinutes(0);
     localStorage.setItem("WAFULA_LOGGED_MINUTES_TODAY", "0");
+    resetTodayMonthlyLog();
   };
 
   const myPurchasedBooks = books.filter((b) => purchasedBookIds.includes(b.id));
@@ -268,47 +426,67 @@ export default function Dashboard({
       <div className="grid gap-4 md:grid-cols-4 select-none">
         
         {/* Streak indicator */}
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 flex items-center space-x-4">
-          <div className="rounded-full bg-red-50 p-4 text-red-750">
-            <Zap className="h-6 w-6 animate-pulse fill-red-600" />
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.05 }}
+          className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 flex items-center space-x-4 shadow-xs"
+        >
+          <div className="rounded-full bg-red-50 dark:bg-red-955/35 p-4 text-red-750 shrink-0">
+            <Zap className="h-6 w-6 animate-pulse fill-red-600 dark:fill-red-500" />
           </div>
           <div className="text-left">
-            <span className="text-stone-400 text-[10px] font-mono font-bold uppercase block">STREAK GOAL</span>
-            <strong className="text-neutral-900 text-lg font-extrabold">{userStreak} Days Active</strong>
-            <span className="text-[10px] text-green-700 font-bold block mt-0.5">🔥 High Performance</span>
+            <span className="text-stone-400 dark:text-stone-550 text-[10px] font-mono font-bold uppercase block">STREAK GOAL</span>
+            <strong className="text-neutral-900 dark:text-white text-lg font-extrabold">{userStreak} Days Active</strong>
+            <span className="text-[10px] text-green-700 dark:text-green-400 font-bold block mt-0.5">🔥 High Performance</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Ebooks owned */}
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 flex items-center space-x-4">
-          <div className="rounded-full bg-stone-50 p-4 text-stone-750">
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 flex items-center space-x-4 shadow-xs"
+        >
+          <div className="rounded-full bg-stone-50 dark:bg-stone-800 p-4 text-stone-750 dark:text-stone-300 shrink-0">
             <BookOpen className="h-6 w-6" />
           </div>
           <div className="text-left">
-            <span className="text-stone-400 text-[10px] font-mono font-bold uppercase block">LIBRARY EXPEDITION</span>
-            <strong className="text-neutral-900 text-lg font-extrabold">{myPurchasedBooks.length} E-Books</strong>
-            <span className="text-[10px] text-stone-500 block mt-0.5">Purchased & Authorized</span>
+            <span className="text-stone-400 dark:text-stone-550 text-[10px] font-mono font-bold uppercase block">LIBRARY EXPEDITION</span>
+            <strong className="text-neutral-900 dark:text-white text-lg font-extrabold">{myPurchasedBooks.length} E-Books</strong>
+            <span className="text-[10px] text-stone-500 dark:text-stone-405 block mt-0.5">Purchased & Authorized</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Badges unlocked */}
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 flex items-center space-x-4">
-          <div className="rounded-full bg-amber-50 p-4 text-amber-705">
-            <Trophy className="h-6 w-6 fill-amber-400" />
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 flex items-center space-x-4 shadow-xs"
+        >
+          <div className="rounded-full bg-amber-50 dark:bg-amber-955/30 p-4 text-amber-705 dark:text-amber-300 shrink-0">
+            <Trophy className="h-6 w-6 fill-amber-400 dark:fill-amber-550" />
           </div>
           <div className="text-left">
-            <span className="text-stone-400 text-[10px] font-mono font-bold uppercase block">ACHIEVEMENTS</span>
-            <strong className="text-neutral-900 text-lg font-extrabold">{unlockedBadgeIds.length} / 5 Badges</strong>
-            <span className="text-[10px] text-amber-700 font-bold block mt-0.5">Unleashed and saved</span>
+            <span className="text-stone-400 dark:text-stone-550 text-[10px] font-mono font-bold uppercase block">ACHIEVEMENTS</span>
+            <strong className="text-neutral-900 dark:text-white text-lg font-extrabold">{unlockedBadgeIds.length} / 5 Badges</strong>
+            <span className="text-[10px] text-amber-700 dark:text-amber-400 font-bold block mt-0.5">Unleashed and saved</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Dynamic minute slider tracker */}
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 text-left flex flex-col justify-between md:col-span-1 shadow-sm">
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 text-left flex flex-col justify-between md:col-span-1 shadow-sm"
+        >
           <div>
-            <div className="flex justify-between items-center text-[10px] font-mono font-bold text-stone-500 uppercase">
+            <div className="flex justify-between items-center text-[10px] font-mono font-bold text-stone-500 dark:text-stone-400 uppercase">
               <span>Goal Calibration</span>
-              <span className="text-red-700 font-extrabold text-sm">{dailyGoalMinutes} min</span>
+              <span className="text-red-700 dark:text-red-400 font-extrabold text-sm">{dailyGoalMinutes} min</span>
             </div>
             
             <input
@@ -318,30 +496,35 @@ export default function Dashboard({
               step="5"
               value={dailyGoalMinutes}
               onChange={(e) => handleUpdateGoal(parseInt(e.target.value))}
-              className="w-full h-1.5 bg-neutral-150 rounded-lg accent-blue-600 cursor-pointer mt-3"
+              className="w-full h-1.5 bg-neutral-150 dark:bg-stone-800 rounded-lg accent-blue-600 cursor-pointer mt-3"
             />
-            <span className="text-[9px] text-stone-400 block mt-2 font-mono leading-tight">Drag to calibrate your target reading minutes today.</span>
+            <span className="text-[9px] text-stone-400 dark:text-stone-500 block mt-2 font-mono leading-tight">Drag to calibrate your target reading minutes today.</span>
           </div>
 
-          <div className="border-t pt-3.5 mt-3 space-y-1.5">
-            <span className="text-[10px] font-bold text-slate-400 font-mono uppercase block">Logged Today:</span>
+          <div className="border-t border-stone-150 dark:border-stone-800 pt-3.5 mt-3 space-y-1.5">
+            <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 font-mono uppercase block">Logged Today:</span>
             <div className="flex items-center space-x-2">
-              <span className="text-2xl font-black font-mono text-slate-900">{loggedMinutes}</span>
-              <span className="text-[11px] text-slate-400 font-semibold font-mono">minutes total</span>
+              <span className="text-2xl font-black font-mono text-slate-900 dark:text-white">{loggedMinutes}</span>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500 font-semibold font-mono">minutes total</span>
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* Beautiful high-contrast visual progress bar card spanning wider layouts */}
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 text-left flex flex-col justify-between md:col-span-1 shadow-sm">
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.25 }}
+          className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 text-left flex flex-col justify-between md:col-span-1 shadow-sm"
+        >
           <div>
-            <div className="flex justify-between items-center text-[10px] font-mono font-bold text-stone-500 uppercase mb-2">
+            <div className="flex justify-between items-center text-[10px] font-mono font-bold text-stone-500 dark:text-stone-405 uppercase mb-2">
               <span>Progress Status</span>
-              <span className="text-blue-600 font-black font-mono text-xs">{Math.min(100, Math.round((loggedMinutes / dailyGoalMinutes) * 100))}%</span>
+              <span className="text-blue-600 dark:text-blue-400 font-black font-mono text-xs">{Math.min(100, Math.round((loggedMinutes / dailyGoalMinutes) * 100))}%</span>
             </div>
 
             {/* Visual progress bar with filling gradient */}
-            <div className="w-full h-5 bg-slate-100 rounded-lg overflow-hidden border border-slate-250 relative">
+            <div className="w-full h-5 bg-slate-100 dark:bg-stone-950 rounded-lg overflow-hidden border border-slate-250 dark:border-stone-800 relative">
               <div 
                 className="h-full bg-gradient-to-r from-blue-600 to-emerald-500 transition-all duration-500 ease-out flex items-center justify-end pr-2 text-[9px] font-bold text-white font-mono"
                 style={{ width: `${Math.min(100, Math.round((loggedMinutes / dailyGoalMinutes) * 100))}%` }}
@@ -353,7 +536,7 @@ export default function Dashboard({
             </div>
 
             {/* Dynamic context motivator statement block */}
-            <div className="mt-3 text-[10px] text-slate-500 leading-normal font-sans italic">
+            <div className="mt-3 text-[10px] text-slate-500 dark:text-stone-400 leading-normal font-sans italic">
               {loggedMinutes === 0 && "🌱 Starting your daily study! Log some minutes below."}
               {loggedMinutes > 0 && loggedMinutes < dailyGoalMinutes * 0.5 && "📖 You've made standard starts! Keep the momentum heading high."}
               {loggedMinutes >= dailyGoalMinutes * 0.5 && loggedMinutes < dailyGoalMinutes && "🚀 Over the halfway milestone! Almost there."}
@@ -361,26 +544,26 @@ export default function Dashboard({
             </div>
           </div>
 
-          <div className="border-t pt-3 mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="border-t border-stone-150 dark:border-stone-800 pt-3 mt-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => handleLogMinutes(10)}
-                className="bg-stone-50 hover:bg-stone-100 text-stone-800 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 transition"
+                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
               >
                 +10 min
               </button>
               <button
                 type="button"
                 onClick={() => handleLogMinutes(25)}
-                className="bg-stone-50 hover:bg-stone-100 text-stone-800 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 transition"
+                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
               >
                 +25 min
               </button>
               <button
                 type="button"
                 onClick={() => handleLogMinutes(50)}
-                className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-black px-2.5 py-1 rounded-lg border border-blue-200 transition"
+                className="bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 text-[10px] font-black px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800 transition cursor-pointer"
               >
                 +50 min
               </button>
@@ -389,13 +572,210 @@ export default function Dashboard({
             <button
               type="button"
               onClick={handleResetMinutes}
-              className="text-red-600 hover:text-red-750 text-[9px] font-bold py-1 hover:underline font-mono"
+              className="text-red-600 hover:text-red-750 dark:text-red-400 dark:hover:text-red-300 text-[9px] font-bold py-1 hover:underline font-mono cursor-pointer"
             >
               Reset
             </button>
           </div>
-        </div>
+        </motion.div>
       </div>
+
+      {/* Week Progress Recharts Analysis Section */}
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.3 }}
+        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-6 text-left shadow-sm space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-3 gap-2">
+          <div>
+            <h3 className="font-display text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+              <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+              <span>Weekly Reading Performance Monitor</span>
+            </h3>
+            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Analytic visualizer: minutes achieved vs daily goal</p>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] font-mono font-bold">
+            <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+              <span className="h-2 w-2 rounded-full bg-indigo-650" />
+              Minutes Achieved
+            </span>
+            <span className="flex items-center gap-1 text-red-500">
+              <span className="h-2 w-2 rounded-full bg-red-550" />
+              Daily target Goal
+            </span>
+          </div>
+        </div>
+
+        <div className="h-64 sm:h-72 w-full pr-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={mockWeekData}
+              margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.3} />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fill: '#4b5563', fontSize: 10, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <YAxis 
+                tick={{ fill: '#4b5563', fontSize: 10, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: '#ffffff', 
+                  borderRadius: '12px', 
+                  border: '1px solid #e2e8f0',
+                  color: '#1e293b',
+                  fontSize: '11px',
+                  fontWeight: 700
+                }}
+              />
+              <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '10px', fontWeight: 700 }} />
+              <Bar dataKey="MinutesRead" name="Minutes Achieved" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Goal" name="Goal target" fill="#ef4444" radius={[4, 4, 0, 0]} opacity={0.8} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </motion.div>
+
+      {/* Academy Academic Progress & Topic Exam Scores Recharts Section */}
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.32 }}
+        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-6 text-left shadow-sm space-y-4"
+        id="academy_scores_recharts_section"
+      >
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-3 gap-2">
+          <div>
+            <h3 className="font-display text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+              <Trophy className="h-4 w-4 text-amber-500 animate-pulse" />
+              <span>Syllabus Completion & Exam Scores Monitor</span>
+            </h3>
+            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Academic tracking: syllabus completion vs exam achievements</p>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] font-mono font-bold">
+            <span className="flex items-center gap-1 text-[#10b981] dark:text-[#34d399]">
+              <span className="h-2 w-2 rounded-full bg-[#10b981]" />
+              Syllabus Completed (%)
+            </span>
+            <span className="flex items-center gap-1 text-[#b91c1c] dark:text-rose-450">
+              <span className="h-2 w-2 rounded-full bg-[#b91c1c]" />
+              Exam Score (%)
+            </span>
+          </div>
+        </div>
+
+        <div className="h-68 sm:h-76 w-full pr-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={syllabusProgress}
+              margin={{ top: 15, right: 10, left: -20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.3} />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fill: '#4b5563', fontSize: 9, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <YAxis 
+                tick={{ fill: '#4b5563', fontSize: 10, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: '#ffffff', 
+                  borderRadius: '12px', 
+                  border: '1px solid #e2e8f0',
+                  color: '#1e293b',
+                  fontSize: '11px',
+                  fontWeight: 700
+                }}
+                formatter={(value: any, name: any, props: any) => {
+                  return [`${value}%`, name === "Score" ? "Highest Score" : "Topic Completed"];
+                }}
+              />
+              <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '10px', fontWeight: 700 }} />
+              <Bar dataKey="Completed" name="Syllabus Progress" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.7} />
+              <Bar dataKey="Score" name="Exam Scores" fill="#b91c1c" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </motion.div>
+
+      {/* Past Month Recharts Line Analysis Section */}
+      <motion.div 
+        initial={{ opacity: 0, y: 15 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.35 }}
+        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-6 text-left shadow-sm space-y-4"
+        id="monthly_reading_performance_section"
+      >
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-3 gap-2">
+          <div>
+            <h3 className="font-display text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
+              <Compass className="h-4 w-4 text-emerald-600 dark:text-emerald-450" />
+              <span>Zion Digital • Monthly Reading Monitor</span>
+            </h3>
+            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Line analysis: daily logged reading minutes over the past 30 days</p>
+          </div>
+          <div className="flex items-center gap-4 text-[10.5px] font-mono font-bold">
+            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              Logged Reading Minutes
+            </span>
+            <span className="text-[10px] text-stone-300">|</span>
+            <span className="text-stone-500 dark:text-stone-400 font-bold bg-neutral-100 dark:bg-stone-800 px-2 py-0.5 rounded">
+              30-Day Period
+            </span>
+          </div>
+        </div>
+
+        <div className="h-64 sm:h-72 w-full pr-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={monthlyLogs}
+              margin={{ top: 15, right: 15, left: -20, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" opacity={0.3} vertical={false} />
+              <XAxis 
+                dataKey="label" 
+                tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <YAxis 
+                tick={{ fill: '#64748b', fontSize: 9, fontWeight: 700 }} 
+                axisLine={{ stroke: '#cbd5e1' }}
+              />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: '#ffffff', 
+                  borderRadius: '12px', 
+                  border: '1px solid #e2e8f0',
+                  color: '#0f172a',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                }}
+                labelStyle={{ fontWeight: 'bold', color: '#10b981' }}
+              />
+              <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '10px', fontWeight: 700, display: 'none' }} />
+              <Line 
+                type="monotone" 
+                dataKey="minutes" 
+                name="Minutes Read" 
+                stroke="#10b981" 
+                strokeWidth={3} 
+                dot={{ r: 2, fill: '#10b981', strokeWidth: 1 }} 
+                activeDot={{ r: 6, strokeWidth: 0, fill: '#10b981' }} 
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </motion.div>
 
       <div className="grid gap-6 lg:grid-cols-12 text-xs">
         {/* Left Library Purchases Area */}
@@ -424,12 +804,34 @@ export default function Dashboard({
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
                 {myPurchasedBooks.map((b) => (
-                  <div key={b.id} className="rounded-xl border border-stone-150 p-3.5 flex items-start space-x-3.5 bg-neutral-50">
-                    <img src={b.coverImage} className="w-16 h-20 rounded object-cover shadow border shrink-0" alt="Cover" />
+                  <div key={b.id} className="rounded-xl border border-stone-150 dark:border-stone-800 p-3.5 flex items-start space-x-3.5 bg-neutral-50 dark:bg-stone-900/40">
+                    <div className="w-16 h-20 rounded shadow border shrink-0 overflow-hidden bg-white flex items-center justify-center">
+                      <img src={b.coverImage} className="w-full h-full object-contain" alt="Cover" />
+                    </div>
                     
                     <div className="flex-1 min-w-0 text-left space-y-1">
-                      <h4 className="font-bold text-stone-850 truncate">{b.title}</h4>
-                      <p className="text-[10px] text-stone-400 font-mono">Author: {b.author}</p>
+                      <h4 className="font-bold text-stone-850 dark:text-stone-100 truncate">{b.title}</h4>
+                      <p className="text-[10px] text-stone-400 dark:text-stone-500 font-mono">Author: {b.author}</p>
+                      
+                      {/* Visual Progress Indicator */}
+                      {(() => {
+                        const progress = getBookProgress(b.id, b.pages);
+                        const lastPage = getBookLastReadPage(b.id);
+                        return (
+                          <div className="py-1">
+                            <div className="flex justify-between items-center text-[9px] font-mono leading-none mb-1">
+                              <span className="text-stone-400 dark:text-stone-500 font-bold">Progress</span>
+                              <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{progress}% (P. {lastPage}/{b.pages})</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-stone-200 dark:bg-stone-800 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300" 
+                                style={{ width: `${progress || 4}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })()}
                       
                       <div className="flex flex-wrap gap-2 pt-1">
                         <button
@@ -566,6 +968,7 @@ export default function Dashboard({
           hasPaid={purchasedBookIds.includes(readingBook.id)}
           isAdmin={currentUser?.role === "admin"}
           onClose={() => setReadingBook(null)}
+          onAddNewDocument={onAddNewDocument}
         />
       )}
 

@@ -3,13 +3,13 @@ import {
   query, where, orderBy, limit, addDoc 
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { User, Book, CommunityMessage, SavedDocument, MemberUploadRequest } from "../types";
+import { User, Book, CommunityMessage, SavedDocument, MemberUploadRequest, AppSettings, BookOrder, SystemNotification, WifiPurchase } from "../types";
 
 /**
  * Normalizes Firebase Firestore permission-denied errors into structured JSON.
  */
-function handleFirestoreError(error: any, operationName: string): never {
-  console.error(`Firestore error in ${operationName}:`, error);
+function handleFirestoreError(error: any, operationName: string): any {
+  console.warn(`Firestore warning in ${operationName}:`, error);
   if (error && (error.code === "permission-denied" || error.message?.includes("insufficient permissions"))) {
     throw new Error(JSON.stringify({
       code: "PERMISSION_DENIED",
@@ -17,7 +17,33 @@ function handleFirestoreError(error: any, operationName: string): never {
       details: error.message || "Missing or insufficient permissions"
     }));
   }
+  
+  // If connection is unavailable/offline, do not throw. Treat as graceful offline-first queueing success representation.
+  if (error && (error.code === "unavailable" || error.message?.includes("Could not reach Cloud Firestore backend") || error.message?.includes("unavailable") || error.message?.includes("Connection failed"))) {
+    console.log(`[Offline Sync Queue] Operation '${operationName}' stored in offline state buffers. Will background sync when connection resumes.`);
+    return; // Returns gracefully instead of crashing the UI
+  }
+  
   throw error;
+}
+
+/**
+ * Cleanse objects of `undefined` values recursively to make them fully safe for Firestore serialization.
+ */
+function sanitizeForFirestore(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore);
+  }
+  if (typeof obj === "object") {
+    const cleaned: any = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      cleaned[key] = val === undefined ? null : sanitizeForFirestore(val);
+    }
+    return cleaned;
+  }
+  return obj;
 }
 
 /**
@@ -29,20 +55,53 @@ export async function syncUserSession(userId: string, email: string, name: strin
     const docSnap = await getDoc(userDocRef);
     
     if (docSnap.exists()) {
-      return docSnap.data() as User;
+      const existing = docSnap.data() as User;
+      const lowerEmail = email.toLowerCase().trim();
+      const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
+                      lowerEmail === "wafula435@gmail.com";
+      if (isAdmin && existing.role !== "admin") {
+        existing.role = "admin";
+        await setDoc(userDocRef, { role: "admin" }, { merge: true });
+      }
+      try {
+        localStorage.setItem(`WAFULA_CACHED_USER_${userId}`, JSON.stringify(existing));
+      } catch (_) {}
+      return existing;
     } else {
+      const lowerEmail = email.toLowerCase().trim();
+      const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
+                      lowerEmail === "wafula435@gmail.com";
       const newUser: User = {
         email,
         name,
-        role: (email === "wafulak435@gmail.com" || email === "wafula435@gmail.com") ? "admin" : "member",
+        role: isAdmin ? "admin" : "member",
         readingStreak: 1,
         dailyGoalMinutes: 30
       };
-      await setDoc(userDocRef, newUser);
+      await setDoc(userDocRef, sanitizeForFirestore(newUser));
+      try {
+        localStorage.setItem(`WAFULA_CACHED_USER_${userId}`, JSON.stringify(newUser));
+      } catch (_) {}
       return newUser;
     }
   } catch (e) {
-    return handleFirestoreError(e, "syncUserSession");
+    console.warn("Offline/unreachable firestore user session sync. Returning fallback:", e);
+    const cachedObj = localStorage.getItem(`WAFULA_CACHED_USER_${userId}`);
+    if (cachedObj) {
+      try {
+        return JSON.parse(cachedObj) as User;
+      } catch (_) {}
+    }
+    const lowerEmail = email.toLowerCase().trim();
+    const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
+                    lowerEmail === "wafula435@gmail.com";
+    return {
+      email,
+      name,
+      role: isAdmin ? "admin" : "member",
+      readingStreak: 1,
+      dailyGoalMinutes: 30
+    };
   }
 }
 
@@ -56,9 +115,21 @@ export async function fetchBooksFromFirestore(): Promise<Book[]> {
     querySnapshot.forEach((docSnap) => {
       booksList.push({ ...docSnap.data() } as Book);
     });
+    if (booksList.length > 0) {
+      try {
+        localStorage.setItem("WAFULA_CACHED_BOOKS", JSON.stringify(booksList));
+      } catch (_) {}
+    }
     return booksList;
   } catch (e) {
-    return handleFirestoreError(e, "fetchBooksFromFirestore");
+    console.warn("Offline/unreachable firestore books fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_BOOKS");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as Book[];
+      } catch (_) {}
+    }
+    return [];
   }
 }
 
@@ -67,7 +138,7 @@ export async function fetchBooksFromFirestore(): Promise<Book[]> {
  */
 export async function saveBookToFirestore(book: Book): Promise<void> {
   try {
-    await setDoc(doc(db, "books", book.id), book);
+    await setDoc(doc(db, "books", book.id), sanitizeForFirestore(book));
   } catch (e) {
     handleFirestoreError(e, "saveBookToFirestore");
   }
@@ -107,7 +178,7 @@ export async function fetchCommunityMessagesFromFirestore(): Promise<CommunityMe
  */
 export async function saveCommunityMessageToFirestore(msg: CommunityMessage): Promise<void> {
   try {
-    await setDoc(doc(db, "communityMessages", msg.id), msg);
+    await setDoc(doc(db, "communityMessages", msg.id), sanitizeForFirestore(msg));
   } catch (e) {
     handleFirestoreError(e, "saveCommunityMessageToFirestore");
   }
@@ -135,9 +206,19 @@ export async function fetchSavedDocumentsFromFirestore(userId: string): Promise<
     querySnapshot.forEach((docSnap) => {
       docList.push({ ...docSnap.data() } as SavedDocument);
     });
+    try {
+      localStorage.setItem(`WAFULA_CACHED_SAVED_DOCUMENTS_${userId}`, JSON.stringify(docList));
+    } catch (_) {}
     return docList;
   } catch (e) {
-    return handleFirestoreError(e, "fetchSavedDocumentsFromFirestore");
+    console.warn("Offline/unreachable firestore docs fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem(`WAFULA_CACHED_SAVED_DOCUMENTS_${userId}`);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as SavedDocument[];
+      } catch (_) {}
+    }
+    return [];
   }
 }
 
@@ -146,7 +227,7 @@ export async function fetchSavedDocumentsFromFirestore(userId: string): Promise<
  */
 export async function saveDocumentToFirestore(docObj: SavedDocument): Promise<void> {
   try {
-    await setDoc(doc(db, "savedDocuments", docObj.id), docObj);
+    await setDoc(doc(db, "savedDocuments", docObj.id), sanitizeForFirestore(docObj));
   } catch (e) {
     handleFirestoreError(e, "saveDocumentToFirestore");
   }
@@ -173,9 +254,25 @@ export async function fetchUploadRequestsFromFirestore(): Promise<MemberUploadRe
     querySnapshot.forEach((docSnap) => {
       uploadList.push({ ...docSnap.data() } as MemberUploadRequest);
     });
+    try {
+      localStorage.setItem("WAFULA_CACHED_UPLOAD_REQUESTS", JSON.stringify(uploadList));
+    } catch (_) {}
     return uploadList;
   } catch (e) {
-    return handleFirestoreError(e, "fetchUploadRequestsFromFirestore");
+    console.warn("Offline/unreachable firestore upload requests fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_UPLOAD_REQUESTS");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as MemberUploadRequest[];
+      } catch (_) {}
+    }
+    const localQueue = localStorage.getItem("WAFULA_MEMBER_UPLOADS");
+    if (localQueue) {
+      try {
+        return JSON.parse(localQueue) as MemberUploadRequest[];
+      } catch (_) {}
+    }
+    return [];
   }
 }
 
@@ -184,7 +281,7 @@ export async function fetchUploadRequestsFromFirestore(): Promise<MemberUploadRe
  */
 export async function saveUploadRequestToFirestore(reqObj: MemberUploadRequest): Promise<void> {
   try {
-    await setDoc(doc(db, "uploadRequests", reqObj.id), reqObj);
+    await setDoc(doc(db, "uploadRequests", reqObj.id), sanitizeForFirestore(reqObj));
   } catch (e) {
     handleFirestoreError(e, "saveUploadRequestToFirestore");
   }
@@ -200,3 +297,215 @@ export async function deleteUploadRequestFromFirestore(id: string): Promise<void
     handleFirestoreError(e, "deleteUploadRequestFromFirestore");
   }
 }
+
+/**
+ * Fetch eBook order requests required for Admin Confirmation before receiving
+ */
+export async function fetchBookOrdersFromFirestore(): Promise<BookOrder[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "bookOrders"));
+    const orderList: BookOrder[] = [];
+    querySnapshot.forEach((docSnap) => {
+      orderList.push({ ...docSnap.data() } as BookOrder);
+    });
+    try {
+      localStorage.setItem("WAFULA_CACHED_BOOK_ORDERS", JSON.stringify(orderList));
+    } catch (_) {}
+    return orderList;
+  } catch (e) {
+    console.warn("Offline/unreachable firestore book orders fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_BOOK_ORDERS");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as BookOrder[];
+      } catch (_) {}
+    }
+    return [];
+  }
+}
+
+/**
+ * Save new or update current book order
+ */
+export async function saveBookOrderToFirestore(orderObj: BookOrder): Promise<void> {
+  try {
+    await setDoc(doc(db, "bookOrders", orderObj.id), sanitizeForFirestore(orderObj));
+  } catch (e) {
+    handleFirestoreError(e, "saveBookOrderToFirestore");
+  }
+}
+
+/**
+ * Delete a book purchase order
+ */
+export async function deleteBookOrderFromFirestore(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "bookOrders", id));
+  } catch (e) {
+    handleFirestoreError(e, "deleteBookOrderFromFirestore");
+  }
+}
+
+/**
+ * Fetch global application settings from Firestore
+ */
+export async function fetchAppSettingsFromFirestore(): Promise<AppSettings | null> {
+  try {
+    const docSnap = await getDoc(doc(db, "appSettings", "globalPreferences"));
+    if (docSnap.exists()) {
+      const data = docSnap.data() as AppSettings;
+      try {
+        localStorage.setItem("WAFULA_CACHED_APP_SETTINGS", JSON.stringify(data));
+      } catch (_) {}
+      return data;
+    }
+    return null;
+  } catch (e) {
+    console.warn("Offline or failed fetching Firestore app settings, loading local fallback cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_APP_SETTINGS");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as AppSettings;
+      } catch (_) {}
+    }
+    return {
+      primaryColor: "#3B82F6",
+      fontSizeMultiplier: 1.0,
+      customLogoUrl: ""
+    };
+  }
+}
+
+/**
+ * Save global settings to Firestore (Admins only)
+ */
+export async function saveAppSettingsToFirestore(settings: AppSettings): Promise<void> {
+  try {
+    try {
+      localStorage.setItem("WAFULA_CACHED_APP_SETTINGS", JSON.stringify(settings));
+    } catch (_) {}
+    await setDoc(doc(db, "appSettings", "globalPreferences"), sanitizeForFirestore(settings));
+  } catch (e) {
+    console.warn("Could not save to remote Firestore due to offline/permission state. Cached locally.", e);
+  }
+}
+
+/**
+ * Fetch broadcast system notifications
+ */
+export async function fetchNotificationsFromFirestore(): Promise<SystemNotification[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "notifications"));
+    const notifications: SystemNotification[] = [];
+    querySnapshot.forEach((docSnap) => {
+      notifications.push({ ...docSnap.data() } as SystemNotification);
+    });
+    try {
+      localStorage.setItem("WAFULA_CACHED_NOTIFICATIONS", JSON.stringify(notifications));
+    } catch (_) {}
+    return notifications;
+  } catch (e) {
+    console.warn("Offline/unreachable firestore notifications fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_NOTIFICATIONS");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as SystemNotification[];
+      } catch (_) {}
+    }
+    return [];
+  }
+}
+
+/**
+ * Save / broadcast a new notification
+ */
+export async function saveNotificationToFirestore(notif: SystemNotification): Promise<void> {
+  try {
+    await setDoc(doc(db, "notifications", notif.id), sanitizeForFirestore(notif));
+  } catch (e) {
+    handleFirestoreError(e, "saveNotificationToFirestore");
+  }
+}
+
+/**
+ * Fetch WiFi pack purchases
+ */
+export async function fetchWifiPurchasesFromFirestore(): Promise<WifiPurchase[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "wifiPurchases"));
+    const list: WifiPurchase[] = [];
+    querySnapshot.forEach((docSnap) => {
+      list.push({ ...docSnap.data() } as WifiPurchase);
+    });
+    try {
+      localStorage.setItem("WAFULA_CACHED_WIFI_PURCHASES", JSON.stringify(list));
+    } catch (_) {}
+    return list;
+  } catch (e) {
+    console.warn("Offline/unreachable firestore wifi purchases fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_WIFI_PURCHASES");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as WifiPurchase[];
+      } catch (_) {}
+    }
+    return [];
+  }
+}
+
+/**
+ * Save new or update current WiFi hotspot bundle purchase
+ */
+export async function saveWifiPurchaseToFirestore(purchase: WifiPurchase): Promise<void> {
+  try {
+    await setDoc(doc(db, "wifiPurchases", purchase.id), sanitizeForFirestore(purchase));
+  } catch (e) {
+    handleFirestoreError(e, "saveWifiPurchaseToFirestore");
+  }
+}
+
+/**
+ * Delete a WiFi hotspot purchase receipt
+ */
+export async function deleteWifiPurchaseFromFirestore(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "wifiPurchases", id));
+  } catch (e) {
+    handleFirestoreError(e, "deleteWifiPurchaseFromFirestore");
+  }
+}
+
+/**
+ * Log user activity for real-time administrative monitoring
+ */
+export async function logUserActivity(
+  userEmail: string,
+  userName: string,
+  actionType: string,
+  details: string
+): Promise<void> {
+  try {
+    const timestamp = new Date().toISOString();
+    const formattedDate = new Date().toLocaleString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+    const logId = "act_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    await setDoc(doc(db, "user_activities", logId), {
+      id: logId,
+      userEmail,
+      userName: userName || userEmail.split("@")[0] || "Anonymous Scholar",
+      actionType,
+      details,
+      timestamp,
+      formattedDate
+    });
+  } catch (err) {
+    console.warn("Could not log user activity to Firestore:", err);
+  }
+}
+

@@ -17,7 +17,12 @@ service cloud.firestore {
     }
     
     function isEmailAdmin() {
-      return isSignedIn() && (request.auth.token.email == "wafulak435@gmail.com" || request.auth.token.email == "wafula435@gmail.com");
+      return isSignedIn() && (
+        request.auth.token.email == "wafulak435@gmail.com" || 
+        request.auth.token.email == "wafula435@gmail.com" || 
+        request.auth.token.email == "wafulak4@gmail.com" || 
+        request.auth.token.email == "wafulak003@gmail.com"
+      );
     }
 
     function isAdmin() {
@@ -46,9 +51,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Global App Settings
+    match /appSettings/{settingsId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Digital Books collection
     match /books/{bookId} {
-      allow read: if resource == null || resource.data.status == "active" || isAdmin();
+      allow read: if true;
       allow write: if isAdmin();
     }
 
@@ -97,6 +108,28 @@ service cloud.firestore {
       allow create: if isSignedIn() && isOwner(incoming().userId);
       allow update: if isSignedIn() && isOwner(existing().userId) && isOwner(incoming().userId);
       allow delete: if isSignedIn() && isOwner(existing().userId) || isAdmin();
+    }
+
+    // eBook purchases and verification orders
+    match /bookOrders/{orderId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // System Broadcast Notifications
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // WiFi Hotspot Packages Purchases
+    match /wifiPurchases/{purchaseId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
   }
 }

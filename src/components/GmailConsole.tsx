@@ -784,7 +784,17 @@ export default function GmailConsole() {
                   </div>
 
                   <div className="flex-grow overflow-y-auto max-h-[400px] space-y-2">
-                    {filteredEmails.length === 0 ? (
+                    {isFetchingEmails ? (
+                      <div className="space-y-3 animate-pulse">
+                        {[1, 2, 3, 4].map((i) => (
+                          <div key={i} className="p-3.5 rounded-xl border border-stone-150-100 bg-stone-50/50 dark:bg-stone-900/40 space-y-2">
+                            <div className="h-2 bg-stone-200 dark:bg-stone-700 rounded w-1/4"></div>
+                            <div className="h-3 bg-stone-300 dark:bg-stone-600 rounded w-3/4"></div>
+                            <div className="h-2 bg-stone-200 dark:bg-stone-700 rounded w-5/6"></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : filteredEmails.length === 0 ? (
                       <div className="text-center py-20 text-slate-400">
                         <p className="text-lg">📬</p>
                         <p className="font-bold text-slate-840">Inbox is Clear</p>

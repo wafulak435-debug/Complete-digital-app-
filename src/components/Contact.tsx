@@ -53,7 +53,7 @@ export default function Contact() {
 
               {/* Email */}
               <a 
-                href="mailto:wafulak033@mail.com" 
+                href="mailto:wafulak435@gmail.com" 
                 className="flex items-start space-x-3.5 group rounded-xl p-3 hover:bg-neutral-50 transition"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 transition group-hover:bg-red-700 group-hover:text-white">
@@ -61,7 +61,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-neutral-400 upper tracking-wider font-mono">Email Address</p>
-                  <p className="text-sm font-bold text-neutral-800 group-hover:text-red-700 transition">wafulak033@mail.com</p>
+                  <p className="text-sm font-bold text-neutral-800 group-hover:text-red-700 transition">wafulak435@gmail.com</p>
                   <p className="text-[11px] text-stone-500">Expect replies within a few hours</p>
                 </div>
               </a>

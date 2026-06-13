@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { motion } from "motion/react";
 import { Sparkles, Trash2, Link2, Plus, ArrowUp, Send, Play, Music, Youtube, HelpCircle, History, RefreshCw, Layers, Mic, MicOff } from "lucide-react";
 import { SearchHistoryItem, PersonalLink } from "../types";
 
@@ -10,15 +11,22 @@ interface AIChatProps {
 export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
   const [activeCategory, setActiveCategory] = useState<string>("Assistant"); // Assistant, Problem Solver, Project Plan
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string }[]>([]);
+  const [enableGoogleSearch, setEnableGoogleSearch] = useState(false);
+  const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string; groundingSources?: { title: string; uri: string }[] }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [historyList, setHistoryList] = useState<SearchHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
   // States for Voice transcription
   const [isListening, setIsListening] = useState(false);
+  const [isMicPaused, setIsMicPaused] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
   const [micStateError, setMicStateError] = useState(false);
+
+  // States for Audio Read Aloud (TTS synthesizer)
+  const [readingIndex, setReadingIndex] = useState<number | null>(null);
+  const [isTtsPaused, setIsTtsPaused] = useState(false);
 
   // States for Personal Link Saver
   const [savedLinks, setSavedLinks] = useState<PersonalLink[]>([]);
@@ -32,6 +40,12 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
+  const isMicPausedRef = useRef(false);
+
+  // Keep ref synchronized for recognition closure access
+  useEffect(() => {
+    isMicPausedRef.current = isMicPaused;
+  }, [isMicPaused]);
 
   // Load history and personal links on launch
   useEffect(() => {
@@ -56,6 +70,9 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
         rec.lang = "en-US";
         
         rec.onresult = (e: any) => {
+          // If microphone transcription is explicitly paused, ignore callbacks
+          if (isMicPausedRef.current) return;
+
           let text = "";
           for (let i = e.resultIndex; i < e.results.length; ++i) {
             text += e.results[i][0].transcript;
@@ -72,6 +89,7 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
 
         rec.onend = () => {
           setIsListening(false);
+          setIsMicPaused(false);
         };
 
         setRecognition(rec);
@@ -79,10 +97,20 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
     }
   }, []);
 
+  // Cancel speech synthesis on component destroy to prevent persistent talking across navigation views
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
   const simulateVoiceTyping = (text: string) => {
     let index = 0;
     setPrompt("");
     const interval = setInterval(() => {
+      if (isMicPausedRef.current) return; // Freeze typing simulation when paused!
       if (index < text.length) {
         setPrompt((p) => p + text[index]);
         index++;
@@ -103,9 +131,11 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
         }
       }
       setIsListening(false);
+      setIsMicPaused(false);
     } else {
       setMicStateError(false);
       setIsListening(true);
+      setIsMicPaused(false);
       if (recognition) {
         try {
           recognition.start();
@@ -117,6 +147,58 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
         // Fallback simulation text
         simulateVoiceTyping("Can you explain how the AI publisher converts a photo scan into clean Markdown text?");
       }
+    }
+  };
+
+  // Sound Synth Synthesizer read aloud functions
+  const handleStartTTS = (text: string, index: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel(); // Stop any other message readings first
+
+    // Strip Markdown symbols for a cleaner visual auditory experience
+    const cleanSpeechText = text
+      .replace(/[*#`_\-]/g, "")
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1");
+
+    const utterance = new SpeechSynthesisUtterance(cleanSpeechText);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+
+    utterance.onend = () => {
+      setReadingIndex(null);
+      setIsTtsPaused(false);
+    };
+
+    utterance.onerror = () => {
+      setReadingIndex(null);
+      setIsTtsPaused(false);
+    };
+
+    setReadingIndex(index);
+    setIsTtsPaused(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handlePauseTTS = () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.pause();
+      setIsTtsPaused(true);
+    }
+  };
+
+  const handleResumeTTS = () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.resume();
+      setIsTtsPaused(false);
+    }
+  };
+
+  const handleStopTTS = () => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setReadingIndex(null);
+      setIsTtsPaused(false);
     }
   };
 
@@ -166,13 +248,31 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
     });
   };
 
+  const handleMultipleImagesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      const fileArray = Array.from(files) as File[];
+      fileArray.forEach((file) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (reader.result) {
+            setAttachedImages((prev) => [...prev, reader.result as string]);
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
   // Speaks/queries Gemini
   const handleSendPrompt = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim() || isProcessing) return;
 
     const userText = prompt.trim();
+    const currentImages = [...attachedImages];
     setPrompt("");
+    setAttachedImages([]);
     setMessages((prev) => [...prev, { role: "user", text: userText }]);
     setIsProcessing(true);
 
@@ -183,12 +283,14 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
         body: JSON.stringify({
           prompt: userText,
           category: activeCategory,
-          history: messages
+          history: messages,
+          images: currentImages,
+          enableGoogleSearch: enableGoogleSearch
         })
       });
       const data = await response.json();
       if (data.success) {
-        setMessages((prev) => [...prev, { role: "model", text: data.text }]);
+        setMessages((prev) => [...prev, { role: "model", text: data.text, groundingSources: data.groundingSources }]);
         // Save searches persistently linked to profiles
         handleSaveHistoryItem(userText, data.text, activeCategory);
         if (activeCategory === "Problem Solver") {
@@ -267,7 +369,7 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
   const myHistory = historyList.filter((item) => item.userId === (currentUser?.email || "anonymous"));
 
   return (
-    <div id="ai_workspace_panel" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 relative">
+    <div id="ai_workspace_panel" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 relative">
       <div ref={topRef} />
       
       <div className="grid gap-6 lg:grid-cols-12">
@@ -284,8 +386,8 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
                 <p className="text-[11px] text-stone-500 font-mono">Your personal knowledge companion</p>
               </div>
 
-              <div className="flex bg-neutral-100 p-1 rounded-xl text-[10px] uppercase tracking-wider font-bold">
-                {["Assistant", "Problem Solver", "Project Plan"].map((cat) => (
+              <div className="flex flex-wrap bg-neutral-100 p-1 rounded-xl text-[10px] uppercase tracking-wider font-bold gap-1 sm:gap-0">
+                {["Assistant", "Problem Solver", "Project Plan", "AI Note Generator"].map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
@@ -311,24 +413,122 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
                 </div>
               ) : (
                 messages.map((m, mIdx) => (
-                  <div key={mIdx} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[85w] rounded-2xl p-4 text-xs leading-relaxed shadow-xs ${
+                  <motion.div
+                    key={mIdx}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22, ease: "easeOut" }}
+                    className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}
+                  >
+                    <div className={`max-w-[85%] rounded-2xl p-4 text-xs leading-relaxed shadow-xs ${
                       m.role === "user" 
                         ? "bg-red-700 text-white rounded-br-none" 
                         : "bg-white text-stone-850 rounded-bl-none border border-stone-150"
                     }`}>
                       <p className="whitespace-pre-wrap">{m.text}</p>
+
+                      {/* Grounded Web Search Sources */}
+                      {m.role === "model" && m.groundingSources && m.groundingSources.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-emerald-100 space-y-1.5">
+                          <span className="block text-[9px] uppercase font-mono tracking-wider text-emerald-600 font-extrabold">
+                            🌐 Grounded Google Search References
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {m.groundingSources.map((src, sIdx) => (
+                              <a
+                                key={sIdx}
+                                href={src.uri}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 text-[9.5px] bg-emerald-50 text-emerald-800 border border-emerald-150 hover:bg-emerald-100 hover:text-emerald-950 transition px-2 py-0.5 rounded-lg font-sans no-underline font-semibold"
+                              >
+                                <span className="text-[8px]">🔗</span>
+                                <span className="max-w-[140px] truncate">{src.title}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Integrated Audio Read Aloud controls for AI Responses */}
+                      {m.role === "model" && (
+                        <div className="mt-3 pt-2.5 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2 text-stone-550 text-[10.5px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="flex h-1.5 w-1.5 relative">
+                              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 ${readingIndex === mIdx && !isTtsPaused ? "block" : "hidden"}`}></span>
+                              <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${readingIndex === mIdx ? "bg-red-600" : "bg-stone-300"}`}></span>
+                            </span>
+                            <span className="font-mono text-[9px] font-bold text-stone-405 uppercase">AUDITORY ASSISTANT</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-1 bg-stone-100 rounded-lg p-0.5">
+                            {readingIndex === mIdx ? (
+                              <>
+                                {isTtsPaused ? (
+                                  <button
+                                    type="button"
+                                    onClick={handleResumeTTS}
+                                    className="px-2 py-0.5 rounded text-[9px] bg-red-700 text-white font-bold hover:bg-neutral-900 flex items-center gap-1 text-center cursor-pointer"
+                                    title="Resume speech synthesis narration"
+                                  >
+                                    <Play className="h-2 w-2 fill-current" />
+                                    <span>Resume</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={handlePauseTTS}
+                                    className="px-2 py-0.5 rounded text-[9px] bg-amber-500 text-white font-bold hover:bg-amber-600 flex items-center gap-1 text-center cursor-pointer"
+                                    title="Pause synthesis"
+                                  >
+                                    <svg className="h-2 w-2 fill-current" viewBox="0 0 24 24">
+                                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                                    </svg>
+                                    <span>Pause</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleStopTTS}
+                                  className="px-2 py-0.5 rounded text-[9px] bg-stone-500 text-white font-bold hover:bg-stone-600 flex items-center gap-1 text-center cursor-pointer"
+                                  title="Stop synthesis narration completely"
+                                >
+                                  <svg className="h-2 w-2 fill-current bg-white rounded-xs" viewBox="0 0 24 24">
+                                    <rect width="24" height="24"/>
+                                  </svg>
+                                  <span>Stop</span>
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleStartTTS(m.text, mIdx)}
+                                className="px-2.5 py-0.5 rounded text-[9px] bg-stone-900 text-white font-bold hover:bg-red-750 flex items-center gap-1 text-center cursor-pointer"
+                                title="Synthesize response audio out loud"
+                              >
+                                <Play className="h-2 w-2 fill-current" />
+                                <span>Read Aloud</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  </motion.div>
                 ))
               )}
               {isProcessing && (
-                <div className="flex justify-start">
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex justify-start"
+                >
                   <div className="bg-white rounded-2xl rounded-bl-none p-4 text-xs font-semibold text-stone-500 border flex items-center space-x-2">
                     <RefreshCw className="h-4 w-4 animate-spin text-red-700" />
                     <span>Gemini is compiling an intelligent solution...</span>
                   </div>
-                </div>
+                </motion.div>
               )}
               <div ref={bottomRef} />
             </div>
@@ -336,18 +536,58 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
              {/* Direct Input prompt footer and top-shortcut */}
              <div className="space-y-2">
                {isListening && (
-                 <div className="text-[10px] text-blue-700 bg-blue-50/80 border border-blue-105 p-2 rounded-xl flex items-center justify-between animate-pulse">
-                   <span className="flex items-center gap-1.5 font-semibold">
-                     <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-ping" />
-                     🎤 Speaking now... Speak clearly. Or witness our interactive verbal dictation simulation fallback.
-                   </span>
-                   <button 
-                     type="button" 
-                     onClick={() => setIsListening(false)} 
-                     className="text-blue-600 font-bold hover:underline"
-                   >
-                     Cancel
-                   </button>
+                 <div className="text-[11px] text-stone-800 bg-amber-50/90 border border-amber-200 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 shadow-sm animate-pulse">
+                   <div className="flex items-center gap-2">
+                     <span className="relative flex h-2 w-2">
+                       <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isMicPaused ? "bg-amber-400" : "bg-red-500"}`}></span>
+                       <span className={`relative inline-flex rounded-full h-2 w-2 ${isMicPaused ? "bg-amber-500" : "bg-red-650"}`}></span>
+                     </span>
+                     <span className="font-semibold text-stone-705">
+                       {isMicPaused ? "🎤 Microphone Transcription Paused" : "🎤 Speaking Now... Dictating text into prompt field"}
+                     </span>
+                   </div>
+                   <div className="flex items-center gap-1.5 self-end sm:self-auto text-[10px] uppercase font-bold">
+                     {isMicPaused ? (
+                       <button
+                         type="button"
+                         onClick={() => setIsMicPaused(false)}
+                         className="px-2 py-0.5 rounded bg-stone-900 text-white hover:bg-stone-850 flex items-center gap-1 cursor-pointer transition active:scale-95"
+                         title="Resume microphone listener"
+                       >
+                         <Play className="h-2 w-2 fill-current" />
+                         <span>Resume Voice</span>
+                       </button>
+                     ) : (
+                       <button
+                         type="button"
+                         onClick={() => setIsMicPaused(true)}
+                         className="px-2 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1 cursor-pointer transition active:scale-95"
+                         title="Pause microphone listener temporarily"
+                       >
+                         <svg className="h-2.5 w-2.5 fill-current" viewBox="0 0 24 24">
+                           <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                         </svg>
+                         <span>Pause Voice</span>
+                       </button>
+                     )}
+                     <button
+                       type="button"
+                       onClick={() => {
+                         if (recognition) {
+                           try { recognition.stop(); } catch (_) {}
+                         }
+                         setIsListening(false);
+                         setIsMicPaused(false);
+                       }}
+                       className="px-2 py-0.5 rounded bg-red-650 text-white hover:bg-red-750 flex items-center gap-1 cursor-pointer transition active:scale-95"
+                       title="Stop speech recognition dictation"
+                     >
+                       <svg className="h-2 w-2 fill-current bg-white rounded-xs" viewBox="0 0 24 24">
+                         <rect width="24" height="24"/>
+                       </svg>
+                       <span>Stop Mic</span>
+                     </button>
+                   </div>
                  </div>
                )}
                {micStateError && (
@@ -355,7 +595,81 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
                    ⚠️ <strong>Local sandboxes / iFrame structures can block real Microphone access.</strong> Open in a new tab for native Web Audio, or toggle the microphone to experience our automatic verbal question simulation typing!
                  </div>
                )}
+               {/* Attached Images Indicator Panel with No Limits */}
+               {attachedImages.length > 0 && (
+                 <div className="flex flex-wrap gap-2 p-2.5 bg-stone-100 rounded-xl border border-stone-200 w-full mb-2">
+                   <div className="w-full text-[9px] font-mono text-stone-500 font-bold uppercase tracking-wider mb-1 flex justify-between items-center">
+                     <span>🔗 ATTACHED SCHOLASTIC PROOFS ({attachedImages.length})</span>
+                     <button
+                       type="button"
+                       onClick={() => setAttachedImages([])}
+                       className="text-red-650 hover:underline text-[9px] font-extrabold uppercase font-mono bg-transparent border-0 cursor-pointer"
+                     >
+                       Wipe attachments
+                     </button>
+                   </div>
+                   {attachedImages.map((img, idx) => (
+                     <div key={idx} className="relative h-12 w-12 bg-white rounded-lg border border-stone-300 overflow-hidden shrink-0 shadow-xs">
+                       <img src={img} alt="Academic artifact" className="h-full w-full object-cover" />
+                       <button
+                         type="button"
+                         onClick={() => setAttachedImages(attachedImages.filter((_, i) => i !== idx))}
+                         className="absolute bg-red-600 hover:bg-neutral-950 text-white rounded-full font-bold h-3.5 w-3.5 flex items-center justify-center top-0.5 right-0.5 text-[8px] leading-none text-center cursor-pointer"
+                       >
+                         ✕
+                       </button>
+                     </div>
+                   ))}
+                 </div>
+               )}
+
+                {/* Google Grounded Search Selector Row */}
+                <div className="flex items-center justify-between mb-2.5 px-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEnableGoogleSearch(!enableGoogleSearch)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10.5px] font-extrabold border transition shadow-xs cursor-pointer select-none ${
+                        enableGoogleSearch
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-250 hover:bg-emerald-100"
+                          : "bg-stone-50 text-stone-500 border-stone-200 hover:bg-stone-100"
+                      }`}
+                    >
+                      <span>{enableGoogleSearch ? "🟢 Grounded Mode" : "🌐 Standard mode"}</span>
+                      <span>Google Search Grounding: {enableGoogleSearch ? "Enabled" : "Disabled"}</span>
+                    </button>
+                    {enableGoogleSearch && (
+                      <span className="text-[10px] text-emerald-600 font-mono font-black animate-pulse">
+                        DIRECT LIVE INDEX GROUNDING ACTIVE
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">Wafula Search Cloud</span>
+                </div>
+
                <form onSubmit={handleSendPrompt} className="flex gap-2 relative">
+                 <button
+                   type="button"
+                   onClick={() => document.getElementById("ai_multi_image_input")?.click()}
+                   className="rounded-xl px-4 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition active:scale-95 flex items-center justify-center relative border border-stone-150 cursor-pointer shrink-0"
+                   title="Attach multiple images with no limits for analysis"
+                 >
+                   <Plus className="h-4 w-4 text-red-700 font-bold" />
+                   {attachedImages.length > 0 && (
+                     <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-650 text-[8px] font-mono font-black text-white px-1 shadow">
+                       {attachedImages.length}
+                     </span>
+                   )}
+                 </button>
+                 <input
+                   id="ai_multi_image_input"
+                   type="file"
+                   multiple
+                   accept="image/*"
+                   onChange={handleMultipleImagesChange}
+                   className="hidden"
+                 />
+
                  <button
                    type="button"
                    onClick={toggleListening}
@@ -377,7 +691,7 @@ export default function AIChat({ currentUser, onUnlockBadge }: AIChatProps) {
                  />
                  <button
                    type="submit"
-                   disabled={isProcessing || !prompt.trim()}
+                   disabled={isProcessing || (!prompt.trim() && attachedImages.length === 0)}
                    className="rounded-xl bg-red-700 hover:bg-red-800 px-4 py-3 text-white transition active:scale-95 disabled:opacity-45"
                  >
                    <Send className="h-4 w-4" />

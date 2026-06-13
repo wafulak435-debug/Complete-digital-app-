@@ -1,8 +1,9 @@
-const CACHE_NAME = "wafula-reads-v1";
+const CACHE_NAME = "zion-reads-v1";
 const ASSETS_TO_CACHE = [
   "/",
   "/index.html",
-  "/manifest.json"
+  "/manifest.json",
+  "/theological_studies_payload.json"
 ];
 
 // Install Event
@@ -79,6 +80,11 @@ self.addEventListener("fetch", (event) => {
 
   // Default Network-First fallback logic
   if (event.request.method === "GET") {
+    const isHttpOrHttps = requestUrl.protocol === "http:" || requestUrl.protocol === "https:";
+    if (!isHttpOrHttps) {
+      return; // Do not intercept non-http requests like chrome-extension
+    }
+
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
@@ -92,7 +98,7 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() => {
           return caches.match(event.request).then((cached) => {
-            return cached || new Response("Offline content unavailable", { status: 404 });
+            return cached || new Response("Offline content unavailable", { status: 400 });
           });
         })
     );
