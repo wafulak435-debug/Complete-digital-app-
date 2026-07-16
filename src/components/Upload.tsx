@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Upload as UploadIcon, FileText, Video, Image, CheckCircle, RefreshCw, Trash2, HeartHandshake, AlertCircle, Download, Music, Headphones, Eye, Loader2, Search } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Upload as UploadIcon, FileText, Video, Image, CheckCircle, RefreshCw, Trash2, HeartHandshake, AlertCircle, Download, Music, Headphones, Eye, Loader2, Search, Play, Pause, X, Zap, Wifi } from "lucide-react";
 import { MemberUploadRequest, User, AppSettings } from "../types";
 import { getPdfFromOfflineDb } from "../utils/pdfDb";
 
@@ -44,6 +44,15 @@ export default function Upload({
   const [isUploading, setIsUploading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [payingId, setPayingId] = useState<string | null>(null);
+
+  // Real-time file upload simulation states
+  const [activeUploadId, setActiveUploadId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadSpeed, setUploadSpeed] = useState<string>("0.0 MB/s");
+  const [uploadEta, setUploadEta] = useState<string>("Estimating...");
+  const [uploadHealth, setUploadHealth] = useState<"good" | "fair" | "poor" | "interrupted">("good");
+  const [uploadStatusText, setUploadStatusText] = useState<string>("");
+  const [uploadPausedState, setUploadPausedState] = useState<boolean>(false);
 
   // Category and Metadata states
   const [categorySelect, setCategorySelect] = useState<string>("General Education");
@@ -295,95 +304,285 @@ export default function Upload({
     }
     if (!titleInput.trim()) return;
 
+    // Generate unique upload ID
+    const uploadId = "upl_active_" + Date.now();
+    
+    // Setup simulated file size
+    const sizeStr = selectedFile 
+      ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB` 
+      : activeType === "video" ? "120.4 MB" : activeType === "pdf" ? "8.5 MB" : activeType === "audio" ? "4.2 MB" : "1.8 MB";
+
+    // Initialize states
+    setUploadProgress(0);
+    setUploadSpeed("0.0 MB/s");
+    setUploadEta("Estimating...");
+    setUploadHealth("good");
+    setUploadStatusText("Establishing secure connection...");
+    setUploadPausedState(false);
     setIsUploading(true);
-    setTimeout(() => {
-      let duration = audioDurationMeta;
-      let codec = audioCodecMeta;
-      let thumbnail = generatedThumbnail;
+    setActiveUploadId(uploadId);
 
-      if (!selectedFile) {
-        if (activeType === "audio") {
-          duration = "3:30";
-          codec = "audio/mpeg (MP3 High Fidelity)";
-          const canvas = document.createElement("canvas");
-          canvas.width = 240;
-          canvas.height = 150;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            grad.addColorStop(0, "#0f172a");
-            grad.addColorStop(1, "#311042");
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = "#38bdf8";
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.moveTo(0, 75);
-            for (let i = 0; i < 240; i += 7) {
-              ctx.lineTo(i, 75 + Math.sin(i * 0.15) * 22);
-            }
-            ctx.stroke();
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "bold 9px monospace";
-            ctx.fillText(titleInput.toUpperCase().slice(0, 18), 12, 25);
-            ctx.fillStyle = "#fbbf24";
-            ctx.fillText("DURATION: 3:30", 12, 135);
-            thumbnail = canvas.toDataURL("image/jpeg");
-          }
-        } else if (activeType === "video") {
-          const canvas = document.createElement("canvas");
-          canvas.width = 300;
-          canvas.height = 168;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.fillStyle = "#1e293b";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = "rgba(220, 38, 38, 0.4)";
-            ctx.beginPath();
-            ctx.arc(150, 84, 30, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#ef4444";
-            ctx.beginPath();
-            ctx.moveTo(140, 71);
-            ctx.lineTo(168, 84);
-            ctx.lineTo(140, 97);
-            ctx.closePath();
-            ctx.fill();
-            thumbnail = canvas.toDataURL("image/jpeg");
-          }
-        }
-      }
+    // Save initial object to localStorage ongoing list for Admin Panel real-time tracking
+    const initialUpload = {
+      id: uploadId,
+      fileName: selectedFile ? selectedFile.name : (titleInput.trim() + (activeType === "video" ? ".mp4" : activeType === "pdf" ? ".pdf" : activeType === "audio" ? ".mp3" : ".jpg")),
+      fileSize: sizeStr,
+      type: activeType,
+      progress: 0,
+      status: 'uploading',
+      health: 'good',
+      speed: '0.0 MB/s',
+      eta: 'Estimating...',
+      userId: currentUser?.email || 'anonymous',
+      userName: currentUser?.name || 'Anonymous Member',
+      timestamp: new Date().toISOString(),
+      isBoosted: false,
+      statusText: "Establishing connection..."
+    };
 
-      if (customCoverBase64) {
-        thumbnail = customCoverBase64;
-      }
-
-      onAddNewUpload(
-        titleInput.trim(), 
-        activeType, 
-        activeType === "pdf" ? queuedFiles : [],
-        activeType === "audio" ? duration : undefined,
-        activeType === "audio" ? codec : undefined,
-        thumbnail || undefined,
-        selectedFile ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB` : undefined,
-        selectedFile || undefined,
-        categorySelect
-      );
-
-      setIsUploading(false);
-      setSuccess(true);
-      setTitleInput("");
-      setCategorySelect("General Education");
-      setQueuedFiles([]);
-      setNewQueueFileName("");
-      setSelectedFile(null);
-      setAudioDurationMeta("");
-      setAudioCodecMeta("");
-      setGeneratedThumbnail("");
-      setCustomCoverBase64("");
-      setTimeout(() => setSuccess(false), 4000);
-    }, 2000);
+    try {
+      const currentOngoing = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+      localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify([initialUpload, ...currentOngoing]));
+      window.dispatchEvent(new Event("storage"));
+    } catch (err) {
+      console.warn("Could not save initial upload progress state:", err);
+    }
   };
+
+  useEffect(() => {
+    if (!activeUploadId) return;
+
+    const interval = setInterval(() => {
+      // Read ongoing upload status from localStorage to sync with Admin Panel
+      let uploads: any[] = [];
+      try {
+        uploads = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+      } catch (_) {}
+
+      const currentUpload = uploads.find((u: any) => u.id === activeUploadId);
+
+      if (!currentUpload) {
+        // Upload was deleted/removed from outside
+        clearInterval(interval);
+        setIsUploading(false);
+        setActiveUploadId(null);
+        return;
+      }
+
+      // Check for Admin commands:
+      if (currentUpload.status === "cancelled") {
+        clearInterval(interval);
+        try {
+          const remaining = uploads.filter((u: any) => u.id !== activeUploadId);
+          localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(remaining));
+        } catch (_) {}
+        setIsUploading(false);
+        setActiveUploadId(null);
+        setUploadPausedState(false);
+        window.dispatchEvent(new Event("storage"));
+        alert("Upload has been cancelled by Overseer.");
+        return;
+      }
+
+      const isRemotePaused = currentUpload.status === "paused";
+      setUploadPausedState(isRemotePaused);
+
+      if (isRemotePaused) {
+        setUploadStatusText("Paused by Overseer...");
+        setUploadSpeed("0.0 KB/s");
+        setUploadEta("Paused");
+        return;
+      }
+
+      const currentHealthVal = currentUpload.health || "good";
+      setUploadHealth(currentHealthVal);
+
+      if (currentHealthVal === "interrupted") {
+        setUploadStatusText("Connection Interrupted. Retrying signal...");
+        setUploadSpeed("0.0 KB/s");
+        setUploadEta("Reconnecting...");
+        return;
+      }
+
+      // Increment progress based on Health & Speed Boosts
+      let progressVal = currentUpload.progress || 0;
+      let increment = 0;
+
+      if (currentHealthVal === "good") {
+        increment = currentUpload.isBoosted ? Math.floor(Math.random() * 8) + 12 : Math.floor(Math.random() * 4) + 4;
+      } else if (currentHealthVal === "fair") {
+        increment = Math.floor(Math.random() * 3) + 2;
+      } else if (currentHealthVal === "poor") {
+        increment = Math.floor(Math.random() * 2) + 1;
+      }
+
+      progressVal += increment;
+      if (progressVal >= 100) {
+        progressVal = 100;
+      }
+
+      // Calculate Speed & ETA
+      let speedStr = "4.2 MB/s";
+      let etaStr = "8s";
+      if (currentUpload.isBoosted) {
+        speedStr = `${(15 + Math.random() * 10).toFixed(1)} MB/s`;
+        etaStr = `${Math.ceil((100 - progressVal) / 18)}s`;
+      } else if (currentHealthVal === "good") {
+        speedStr = `${(3.5 + Math.random() * 3).toFixed(1)} MB/s`;
+        etaStr = `${Math.ceil((100 - progressVal) / 6)}s`;
+      } else if (currentHealthVal === "fair") {
+        speedStr = `${(1.2 + Math.random() * 1).toFixed(1)} MB/s`;
+        etaStr = `${Math.ceil((100 - progressVal) / 2)}s`;
+      } else if (currentHealthVal === "poor") {
+        speedStr = `${(150 + Math.random() * 150).toFixed(0)} KB/s`;
+        etaStr = `${Math.ceil((100 - progressVal) * 1.5)}s`;
+      }
+
+      if (progressVal >= 100) {
+        speedStr = "0.0 MB/s";
+        etaStr = "Complete";
+      }
+
+      setUploadProgress(progressVal);
+      setUploadSpeed(speedStr);
+      setUploadEta(etaStr);
+
+      // Status messages
+      let statusMsg = "Uploading blocks...";
+      if (progressVal < 20) {
+        statusMsg = "Establishing secure channel...";
+      } else if (progressVal < 50) {
+        statusMsg = activeType === "video" ? "Transcoding and buffer chunking..." : "Reading physical PDF bytes...";
+      } else if (progressVal < 80) {
+        statusMsg = "Uploading blocks to Bungoma node...";
+      } else if (progressVal < 98) {
+        statusMsg = "Verifying MD5 integrity checks...";
+      } else {
+        statusMsg = "Finalizing database catalog indices...";
+      }
+      setUploadStatusText(statusMsg);
+
+      // Update in localStorage
+      currentUpload.progress = progressVal;
+      currentUpload.speed = speedStr;
+      currentUpload.eta = etaStr;
+      currentUpload.status = progressVal >= 100 ? "completed" : "uploading";
+      currentUpload.statusText = statusMsg;
+
+      try {
+        localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(uploads));
+      } catch (_) {}
+
+      // Trigger cross-view synchronization event
+      window.dispatchEvent(new Event("storage"));
+
+      // Complete Upload if reaches 100
+      if (progressVal >= 100) {
+        clearInterval(interval);
+        setTimeout(() => {
+          let duration = audioDurationMeta;
+          let codec = audioCodecMeta;
+          let thumbnail = generatedThumbnail;
+
+          if (!selectedFile) {
+            if (activeType === "audio") {
+              duration = "3:30";
+              codec = "audio/mpeg (MP3 High Fidelity)";
+              const canvas = document.createElement("canvas");
+              canvas.width = 240;
+              canvas.height = 150;
+              const ctx = canvas.getContext("2d");
+              if (ctx) {
+                const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                grad.addColorStop(0, "#0f172a");
+                grad.addColorStop(1, "#311042");
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.strokeStyle = "#38bdf8";
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(0, 75);
+                for (let i = 0; i < 240; i += 7) {
+                  ctx.lineTo(i, 75 + Math.sin(i * 0.15) * 22);
+                }
+                ctx.stroke();
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 9px monospace";
+                ctx.fillText(titleInput.toUpperCase().slice(0, 18), 12, 25);
+                ctx.fillStyle = "#fbbf24";
+                ctx.fillText("DURATION: 3:30", 12, 135);
+                thumbnail = canvas.toDataURL("image/jpeg");
+              }
+            } else if (activeType === "video") {
+              const canvas = document.createElement("canvas");
+              canvas.width = 300;
+              canvas.height = 168;
+              const ctx = canvas.getContext("2d");
+              if (ctx) {
+                ctx.fillStyle = "#1e293b";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "rgba(220, 38, 38, 0.4)";
+                ctx.beginPath();
+                ctx.arc(150, 84, 30, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#ef4444";
+                ctx.beginPath();
+                ctx.moveTo(140, 71);
+                ctx.lineTo(168, 84);
+                ctx.lineTo(140, 97);
+                ctx.closePath();
+                ctx.fill();
+                thumbnail = canvas.toDataURL("image/jpeg");
+              }
+            }
+          }
+
+          if (customCoverBase64) {
+            thumbnail = customCoverBase64;
+          }
+
+          onAddNewUpload(
+            titleInput.trim(), 
+            activeType, 
+            activeType === "pdf" ? queuedFiles : [],
+            activeType === "audio" ? duration : undefined,
+            activeType === "audio" ? codec : undefined,
+            thumbnail || undefined,
+            selectedFile ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB` : undefined,
+            selectedFile || undefined,
+            categorySelect
+          );
+
+          // Clean up states
+          setIsUploading(false);
+          setSuccess(true);
+          setTitleInput("");
+          setCategorySelect("General Education");
+          setQueuedFiles([]);
+          setNewQueueFileName("");
+          setSelectedFile(null);
+          setAudioDurationMeta("");
+          setAudioCodecMeta("");
+          setGeneratedThumbnail("");
+          setCustomCoverBase64("");
+          setActiveUploadId(null);
+
+          // Remove completed upload from active list
+          try {
+            const finalUploads = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+            const cleared = finalUploads.filter((u: any) => u.id !== activeUploadId);
+            localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(cleared));
+          } catch (_) {}
+          
+          window.dispatchEvent(new Event("storage"));
+
+          setTimeout(() => setSuccess(false), 4000);
+        }, 800);
+      }
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [activeUploadId, titleInput, activeType, selectedFile, categorySelect, queuedFiles, customCoverBase64, audioDurationMeta, audioCodecMeta, generatedThumbnail]);
 
   const myUploads = uploadRequests.filter((u) => u.userId?.toLowerCase() === (currentUser?.email?.toLowerCase() || "anonymous"));
   const filteredUploads = myUploads.filter((u) => {
@@ -768,7 +967,7 @@ export default function Upload({
                 >
                   <option value="General Education">General Education</option>
                   <option value="Leadership">Leadership</option>
-                  <option value="Computer School">Computer School</option>
+                  <option value="Bible School">Bible School</option>
                   <option value="Religion">Religion</option>
                   <option value="Enjoyment">Enjoyment</option>
                   <option value="Fun">Fun</option>
@@ -876,22 +1075,123 @@ export default function Upload({
                 </p>
               </div>
 
-              {success ? (
-                <div className="rounded-lg bg-green-50 p-4 text-green-800">
-                  🎉 Draft submission queued successfully! It is now sent to the Admin queue. Check the right-hand Ledger to view real-time validation and pay after approval!
+              {isUploading ? (
+                <div className="rounded-xl border border-stone-200 bg-slate-900 text-white p-5 space-y-4 shadow-lg animate-pulse-subtle">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="bg-red-500/20 text-red-300 border border-red-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded">
+                        {activeType === "video" ? "LARGE-SCALE VIDEO STREAM" : "ACADEMIC DOCUMENT FILE"}
+                      </span>
+                      <h4 className="font-bold text-xs truncate mt-1.5 max-w-[200px] sm:max-w-xs md:max-w-md">
+                        {selectedFile ? selectedFile.name : titleInput || "Untitled Upload"}
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-mono">
+                        Size: {selectedFile ? `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB` : "45.0 MB"}
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <span className={`w-2 h-2 rounded-full ${
+                        uploadHealth === "good" ? "bg-emerald-500 animate-pulse" :
+                        uploadHealth === "fair" ? "bg-amber-500 animate-pulse" :
+                        uploadHealth === "poor" ? "bg-rose-500 animate-pulse" :
+                        "bg-slate-500"
+                      }`} />
+                      <span className="text-[9px] font-bold font-mono uppercase text-slate-300">
+                        {uploadHealth.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar and % Indicator */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center text-xs font-mono">
+                      <span className="text-[10px] text-slate-400 font-semibold truncate max-w-[200px]">{uploadStatusText}</span>
+                      <span className="text-sm font-bold text-red-400 shrink-0">{uploadProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700 p-[1px]">
+                      <div 
+                        className="bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-300 relative"
+                        style={{ width: `${uploadProgress}%` }}
+                      >
+                        <div className="absolute inset-0 bg-white/25 animate-pulse" style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)', backgroundSize: '200% 100%' }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400 bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                    <div>
+                      <span className="block text-slate-500 font-bold">TRANSFER SPEED</span>
+                      <span className="text-slate-200 font-extrabold text-[11px]">{uploadSpeed}</span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-500 font-bold">ESTIMATED ETA</span>
+                      <span className="text-slate-200 font-extrabold text-[11px]">{uploadEta}</span>
+                    </div>
+                  </div>
+
+                  {/* Interactive Controls */}
+                  <div className="flex gap-2 justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                          const idx = logs.findIndex((u: any) => u.id === activeUploadId);
+                          if (idx !== -1) {
+                            const nextStatus = logs[idx].status === "paused" ? "uploading" : "paused";
+                            logs[idx].status = nextStatus;
+                            localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                            setUploadPausedState(nextStatus === "paused");
+                            window.dispatchEvent(new Event("storage"));
+                          }
+                        } catch (_) {}
+                      }}
+                      className="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-750 text-[10px] font-bold rounded-lg text-slate-300 transition flex items-center gap-1 cursor-pointer select-none"
+                    >
+                      {uploadPausedState ? (
+                        <>
+                          <Play className="h-3 w-3 text-emerald-400" />
+                          <span>Resume Stream</span>
+                        </>
+                      ) : (
+                        <>
+                          <Pause className="h-3 w-3 text-amber-400" />
+                          <span>Pause Stream</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        try {
+                          const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                          const idx = logs.findIndex((u: any) => u.id === activeUploadId);
+                          if (idx !== -1) {
+                            logs[idx].status = "cancelled";
+                            localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                            window.dispatchEvent(new Event("storage"));
+                          }
+                        } catch (_) {}
+                      }}
+                      className="px-3 py-1.5 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-900/60 text-[10px] font-bold rounded-lg text-rose-300 transition flex items-center gap-1 cursor-pointer select-none"
+                    >
+                      <X className="h-3 w-3" />
+                      <span>Cancel Stream</span>
+                    </button>
+                  </div>
+                </div>
+              ) : success ? (
+                <div className="rounded-lg bg-green-50 p-4 text-green-800 text-center font-semibold">
+                  🎉 Draft submission queued successfully! Sent to the Admin review desk. View validation states and pay KES 200 fee in the Ledger!
                 </div>
               ) : (
                 <button
                   type="submit"
-                  disabled={isUploading || isRestricted}
-                  className="w-full flex items-center justify-center space-x-2 rounded-lg bg-red-700 hover:bg-neutral-900 text-white font-bold py-3 shadow-md disabled:opacity-45 cursor-pointer"
+                  disabled={isRestricted}
+                  className="w-full flex items-center justify-center space-x-2 rounded-lg bg-red-700 hover:bg-neutral-900 text-white font-bold py-3 shadow-md disabled:opacity-45 cursor-pointer select-none transition-colors duration-150"
                 >
-                  {isUploading ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Transcribing & Submitting Draft...</span>
-                    </>
-                  ) : isRestricted ? (
+                  {isRestricted ? (
                     <>
                       <AlertCircle className="h-4 w-4" />
                       <span>Upload Paused by Admin (Restricted)</span>
@@ -939,7 +1239,7 @@ export default function Upload({
                     <option value="All Categories">All Categories Filter</option>
                     <option value="General Education">General Education</option>
                     <option value="Leadership">Leadership</option>
-                    <option value="Computer School">Computer School</option>
+                    <option value="Bible School">Bible School</option>
                     <option value="Religion">Religion</option>
                     <option value="Enjoyment">Enjoyment</option>
                     <option value="Fun">Fun</option>

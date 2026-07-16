@@ -7,6 +7,7 @@ import {
   Pin, Folder, Activity, Volume2, VolumeX, Battery, BatteryCharging, GripVertical, History
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
+import GoogleSimView from "./GoogleSimView";
 
 interface PhoneApp {
   id: string;
@@ -24,7 +25,7 @@ const apps: PhoneApp[] = [
     name: "Smart Calculator",
     category: "Utilities",
     icon: <Calculator className="h-6 w-6" />,
-    color: "bg-amber-550 border-amber-500 text-amber-600 bg-amber-50",
+    color: "bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-700",
     description: "Perform quick calculations and algebraic operations for agribusiness book balances."
   },
   {
@@ -32,7 +33,7 @@ const apps: PhoneApp[] = [
     name: "Study Journal",
     category: "Scholary",
     icon: <FileText className="h-6 w-6" />,
-    color: "bg-blue-550 border-blue-500 text-blue-600 bg-blue-50",
+    color: "bg-blue-100 hover:bg-blue-200 border-blue-300 text-blue-700",
     description: "Write and persist scholastic thoughts, summaries, and book reviews offline."
   },
   {
@@ -40,33 +41,147 @@ const apps: PhoneApp[] = [
     name: "Daily Planner",
     category: "Utilities",
     icon: <CheckSquare className="h-6 w-6" />,
-    color: "bg-emerald-550 border-emerald-500 text-emerald-600 bg-emerald-50",
+    color: "bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-700",
     description: "Organize pending reads, book study hours, and academic goals."
   },
   {
     id: "browser",
-    name: "AI Web Search & Media Hub",
+    name: "Google Web Browser",
     category: "Scholary",
     icon: <Compass className="h-6 w-6" />,
-    color: "bg-indigo-550 border-indigo-500 text-indigo-600 bg-indigo-50",
-    description: "Search any topic on earth. Watch educational videos, view related photos, and read instant AI summaries."
+    color: "bg-indigo-100 hover:bg-indigo-200 border-indigo-300 text-indigo-705 text-indigo-700",
+    description: "Explore the global web index. Browse Google Search, view visual matches, and open secure educational portals."
   },
   {
     id: "maps",
     name: "Bungoma Map View",
     category: "Maps",
     icon: <Map className="h-6 w-6" />,
-    color: "bg-teal-550 border-teal-500 text-teal-600 bg-teal-50",
+    color: "bg-teal-100 hover:bg-teal-200 border-teal-300 text-teal-700",
     description: "Visual navigation of libraries and educational centers around Western Kenya."
+  },
+  {
+    id: "store",
+    name: "Academic Books Store",
+    category: "Scholary",
+    icon: <BookOpen className="h-6 w-6" />,
+    color: "bg-red-100 hover:bg-red-200 border-red-300 text-red-750",
+    description: "Browse and study premium books, leadership books and technical manuals.",
+    embedUrl: "store"
+  },
+  {
+    id: "devotional",
+    name: "Holy Bible & Devotions",
+    category: "Scholary",
+    icon: <BookOpen className="h-6 w-6" />,
+    color: "bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700",
+    description: "Study Holy scriptures, highlights, bookmarks and write daily devotionals.",
+    embedUrl: "devotional"
+  },
+  {
+    id: "school",
+    name: "Zion Leadership School",
+    category: "Scholary",
+    icon: <Grid className="h-6 w-6" />,
+    color: "bg-purple-100 hover:bg-purple-200 border-purple-300 text-purple-700",
+    description: "Enter theological classes, vocational IT curriculums and take AI tests.",
+    embedUrl: "school"
+  },
+  {
+    id: "companion",
+    name: "AI Scholar Companion",
+    category: "Scholary",
+    icon: <Sparkles className="h-6 w-6" />,
+    color: "bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-700",
+    description: "A free, super fast expert smart model assistant working offline.",
+    embedUrl: "companion"
+  },
+  {
+    id: "studio",
+    name: "Document Creator Studio",
+    category: "Utilities",
+    icon: <FileText className="h-6 w-6" />,
+    color: "bg-sky-100 hover:bg-sky-200 border-sky-300 text-sky-700",
+    description: "Draft critical publications, certificates and homework notes.",
+    embedUrl: "studio"
+  },
+  {
+    id: "gmail",
+    name: "Gmail Console Client",
+    category: "Utilities",
+    icon: <Compass className="h-6 w-6" />,
+    color: "bg-rose-100 hover:bg-rose-200 border-rose-300 text-rose-750",
+    description: "Draft secure professional emails for schools and churches.",
+    embedUrl: "gmail"
+  },
+  {
+    id: "language-teacher",
+    name: "Swahili Language Tutor",
+    category: "Scholary",
+    icon: <Compass className="h-6 w-6" />,
+    color: "bg-green-50 hover:bg-green-100 border-green-200 text-green-700",
+    description: "Translate verbs, nouns and speech tags for East African Swahili.",
+    embedUrl: "language-teacher"
+  },
+  {
+    id: "offline-dictionary",
+    name: "Academic Lexicon",
+    category: "Scholary",
+    icon: <BookOpen className="h-6 w-6" />,
+    color: "bg-orange-100 hover:bg-orange-200 border-orange-300 text-orange-750",
+    description: "A fast, compiled dictionary covering technical terms.",
+    embedUrl: "offline-dictionary"
+  },
+  {
+    id: "youtube_app",
+    name: "YouTube Hub",
+    category: "Entertainment",
+    icon: <Play className="h-6 w-6" />,
+    color: "bg-red-50 hover:bg-red-105 border-red-200 text-red-650",
+    description: "Instant sermon streaming, video tutorials and public bulletins.",
+    embedUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ"
+  },
+  {
+    id: "tiktok_app",
+    name: "TikTok Creativity Core",
+    category: "Entertainment",
+    icon: <Activity className="h-6 w-6" />,
+    color: "bg-neutral-100 hover:bg-neutral-200 border-stone-300 text-stone-850",
+    description: "Browse education summaries, micro lessons and cultural guides.",
+    embedUrl: "https://www.tiktok.com"
+  },
+  {
+    id: "wikipedia_app",
+    name: "Wikipedia World Free",
+    category: "Scholary",
+    icon: <Compass className="h-6 w-6" />,
+    color: "bg-stone-50 hover:bg-stone-100 border-stone-250 text-stone-750",
+    description: "The free online encyclopedia for academic resource verification.",
+    embedUrl: "https://www.wikipedia.org"
+  },
+  {
+    id: "opera_app",
+    name: "Opera Mini Satellite",
+    category: "Utilities",
+    icon: <Compass className="h-6 w-6" />,
+    color: "bg-red-50 hover:bg-red-100 border-red-200 text-red-600",
+    description: "Ultra lightweight browser simulation for lightning fast search.",
+    embedUrl: "https://mini.opera.com"
   }
 ];
 
-export default function HomeApps() {
+export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) => void }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeAppId, setActiveAppId] = useState<string | null>(null);
   
   // Recent Searches state
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  
+  // Custom switch state tracking whether to always launch native full apps directly
+  const [forceNativeLaunch, setForceNativeLaunch] = useState<boolean>(() => {
+    const saved = localStorage.getItem("WAFULA_LAUNCHER_FORCE_NATIVE_v3");
+    return saved !== "false";
+  });
 
   const handleAddNewSearch = (query: string) => {
     const trimmed = query.trim();
@@ -283,7 +398,7 @@ export default function HomeApps() {
   const [newTask, setNewTask] = useState("");
 
   // App specific states: Browser Sim
-  const [browserUrl, setBrowserUrl] = useState("https://en.wikipedia.org/wiki/Bungoma");
+  const [browserUrl, setBrowserUrl] = useState("https://www.google.com");
   const [browserSearch, setBrowserSearch] = useState("Bungoma");
   const [browserSearchMode, setBrowserSearchMode] = useState<"ai_smart" | "legacy_wiki">("ai_smart");
   const [hasSearched, setHasSearched] = useState(true);
@@ -374,12 +489,25 @@ export default function HomeApps() {
   };
 
   const launchApp = (id: string) => {
-    setActiveAppId(id);
+    const app = apps.find((a) => a.id === id);
+    
+    // First, always record app usage statistics
     setAppUsage((prev) => {
-      const updated = { ...prev, [id]: (prev[id] || 0) + 1 };
-      localStorage.setItem("WAFULA_LAUNCHER_USAGE", JSON.stringify(updated));
-      return updated;
+       const updated = { ...prev, [id]: (prev[id] || 0) + 1 };
+       localStorage.setItem("WAFULA_LAUNCHER_USAGE", JSON.stringify(updated));
+       return updated;
     });
+
+    // If forceNativeLaunch option is checked, and we have matching permanent views, navigate to them natively
+    if (forceNativeLaunch && app?.embedUrl && onNavigate) {
+      if (!app.embedUrl.startsWith("http")) {
+        onNavigate(app.embedUrl);
+        return;
+      }
+    }
+
+    // Default launcher micro-simulator load
+    setActiveAppId(id);
   };
 
   const togglePinApp = (id: string, e: React.MouseEvent) => {
@@ -634,6 +762,45 @@ export default function HomeApps() {
           <p className="text-xs text-neutral-500 font-medium">
             Seamlessly launch custom applications and device utility assets within the Wafula sandbox space.
           </p>
+
+          <div className="flex flex-wrap items-center gap-3 mt-3">
+            <span className="text-[10px] uppercase font-black tracking-wider text-slate-400 font-mono">Launch Preference:</span>
+            <div className="inline-flex bg-stone-100 p-0.5 rounded-lg border border-stone-200 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => {
+                  setForceNativeLaunch(true);
+                  localStorage.setItem("WAFULA_LAUNCHER_FORCE_NATIVE_v3", "true");
+                }}
+                className={`px-2.5 py-1 rounded transition flex items-center gap-1 cursor-pointer ${
+                  forceNativeLaunch 
+                    ? "bg-indigo-600 text-white shadow-xs" 
+                    : "text-stone-600 hover:text-stone-900"
+                }`}
+              >
+                <span>⚡ Native (Always Recommended)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setForceNativeLaunch(false);
+                  localStorage.setItem("WAFULA_LAUNCHER_FORCE_NATIVE_v3", "false");
+                }}
+                className={`px-2.5 py-1 rounded transition flex items-center gap-1 cursor-pointer ${
+                  !forceNativeLaunch 
+                    ? "bg-slate-700 text-white shadow-xs" 
+                    : "text-stone-500 hover:text-stone-800"
+                }`}
+              >
+                <span>📱 Simulator</span>
+              </button>
+            </div>
+            <p className="text-[10px] text-stone-500 italic">
+              {forceNativeLaunch 
+                ? "Clicking icons launches our permanent, fully-functional local Zion Apps." 
+                : "Opens smaller simulated views in the mock phone box."}
+            </p>
+          </div>
         </div>
  
         {/* Global Tab Search Bar */}
@@ -1275,25 +1442,255 @@ export default function HomeApps() {
 
               </div>
             ) : (
-              <div className="w-full h-full flex flex-col text-left">
+              <div className="w-full h-full flex flex-col text-left flex-grow overflow-hidden">
                 
                 {/* Simulated App Bar Header */}
-                <div className="flex justify-between items-center bg-slate-900 border-b border-slate-800 p-3 rounded-lg mb-3">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm">📱</span>
-                    <strong className="text-xs uppercase font-mono tracking-wider font-extrabold text-indigo-300">
+                <div className="flex justify-between items-center bg-slate-900 border-b border-slate-800 p-3 rounded-lg mb-3 w-full">
+                  <div className="flex items-center space-x-2 min-w-0">
+                    <span className="text-sm shrink-0">📱</span>
+                    <strong className="text-xs uppercase font-mono tracking-wider font-extrabold text-indigo-300 truncate">
                       {apps.find((a) => a.id === activeAppId)?.name}
                     </strong>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveAppId(null)}
-                    className="p-1 rounded bg-slate-850 text-slate-400 hover:text-white"
-                    title="Close Application"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center space-x-2 shrink-0">
+                    {onNavigate && apps.find((a) => a.id === activeAppId)?.embedUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const emb = apps.find((a) => a.id === activeAppId)?.embedUrl;
+                          if (emb) {
+                            if (emb.startsWith("http")) {
+                              setBrowserUrl(emb);
+                              setActiveAppId("browser");
+                            } else {
+                              onNavigate(emb);
+                            }
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-mono text-[9px] uppercase tracking-wider font-extrabold flex items-center gap-1 transition cursor-pointer"
+                        title="Load in full view screen"
+                      >
+                        <Maximize2 className="h-3 w-3" />
+                        <span>Launch Full</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveAppId(null)}
+                      className="p-1 rounded bg-slate-850 text-slate-400 hover:text-white transition cursor-pointer"
+                      title="Close Application"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
+
+                {/* APP: STORE INTEGRATION */}
+                {activeAppId === "store" && (
+                  <div className="flex-grow flex flex-col space-y-3 h-full overflow-y-auto max-h-[420px] pr-1">
+                    <p className="text-[10px] text-stone-350 italic">Centred micro bookstore preview. Select any volume to load full study course:</p>
+                    <div className="grid grid-cols-2 gap-3 pb-4">
+                      {[
+                        { id: "b1", title: "Vocational Leadership", author: "Wafula Opara", cover: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=200", price: "Free" },
+                        { id: "b2", title: "Agribusiness & Self Reliance", author: "Kelvin Wafula", cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&q=80&w=200", price: "KES 500" }
+                      ].map((bk) => (
+                        <div key={bk.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-center flex flex-col justify-between space-y-2">
+                          <div className="aspect-[3/4] w-full flex items-center justify-center bg-stone-950 border-[6px] border-[#3e2723] rounded-lg shadow p-1 relative">
+                            <img src={bk.cover} className="max-h-full max-w-full object-contain rounded-xs" alt="" referrerPolicy="no-referrer" />
+                          </div>
+                          <div>
+                            <h5 className="text-[10.5px] font-bold text-white truncate">{bk.title}</h5>
+                            <span className="text-[9px] text-stone-400 block">{bk.author}</span>
+                            <span className="text-[9.5px] text-amber-400 font-mono font-bold mt-1 block">{bk.price}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate && onNavigate("store")}
+                            className="w-full py-1 bg-indigo-650 hover:bg-indigo-700 rounded text-[9px] font-semibold uppercase tracking-wider transition cursor-pointer text-white"
+                          >
+                            Read Now
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* APP: HOLY DEVOTIONAL BIBLE */}
+                {activeAppId === "devotional" && (
+                  <div className="flex-grow flex flex-col space-y-3 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2">
+                      <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest block font-mono">🕊️ DAILY DEVOTION VERSE</span>
+                      <blockquote className="italic text-stone-200 border-l-2 border-amber-400 pl-2.5 font-sans">
+                        "I am crucified with Christ: nevertheless I live; yet not I, but Christ liveth in me: and the life which I now live in the flesh I live by the faith of the Son of God, who loved me, and gave himself for me."
+                      </blockquote>
+                      <cite className="block text-right text-[10px] font-mono text-stone-400 font-extrabold">— Galatians 2:20 (KJV)</cite>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1">
+                      <strong className="text-[10.5px] text-indigo-300 block">Offline Concordance Topics</strong>
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        {["Faith & Grace", "Leadership Principles", "Daily Motivation", "Wisdom & Diligence"].map((topic, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => onNavigate && onNavigate("devotional")}
+                            className="p-1.5 rounded bg-slate-950 border border-slate-800 hover:border-amber-400 text-[10px] text-stone-300 text-left truncate cursor-pointer transition"
+                          >
+                            📖 {topic}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* APP: LEADERSHIP SCHOOL */}
+                {activeAppId === "school" && (
+                  <div className="flex-grow flex flex-col space-y-2.5 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <div className="p-3 bg-indigo-950/20 border border-indigo-900/40 rounded-xl">
+                      <strong className="text-white text-[11px] block text-indigo-300">Zion Certified Courses:</strong>
+                      <p className="text-[10px] text-stone-400 leading-relaxed mt-1">
+                        Vocational self-reliance training. Build enterprise modules and local agricultural bookkeeping tracks.
+                      </p>
+                    </div>
+                    {[
+                      { title: "Theology & Hermeneutics", code: "THEO-101", prog: "Finished" },
+                      { title: "Basic IT & Scholar Writing", code: "IT-204", prog: "Start Now" }
+                    ].map((crs, idx) => (
+                      <div key={idx} className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl flex justify-between items-center">
+                        <div>
+                          <strong className="text-[10.5px] block text-white">{crs.title}</strong>
+                          <span className="text-[8.5px] font-mono text-stone-400">{crs.code}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate && onNavigate("school")}
+                          className="px-2 py-1 rounded bg-slate-950 text-[9px] font-bold uppercase tracking-wider text-indigo-400 border border-slate-800 hover:border-indigo-400 transition cursor-pointer"
+                        >
+                          {crs.prog}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* APP: OFFLINE COMPANION */}
+                {activeAppId === "companion" && (
+                  <div className="flex-grow flex flex-col space-y-3 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl text-center space-y-1.5">
+                      <Sparkles className="h-6 w-6 text-amber-300 mx-auto animate-pulse" />
+                      <strong className="block text-[11px] text-white">Smart Offline Assistant</strong>
+                      <p className="text-[10px] text-stone-400 leading-normal">
+                        Use offline AI to analyze agricultural records, vocabulary lexicon references, and scripture indices immediately.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate && onNavigate("companion")}
+                      className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 rounded-xl text-[10px] font-bold uppercase tracking-widest text-white transition cursor-pointer"
+                    >
+                      💬 Start Offline AI Chat
+                    </button>
+                  </div>
+                )}
+
+                {/* APP: DOCUMENT CREATOR STUDIO */}
+                {activeAppId === "studio" && (
+                  <div className="flex-grow flex flex-col space-y-2.5 h-full overflow-y-auto max-h-[420px] pr-1">
+                    <div className="space-y-1.5">
+                      <span className="text-[9px] font-mono font-bold text-stone-400 block uppercase">DRAFT WORK:</span>
+                      <textarea
+                        rows={5}
+                        placeholder="Write your research paper drafts or agribusiness notes..."
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-[11px] text-white outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate && onNavigate("studio")}
+                      className="w-full py-1.5 bg-sky-655 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-[9px] font-extrabold uppercase tracking-widest text-white cursor-pointer"
+                    >
+                      💾 Persist files to Doc Studio
+                    </button>
+                  </div>
+                )}
+
+                {/* APP: GMAIL CLIENT */}
+                {activeAppId === "gmail" && (
+                  <div className="flex-grow flex flex-col space-y-2.5 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl space-y-2">
+                      <span className="text-[9px] font-black uppercase text-red-400 block font-mono">📨 Compose secure console message</span>
+                      <input type="text" placeholder="Recipient (e.g. registry@zion.org)" className="w-full p-2 rounded bg-slate-950 border border-slate-800 text-[10.5px] text-white outline-none" />
+                      <textarea placeholder="Message body..." className="w-full p-2 h-16 rounded bg-slate-950 border border-slate-800 text-[10.5px] text-white outline-none" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate && onNavigate("gmail")}
+                      className="w-full py-1.5 bg-rose-700 hover:bg-rose-800 rounded-xl text-[9px] font-bold uppercase tracking-wider text-white cursor-pointer"
+                    >
+                      🚀 Open Full Sandbox Mail client
+                    </button>
+                  </div>
+                )}
+
+                {/* APP: SWAHILI TEACHER */}
+                {activeAppId === "language-teacher" && (
+                  <div className="flex-grow flex flex-col space-y-2 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <span className="text-[9px] font-black uppercase text-emerald-400 block font-mono">🗣️ VOCABULARY DRILL INDEX</span>
+                    {[
+                      { eng: "Welcome", swa: "Karibu" },
+                      { eng: "Let us learn", swa: "Tujifunze" },
+                      { eng: "Agribusiness", swa: "Biashara ya kilimo" },
+                      { eng: "God bless you", swa: "Mungu akubariki" }
+                    ].map((vcb, i) => (
+                      <div key={i} className="p-2 bg-slate-900 border border-slate-850 rounded-lg flex justify-between items-center font-sans">
+                        <span className="text-stone-300 font-medium">{vcb.eng}</span>
+                        <span className="text-emerald-400 font-extrabold font-mono text-[11px]">{vcb.swa}</span>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => onNavigate && onNavigate("language-teacher")}
+                      className="w-full py-1 bg-slate-950 border border-slate-800 hover:border-emerald-500 rounded text-[9px] font-black uppercase text-center cursor-pointer text-stone-300 mt-2"
+                    >
+                      Expand Language Teacher Modules
+                    </button>
+                  </div>
+                )}
+
+                {/* APP: ACADEMIC LEXICON */}
+                {activeAppId === "offline-dictionary" && (
+                  <div className="flex-grow flex flex-col space-y-2.5 h-full overflow-y-auto max-h-[420px] pr-1 text-xs">
+                    <input type="text" placeholder="Search dictionary definitions..." className="w-full p-2 rounded bg-slate-905 border border-slate-800 text-[10.5px] outline-none" />
+                    <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-1 leading-relaxed">
+                      <strong className="text-amber-400 text-[10.5px] font-mono">Hermeneutics:</strong>
+                      <p className="text-[10px] text-stone-300 font-sans">
+                        The methodology and methodology principles of theological scriptural interpretation.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* APP: GENERIC IN-APP IFRAME HUB FOR WEB SATELLITES */}
+                {(activeAppId === "youtube_app" || activeAppId === "tiktok_app" || activeAppId === "wikipedia_app" || activeAppId === "opera_app") && (() => {
+                  const item = apps.find(a => a.id === activeAppId);
+                  return (
+                    <div className="flex-grow flex flex-col space-y-2 h-full overflow-hidden">
+                      <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center justify-between text-[10px] font-mono text-indigo-300">
+                        <span className="truncate">🌐 {item?.embedUrl}</span>
+                        <span className="text-emerald-400 font-extrabold select-none shrink-0">✓ IN-APP SANDBOX</span>
+                      </div>
+                      <div className="border border-slate-800 rounded-xl overflow-hidden bg-white text-slate-850 flex-grow min-h-[290px] relative">
+                        {/* Interactive local custom browser simulation to avoid X-Frame restrictions */}
+                        <iframe 
+                          src={item?.embedUrl} 
+                          className="w-full h-full border-0 bg-white"
+                          title="Sandbox Iframe Satellite"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* APP 1: CALCULATOR */}
                 {activeAppId === "calculator" && (
@@ -1416,124 +1813,35 @@ export default function HomeApps() {
                   </div>
                 )}
 
-                {/* APP 4: BROWSER / WEB MEDIA & AI KNOWLEDGE HUB */}
+                {/* APP 4: BROWSER / GOOGLE CHROME MOBILE EXPERIENCE */}
                 {activeAppId === "browser" && (
-                  <div className="flex-grow flex flex-col space-y-3 h-full overflow-y-auto max-h-[420px] pr-1">
-                    <form onSubmit={handleSearchWikiSim} className="flex gap-2">
-                      <div className="flex-grow relative">
-                        <input
-                          type="text"
-                          value={browserSearch}
-                          onChange={(e) => setBrowserSearch(e.target.value)}
-                          placeholder="Search anything (e.g., Bungoma, Faith, Leadership, Agribusiness)..."
-                          className="w-full rounded-lg bg-slate-900 border border-slate-800 pl-7 pr-2 py-2 text-xs text-white outline-none"
-                        />
-                        <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-slate-500" />
-                      </div>
-                      <button
-                        type="submit"
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 rounded-lg text-xs font-mono font-bold uppercase shrink-0 flex items-center gap-1.5"
-                      >
-                        <Sparkles className="h-3 w-3 text-amber-300 animate-pulse" />
-                        <span>Search</span>
-                      </button>
-                    </form>
-
-                    {/* Mode Switching Tabs */}
-                    <div className="flex space-x-1 p-1 bg-slate-900 rounded-lg">
-                      <button
+                  <div className="flex-grow flex flex-col space-y-2 h-full overflow-y-auto max-h-[420px] pr-1">
+                    <div className="bg-slate-900 border border-slate-800 px-3 p-1.5 rounded-lg flex items-center justify-between text-[10px] font-mono text-indigo-300">
+                      <span className="truncate">🌐 {browserUrl}</span>
+                      <button 
                         type="button"
-                        onClick={() => setBrowserSearchMode("ai_smart")}
-                        className={`flex-1 py-1 px-2 rounded text-[10px] font-bold uppercase tracking-wider transition ${
-                          browserSearchMode === "ai_smart"
-                            ? "bg-indigo-600 text-white"
-                            : "text-stone-400 hover:text-white"
-                        }`}
+                        onClick={() => setBrowserUrl("https://www.google.com")}
+                        className="text-emerald-450 hover:text-emerald-350 cursor-pointer text-[9.5px] font-bold uppercase tracking-wider bg-slate-950 px-2 py-0.5 rounded border border-slate-800"
                       >
-                        🌟 AI Media Search (Videos, Images & AI)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setBrowserSearchMode("legacy_wiki")}
-                        className={`flex-1 py-1 px-2 rounded text-[10px] font-bold uppercase tracking-wider transition ${
-                          browserSearchMode === "legacy_wiki"
-                            ? "bg-indigo-600 text-white"
-                            : "text-stone-400 hover:text-white"
-                        }`}
-                      >
-                        🌐 Desktop Legacy Wiki
+                        Home
                       </button>
                     </div>
-
-                    {browserSearchMode === "legacy_wiki" ? (
-                      <div className="border border-slate-800 rounded-xl overflow-hidden bg-white text-slate-850 text-xs flex-grow flex flex-col min-h-[300px]">
-                        {/* Browser Simulated Web View */}
-                        <div className="bg-slate-100 px-3 py-1.5 flex items-center justify-between border-b text-[10px] font-mono text-stone-600 select-all">
-                          <span>🌐 {browserUrl}</span>
-                          <span className="text-emerald-700 font-bold">✓ SECURE SHA256</span>
-                        </div>
-                        
+                    <div className="border border-slate-800 rounded-xl overflow-hidden bg-white text-slate-850 flex-grow min-h-[350px] relative">
+                      {browserUrl.startsWith("https://www.google.com") ? (
+                        <GoogleSimView 
+                          iframeUrl={browserUrl} 
+                          onNavigate={(url) => setBrowserUrl(url)} 
+                        />
+                      ) : (
                         <iframe 
                           src={browserUrl} 
-                          className="w-full h-[260px] border-0 bg-white text-black"
-                          title="Wiki Browser Sim"
+                          className="w-full h-full border-0 bg-white"
+                          title="Mobile Sandbox Browser Viewport"
+                          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                          referrerPolicy="no-referrer"
                         />
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {/* AI Summary Card */}
-                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs">🤖</span>
-                            <strong className="text-xs text-amber-400 font-mono uppercase tracking-wider">AI Copilot Search Summary</strong>
-                          </div>
-                          <h4 className="text-sm font-black text-white">{aiResult.title}</h4>
-                          <p className="text-xs text-stone-300 leading-relaxed font-sans">{aiResult.description}</p>
-                        </div>
-
-                        {/* Images Section */}
-                        <div className="space-y-2">
-                          <span className="block text-[10px] font-bold font-mono text-stone-400 uppercase tracking-widest">📷 High-Res Web Image results</span>
-                          <div className="grid grid-cols-3 gap-2">
-                            {aiResult.images.map((img, i) => (
-                              <div key={i} className="group relative rounded-lg overflow-hidden border border-slate-800 bg-slate-900 h-20">
-                                <img
-                                  src={img}
-                                  alt="Search Result visual"
-                                  className="w-full h-full object-cover transition duration-300 group-hover:scale-110"
-                                  referrerPolicy="no-referrer"
-                                />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <span className="text-[8px] font-mono font-bold text-white uppercase tracking-wider bg-black/80 px-1 rounded">View Frame</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Playable Videos Section */}
-                        <div className="space-y-2 pb-2">
-                          <span className="block text-[10px] font-bold font-mono text-stone-400 uppercase tracking-widest">🎥 Streamable Video Feeds (Live Control)</span>
-                          <div className="grid gap-3">
-                            {aiResult.videos.map((vid, idx) => (
-                              <div key={idx} className="bg-slate-905 border border-slate-850 p-2.5 rounded-xl space-y-2">
-                                <span className="block text-xs font-bold text-slate-200">🎬 Video: {vid.title}</span>
-                                
-                                <div className="aspect-video w-full rounded-lg overflow-hidden border border-slate-800 bg-black">
-                                  <iframe
-                                    src={vid.url}
-                                    className="w-full h-full border-0"
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                    title={vid.title}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 )}
 

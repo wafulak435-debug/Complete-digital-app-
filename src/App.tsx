@@ -42,6 +42,7 @@ import OfflineDictionary from "./components/OfflineDictionary";
 import WebsiteCenter from "./components/WebsiteCenter";
 import MpesaApiConsole from "./components/MpesaApiConsole";
 import Announcements from "./components/Announcements";
+import SermonsMotivation from "./components/SermonsMotivation";
 import CertificateVerificationView from "./components/CertificateVerificationView";
 import { savePdfToOfflineDb, getAllOfflinePdfs } from "./utils/pdfDb";
 
@@ -94,7 +95,19 @@ export default function App() {
     customLogoUrl: ""
   });
 
+  const [offlineMode, setOfflineMode] = useState<boolean>(() => {
+    return localStorage.getItem("WAFULA_OFFLINE_MODE") === "true";
+  });
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+
+  const effectiveIsOnline = isOnline && !offlineMode;
+
+  const handleToggleOfflineMode = () => {
+    const nextVal = !offlineMode;
+    setOfflineMode(nextVal);
+    localStorage.setItem("WAFULA_OFFLINE_MODE", String(nextVal));
+    window.dispatchEvent(new Event("storage"));
+  };
 
   // Monitor network status change in real time
   useEffect(() => {
@@ -107,6 +120,28 @@ export default function App() {
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // Listen for global custom navigation events
+  useEffect(() => {
+    const handleCustomNavigation = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && customEvent.detail.view) {
+        const viewStr = customEvent.detail.view;
+        setCurrentView((cur) => {
+          if (viewStr === cur) return cur;
+          setViewHistory((prev) => {
+            if (prev[prev.length - 1] === viewStr) return prev;
+            return [...prev, viewStr];
+          });
+          return viewStr;
+        });
+      }
+    };
+    window.addEventListener("WAFULA_NAVIGATE", handleCustomNavigation);
+    return () => {
+      window.removeEventListener("WAFULA_NAVIGATE", handleCustomNavigation);
     };
   }, []);
 
@@ -152,10 +187,33 @@ export default function App() {
   const [checkoutCountdown, setCheckoutCountdown] = useState(15);
   const [checkoutAccountDetails, setCheckoutAccountDetails] = useState(""); 
   const [checkoutRef, setCheckoutRef] = useState("");
+  const [checkoutCustomerIDInput, setCheckoutCustomerIDInput] = useState("");
+  const [checkoutCustomerNameInput, setCheckoutCustomerNameInput] = useState("");
+  const [checkoutMpesaPin, setCheckoutMpesaPin] = useState("");
 
   // View state history routing (Fulfills: "improve on navigation especially going back")
-  const [currentView, setCurrentView] = useState<string>("store");
-  const [viewHistory, setViewHistory] = useState<string[]>(["store"]);
+  const [currentView, setCurrentView] = useState<string>(() => {
+    return localStorage.getItem("WAFULA_CURRENT_VIEW") || "store";
+  });
+  const [initialBookId, setInitialBookId] = useState<string | null>(null);
+  const [viewHistory, setViewHistory] = useState<string[]>(() => {
+    const saved = localStorage.getItem("WAFULA_VIEW_HISTORY");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return ["store"];
+  });
+
+  useEffect(() => {
+    localStorage.setItem("WAFULA_CURRENT_VIEW", currentView);
+  }, [currentView]);
+
+  useEffect(() => {
+    localStorage.setItem("WAFULA_VIEW_HISTORY", JSON.stringify(viewHistory));
+  }, [viewHistory]);
 
   // Global Voice Commands Assistant States
   const [voiceControlActive, setVoiceControlActive] = useState(false);
@@ -352,10 +410,19 @@ export default function App() {
     const savedBroad = localStorage.getItem("WAFULA_BROADCAST");
     if (savedBroad) setBroadcastAnnouncement(savedBroad);
 
-    // 10. URL routing helper for Verification page
+    // 10. URL routing helper for Verification and Book Store pages
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("view") === "verify") {
+    const viewParam = urlParams.get("view");
+    const bookParam = urlParams.get("bookId");
+    if (viewParam === "verify") {
       setCurrentView("verify");
+    } else {
+      if (bookParam) {
+        setInitialBookId(bookParam);
+        setCurrentView("store");
+      } else if (viewParam) {
+        setCurrentView(viewParam);
+      }
     }
   }, []);
 
@@ -597,10 +664,10 @@ export default function App() {
     }
   }, [isOnline, currentUser]);
 
-  // Automated Sync Service for Offline Books and Documents Metadata immediately upon detecting active connection
+  // Automated Sync Service for Offline Data immediately upon detecting active connection
   useEffect(() => {
     if (isOnline) {
-      console.log("Network connection detected. Automating synchronization service for pending books and documents metadata...");
+      console.log("🔄 Network connection detected! Automating synchronization service for all pending offline data stores...");
       
       // 1. Sync Books
       fetchBooksFromFirestore()
@@ -610,10 +677,10 @@ export default function App() {
             const pendingUpload = prevBooks.filter(b => !remoteIds.has(b.id));
             
             if (pendingUpload.length > 0) {
-              console.log(`Uploading ${pendingUpload.length} pending local books metadata to firestore...`);
+              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local books metadata to firestore...`);
               pendingUpload.forEach((b) => {
                 saveBookToFirestore(b).catch(err => {
-                  console.warn(`Automated sync failed for book ${b.title}:`, err);
+                  console.warn(`[Sync Warning] Failed to upload book ${b.title}:`, err);
                 });
               });
             }
@@ -639,10 +706,10 @@ export default function App() {
             const pendingUpload = prevDocs.filter(d => !remoteIds.has(d.id));
             
             if (pendingUpload.length > 0) {
-              console.log(`Uploading ${pendingUpload.length} pending local documents metadata to firestore...`);
+              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local documents metadata to firestore...`);
               pendingUpload.forEach((d) => {
                 saveDocumentToFirestore(d).catch(err => {
-                  console.warn(`Automated sync failed for document ${d.title}:`, err);
+                  console.warn(`[Sync Warning] Failed to upload document ${d.title}:`, err);
                 });
               });
             }
@@ -658,6 +725,90 @@ export default function App() {
           });
         })
         .catch(err => console.warn("Automated documents metadata sync fetch failed:", err));
+
+      // 3. Sync Offline Community Chat Messages
+      fetchCommunityMessagesFromFirestore()
+        .then((remoteMsgs) => {
+          setCommunityMessages((prevMsgs) => {
+            const remoteIds = new Set((remoteMsgs || []).map(m => m.id));
+            const pendingUpload = prevMsgs.filter(m => !remoteIds.has(m.id));
+            
+            if (pendingUpload.length > 0) {
+              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local community messages to firestore...`);
+              pendingUpload.forEach((m) => {
+                saveCommunityMessageToFirestore(m).catch(err => {
+                  console.warn(`[Sync Warning] Failed to upload community message:`, err);
+                });
+              });
+            }
+            
+            const merged = [...prevMsgs];
+            (remoteMsgs || []).forEach(rm => {
+              if (!merged.some(mm => mm.id === rm.id)) {
+                merged.push(rm);
+              }
+            });
+            localStorage.setItem("WAFULA_CHAT_MESSAGES", JSON.stringify(merged));
+            return merged;
+          });
+        })
+        .catch(err => console.warn("Automated community messages sync failed:", err));
+
+      // 4. Sync Peer-to-Peer Member Upload Requests
+      fetchUploadRequestsFromFirestore()
+        .then((remoteRequests) => {
+          setUploadRequests((prevRequests) => {
+            const remoteIds = new Set((remoteRequests || []).map(r => r.id));
+            const pendingUpload = prevRequests.filter(r => !remoteIds.has(r.id));
+            
+            if (pendingUpload.length > 0) {
+              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending member upload requests to firestore...`);
+              pendingUpload.forEach((r) => {
+                saveUploadRequestToFirestore(r).catch(err => {
+                  console.warn(`[Sync Warning] Failed to upload file request ${r.title}:`, err);
+                });
+              });
+            }
+            
+            const merged = [...prevRequests];
+            (remoteRequests || []).forEach(rr => {
+              if (!merged.some(mr => mr.id === rr.id)) {
+                merged.push(rr);
+              }
+            });
+            localStorage.setItem("WAFULA_MEMBER_UPLOADS", JSON.stringify(merged));
+            return merged;
+          });
+        })
+        .catch(err => console.warn("Automated member upload requests sync failed:", err));
+
+      // 5. Sync eBook order bookings
+      fetchBookOrdersFromFirestore()
+        .then((remoteOrders) => {
+          setBookOrders((prevOrders) => {
+            const remoteIds = new Set((remoteOrders || []).map(o => o.id));
+            const pendingUpload = prevOrders.filter(o => !remoteIds.has(o.id));
+            
+            if (pendingUpload.length > 0) {
+              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending eBook orders to firestore...`);
+              pendingUpload.forEach((o) => {
+                saveBookOrderToFirestore(o).catch(err => {
+                  console.warn(`[Sync Warning] Failed to upload eBook order:`, err);
+                });
+              });
+            }
+            
+            const merged = [...prevOrders];
+            (remoteOrders || []).forEach(ro => {
+              if (!merged.some(mo => mo.id === ro.id)) {
+                merged.push(ro);
+              }
+            });
+            localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(merged));
+            return merged;
+          });
+        })
+        .catch(err => console.warn("Automated eBook orders sync failed:", err));
     }
   }, [isOnline, currentUser]);
 
@@ -1066,6 +1217,53 @@ export default function App() {
     setCheckoutPaymentMethod("mpesa");
     setCheckoutStep("form");
     setCheckoutCountdown(15);
+  };
+
+  // Quick save eBook directly to personal 'My Books' library
+  const handleQuickSaveToLibrary = (id: string) => {
+    if (!currentUser) {
+      handleLogIn();
+      return;
+    }
+    const targetBook = books.find(b => b.id === id);
+    if (!targetBook) return;
+
+    if (purchasedBookIds.includes(id)) {
+      return;
+    }
+
+    setPurchasedBookIds((prevIds) => {
+      const next = prevIds.includes(id) ? prevIds : [...prevIds, id];
+      localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(next));
+      return next;
+    });
+
+    // Create a matching zero-price order record so they can see order history or invoice
+    const newOrder: BookOrder = {
+      id: `lib_quick_${Date.now()}`,
+      userId: currentUser.email,
+      userName: currentUser.name || currentUser.email.split("@")[0],
+      bookId: targetBook.id,
+      bookTitle: targetBook.title,
+      price: targetBook.price || 0,
+      status: "approved",
+      date: new Date().toISOString().split("T")[0]
+    };
+
+    setBookOrders((prevOrders) => {
+      const next = [newOrder, ...prevOrders];
+      localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
+      return next;
+    });
+
+    saveBookOrderToFirestore(newOrder).catch((e) => console.log("Offline saving quick-order fallback active.", e));
+
+    logUserActivity(
+      currentUser.email,
+      currentUser.name,
+      "Quick Add Library",
+      `Quickly saved eBook to personal My Books section: "${targetBook.title}" (ID: ${targetBook.id})`
+    );
   };
 
   // Wishlist bindings
@@ -1621,12 +1819,12 @@ export default function App() {
   const handleSendCommunityMessage = (
     text: string, 
     parentId?: string, 
-    channelName?: '#General' | '#Book Talks' | '#Leadership' | '#Publishing',
+    channelName?: string,
     extras?: { imageContent?: string; attachedFile?: { name: string; type: string; dataUrl?: string; sizeStr?: string; url?: string }; stickerEmoji?: string }
   ) => {
     const fresh: CommunityMessage = {
       id: "msg_" + Date.now(),
-      channel: channelName || "#General",
+      channel: channelName || "#generatechat",
       userId: currentUser?.email || "anonymous",
       userName: currentUser?.name || "Bungoma Guest",
       text,
@@ -1870,14 +2068,16 @@ export default function App() {
         communityMessages={communityMessages}
         globalSettings={globalSettings}
         onUpdateSettings={setGlobalSettings}
-        isOnline={isOnline}
+        isOnline={effectiveIsOnline}
         broadcastAnnouncement={broadcastAnnouncement}
         isBannerClosed={isBannerClosed}
         onRestoreBanner={() => setIsBannerClosed(false)}
+        offlineMode={offlineMode}
+        onToggleOfflineMode={handleToggleOfflineMode}
       />
 
       {/* Main interactive window viewport - Responsive pl matching desktop sidebar layout */}
-      <main className="flex-grow lg:pl-64 pt-3 md:pt-4 pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col">
+      <main className="flex-grow lg:pl-52 pt-3 md:pt-4 pb-24 lg:pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col">
         {broadcastAnnouncement && !isBannerClosed && (
           <div className="mx-3 sm:mx-4 mb-4 md:mb-6 relative overflow-hidden bg-gradient-to-r from-red-700 via-rose-700 to-amber-600 text-white rounded-2xl p-3 sm:p-4 shadow-md flex items-center justify-between gap-2.5 sm:gap-4 animate-fade-in border border-rose-500/25">
             <div className="flex items-center gap-2 sm:gap-3">
@@ -1919,6 +2119,9 @@ export default function App() {
                 wishlistBookIds={wishlistBookIds}
                 onAddNewDocument={handleAddNewDocument}
                 bookOrders={bookOrders}
+                onQuickSaveToLibrary={handleQuickSaveToLibrary}
+                initialBookId={initialBookId}
+                onClearInitialBookId={() => setInitialBookId(null)}
               />
             )}
 
@@ -1933,6 +2136,10 @@ export default function App() {
                   }
                 }}
               />
+            )}
+
+            {currentView === "sermons-motivation" && (
+              <SermonsMotivation currentUser={currentUser} />
             )}
 
             {currentView === "devotional" && (
@@ -1979,6 +2186,7 @@ export default function App() {
                 <AIChat
                   currentUser={currentUser}
                   onUnlockBadge={handleUnlockBadge}
+                  isOnline={effectiveIsOnline}
                 />
               </div>
             )}
@@ -2005,13 +2213,13 @@ export default function App() {
             )}
 
             {currentView === "home-apps" && (
-              <HomeApps />
+              <HomeApps onNavigate={setCurrentView} />
             )}
 
             {currentView === "zion-wifi" && (
               <ZionWifi 
                 currentUser={currentUser}
-                isOnline={isOnline}
+                isOnline={effectiveIsOnline}
                 onLogIn={handleLogIn}
               />
             )}
@@ -2114,7 +2322,7 @@ export default function App() {
       </main>
 
       {/* Footer copyright */}
-      <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-mono lg:pl-64">
+      <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-mono lg:pl-52">
         <div>© 2026 Wafula Digital. All rights reserved. Headquartered under Bungoma Kenya.</div>
       </footer>
 
@@ -2500,56 +2708,66 @@ export default function App() {
       {/* Dynamic Member Authentication Modal popup */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowAuthModal(false)} />
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md" onClick={() => setShowAuthModal(false)} />
           
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-200 select-none">
+          <div className="relative w-full max-w-md bg-stone-900 text-slate-100 rounded-3xl shadow-2xl border border-stone-800 p-8 overflow-hidden animate-in fade-in zoom-in-95 duration-250 select-none">
+            {/* Background absolute ambient glows */}
+            <div className="absolute top-0 right-0 -mr-16 -mt-16 w-36 h-36 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-36 h-36 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+
             {/* Design header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
-              <div className="flex items-center space-x-2 text-left">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white font-bold">W</span>
+            <div className="flex items-center justify-between border-b border-stone-800 pb-5 mb-5 relative z-10">
+              <div className="flex items-center space-x-3.5 text-left">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-extrabold shadow-lg shadow-blue-900/30 font-display text-lg select-none">
+                  Z
+                </div>
                 <div>
-                  <h3 className="font-display font-extrabold text-slate-950">Member Authentication</h3>
-                  <p className="text-[10px] text-slate-400 font-mono">Wafula Digital Gateway • Bungoma, Kenya</p>
+                  <h3 className="font-display font-black text-white text-base tracking-tight">Zion Digital Gateway</h3>
+                  <p className="text-[10px] text-stone-400 font-mono tracking-wider uppercase">Bungoma Shared Academic Ledger</p>
                 </div>
               </div>
               <button 
                 onClick={() => setShowAuthModal(false)} 
-                className="text-slate-400 hover:text-slate-600 font-bold p-1 rounded-full text-xs"
+                className="text-stone-400 hover:text-white transition p-1.5 rounded-lg hover:bg-stone-800"
               >
                 ✕
               </button>
             </div>
 
             {/* Selector Tabs (Login vs Register) */}
-            <div className="flex border-b border-stone-150 mb-4 text-xs font-bold text-stone-500">
+            <div className="flex bg-stone-950/60 p-1 rounded-xl border border-stone-800/80 mb-5 relative z-10 text-xs font-bold text-stone-400">
               <button
                 type="button"
                 onClick={() => { setAuthMode("login"); setAuthError(""); }}
-                className={`flex-1 py-2 border-b-2 text-center transition ${
-                  authMode === "login" ? "text-blue-600 border-blue-600" : "border-transparent hover:text-stone-800"
+                className={`flex-1 py-2 rounded-lg text-center transition-all ${
+                  authMode === "login" 
+                    ? "bg-stone-800 text-white shadow-xs" 
+                    : "hover:text-stone-200"
                 }`}
               >
-                Log In
+                Sign In
               </button>
               <button
                 type="button"
                 onClick={() => { setAuthMode("register"); setAuthError(""); }}
-                className={`flex-1 py-2 border-b-2 text-center transition ${
-                  authMode === "register" ? "text-blue-600 border-blue-600" : "border-transparent hover:text-stone-800"
+                className={`flex-1 py-2 rounded-lg text-center transition-all ${
+                  authMode === "register" 
+                    ? "bg-stone-800 text-white shadow-xs" 
+                    : "hover:text-stone-200"
                 }`}
               >
-                Create Account
+                Register
               </button>
             </div>
 
             {/* Quick Demo Pre-fill Action (Only for Login) */}
             {authMode === "login" && (
-              <div className="mb-4 bg-lime-50/70 border border-lime-150 p-3 rounded-xl text-left">
-                <span className="text-[9.5px] font-bold text-lime-800 uppercase block tracking-wide font-mono">Academic Demo Account</span>
-                <p className="text-[10.5px] text-lime-700 mt-0.5 leading-tight">
-                  For quick scholastic workspace testing, click below to auto-load a standard member credential pack.
+              <div className="mb-5 bg-stone-950/40 border border-stone-800/80 p-4 rounded-2xl text-left relative z-10">
+                <span className="text-[9px] font-black text-amber-500 uppercase block tracking-wider font-mono">⚡ QUICK DEMO AUTO-FILL</span>
+                <p className="text-[10.5px] text-stone-400 mt-1 leading-relaxed">
+                  Click below to instantly populate secure credentials for testing purposes:
                 </p>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -2557,7 +2775,7 @@ export default function App() {
                       setAuthPassword("password");
                       setAuthError("");
                     }}
-                    className="bg-lime-650 hover:bg-lime-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition"
+                    className="bg-stone-800 hover:bg-stone-750 border border-stone-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition active:scale-95"
                   >
                     Load General Member Demo
                   </button>
@@ -2569,59 +2787,59 @@ export default function App() {
             <button
               type="button"
               onClick={handleGoogleMockLogin}
-              className="w-full mb-4 py-2.5 px-4 border border-stone-200 rounded-lg text-xs font-bold text-stone-700 bg-stone-50 hover:bg-stone-100 transition flex items-center justify-center space-x-2"
+              className="w-full mb-5 py-2.5 px-4 border border-stone-800 rounded-xl text-xs font-bold text-stone-300 bg-stone-950/40 hover:bg-stone-950 transition flex items-center justify-center space-x-2 relative z-10 cursor-pointer active:scale-98"
             >
-              <span className="text-base">🌐</span>
-              <span>Continue with Google Account</span>
+              <span className="text-sm">🌐</span>
+              <span>Continue with Google Cloud</span>
             </button>
 
-            <div className="relative flex items-center justify-center my-3">
-              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-stone-150" /></div>
-              <span className="relative bg-white px-2.5 font-mono text-[9px] uppercase font-bold text-stone-400">OR EMAIL</span>
+            <div className="relative flex items-center justify-center my-4 relative z-10">
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-stone-800" /></div>
+              <span className="relative bg-stone-900 px-3 font-mono text-[8.5px] uppercase font-black text-stone-550 text-stone-500 tracking-wider">OR EMAIL ACCESS</span>
             </div>
 
             {/* Main Form */}
-            <form onSubmit={handleProcessSubmitAuth} className="space-y-4 text-xs text-left">
+            <form onSubmit={handleProcessSubmitAuth} className="space-y-4.5 text-xs text-left relative z-10">
               {authError && (
-                <div className="bg-rose-50 border border-rose-100 text-rose-800 p-2.5 rounded-lg font-bold text-[11px] leading-tight">
+                <div className="bg-rose-950/20 border border-rose-900/50 text-rose-300 p-3 rounded-xl font-bold text-[11px] leading-relaxed">
                   ⚠️ {authError}
                 </div>
               )}
 
               {authMode === "register" && (
-                <div className="space-y-1">
-                  <label className="block text-slate-500 font-bold uppercase tracking-wide">Full Name</label>
+                <div className="space-y-1.5">
+                  <label className="block text-stone-400 font-bold uppercase tracking-wider text-[9px] font-mono">Full Name</label>
                   <input
                     type="text"
                     required
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
                     placeholder="e.g. Kelvin Wafula"
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600"
+                    className="w-full rounded-xl border border-stone-800 bg-stone-950/55 p-3 font-semibold text-white placeholder-stone-650 outline-none focus:border-blue-600 transition"
                   />
                 </div>
               )}
 
-              <div className="space-y-1">
-                <label className="block text-slate-500 font-bold uppercase tracking-wide">Email Reference</label>
+              <div className="space-y-1.5">
+                <label className="block text-stone-400 font-bold uppercase tracking-wider text-[9px] font-mono">Email Reference</label>
                 <input
                   type="email"
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
                   placeholder="e.g. member@wafula.com"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full rounded-xl border border-stone-800 bg-stone-950/55 p-3 font-semibold text-white placeholder-stone-650 outline-none focus:border-blue-600 transition"
                 />
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <div className="flex justify-between items-center">
-                  <label className="block text-slate-500 font-bold uppercase tracking-wide">Secure Passphrase</label>
+                  <label className="block text-stone-400 font-bold uppercase tracking-wider text-[9px] font-mono">Secure Passphrase</label>
                   {authMode === "login" && (
                     <button
                       type="button"
                       onClick={handlePasswordReset}
-                      className="text-[10.5px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition cursor-pointer"
+                      className="text-[10px] font-bold text-blue-400 hover:text-blue-300 hover:underline transition cursor-pointer"
                     >
                       Forgot Password?
                     </button>
@@ -2633,15 +2851,15 @@ export default function App() {
                   value={authPassword}
                   onChange={(e) => setAuthPassword(e.target.value)}
                   placeholder="Minimum 4 characters"
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-semibold text-slate-800 outline-none focus:bg-white focus:border-blue-600"
+                  className="w-full rounded-xl border border-stone-800 bg-stone-950/55 p-3 font-semibold text-white placeholder-stone-650 outline-none focus:border-blue-600 transition"
                 />
               </div>
 
               {authMode === "register" && (
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-slate-500 font-bold">
-                    <label className="uppercase tracking-wide">Daily Reading Goal</label>
-                    <span className="text-blue-600 font-mono font-black">{regGoal} Minutes</span>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-stone-400 font-bold">
+                    <label className="uppercase tracking-wider text-[9px] font-mono">Daily Reading Goal</label>
+                    <span className="text-blue-400 font-mono font-black">{regGoal} Minutes</span>
                   </div>
                   <input
                     type="range"
@@ -2650,22 +2868,22 @@ export default function App() {
                     step="5"
                     value={regGoal}
                     onChange={(e) => setRegGoal(Number(e.target.value))}
-                    className="w-full h-1.5 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    className="w-full h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   />
                 </div>
               )}
 
-              <div className="pt-2 flex gap-2">
+              <div className="pt-3 flex gap-3">
                 <button
                   type="button"
                   onClick={() => setShowAuthModal(false)}
-                  className="flex-1 rounded-lg border border-slate-200 font-bold py-2.5 hover:bg-slate-50 tracking-wide text-center"
+                  className="flex-1 rounded-xl border border-stone-800 font-bold py-3 hover:bg-stone-850 text-stone-300 transition-all text-center cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 rounded-lg bg-blue-600 text-white font-bold py-2.5 hover:bg-blue-700 tracking-wide shadow-md text-center"
+                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-3 tracking-wide shadow-lg shadow-blue-900/30 transition-all text-center cursor-pointer active:scale-95"
                 >
                   {authMode === "register" ? "Create Account" : "Access Hub"}
                 </button>

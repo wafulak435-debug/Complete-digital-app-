@@ -4,6 +4,7 @@ import {
   RefreshCw, Laptop, Play, HelpCircle, ShieldAlert, ArrowLeft, 
   ArrowRight, Home, LayoutGrid, CheckCircle2, BookmarkPlus
 } from "lucide-react";
+import GoogleSimView from "./GoogleSimView";
 
 interface WebApp {
   id: string;
@@ -152,9 +153,9 @@ export default function WebsiteCenter() {
   const [customCat, setCustomCat] = useState<"media" | "social" | "browsers" | "utilities">("utilities");
 
   // Simulated browser states
-  const [iframeUrl, setIframeUrl] = useState("https://mini.opera.com");
-  const [browserAddress, setBrowserAddress] = useState("https://mini.opera.com");
-  const [browserHistory, setBrowserHistory] = useState<string[]>(["https://mini.opera.com"]);
+  const [iframeUrl, setIframeUrl] = useState("https://www.google.com");
+  const [browserAddress, setBrowserAddress] = useState("https://www.google.com");
+  const [browserHistory, setBrowserHistory] = useState<string[]>(["https://www.google.com"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [showIframeWarning, setShowIframeWarning] = useState(false);
   const [activeIframeTab, setActiveIframeTab] = useState<"directory" | "browser">("directory");
@@ -190,20 +191,24 @@ export default function WebsiteCenter() {
                          /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(formattedUrl);
 
     if (!isUrlPattern || formattedUrl.includes(" ")) {
-      // Treat as a search term! Launch DuckDuckGo search query which supports frame viewing perfectly
+      // Treat as a search term! Launch simulated Google Search query
       const encoded = encodeURIComponent(formattedUrl);
-      formattedUrl = `https://duckduckgo.com/?q=${encoded}&kp=-1&kl=wt-wt`;
+      formattedUrl = `https://www.google.com/search?q=${encoded}`;
     } else {
       if (!/^https?:\/\//i.test(formattedUrl)) {
-        formattedUrl = `https://${formattedUrl}`;
+        if (formattedUrl.toLowerCase() === "google.com" || formattedUrl.toLowerCase() === "www.google.com") {
+          formattedUrl = "https://www.google.com";
+        } else {
+          formattedUrl = `https://${formattedUrl}`;
+        }
       }
     }
 
     setIframeUrl(formattedUrl);
     setBrowserAddress(formattedUrl);
     
-    // Check security warnings (Exclude DuckDuckGo searches from block warnings as they support iframe renders)
-    const isBlocked = checkIfFrameBlocked(formattedUrl) && !formattedUrl.includes("duckduckgo.com");
+    // Check security warnings (Exclude local Google simulation from block warnings as it integrates locally!)
+    const isBlocked = checkIfFrameBlocked(formattedUrl) && !formattedUrl.startsWith("https://www.google.com");
     setShowIframeWarning(isBlocked);
 
     // Update history
@@ -576,12 +581,12 @@ export default function WebsiteCenter() {
               </button>
               <button
                 onClick={() => {
-                  setIframeUrl("https://mini.opera.com");
-                  setBrowserAddress("https://mini.opera.com");
+                  setIframeUrl("https://www.google.com");
+                  setBrowserAddress("https://www.google.com");
                   setShowIframeWarning(false);
                 }}
                 className="p-1.5 rounded-lg text-stone-500 hover:bg-stone-200/75 dark:hover:bg-slate-850 transition"
-                title="Home (Mini Opera)"
+                title="Home (Google Search)"
               >
                 <Home className="h-4 w-4" />
               </button>
@@ -650,14 +655,18 @@ export default function WebsiteCenter() {
             )}
 
             {iframeUrl ? (
-              <iframe
-                id="interactive_browser_viewport"
-                src={iframeUrl}
-                className="w-full h-full border-none bg-white select-text"
-                title="Wafula Desktop Web Viewport"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-                referrerPolicy="no-referrer"
-              />
+              iframeUrl.startsWith("https://www.google.com") ? (
+                <GoogleSimView iframeUrl={iframeUrl} onNavigate={handleLaunchInBrowser} />
+              ) : (
+                <iframe
+                  id="interactive_browser_viewport"
+                  src={iframeUrl}
+                  className="w-full h-full border-none bg-white select-text"
+                  title="Wafula Desktop Web Viewport"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                  referrerPolicy="no-referrer"
+                />
+              )
             ) : (
               <div className="flex items-center justify-center h-full text-slate-400 font-bold text-xs">
                 Loading browser connection...

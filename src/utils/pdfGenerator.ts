@@ -65,7 +65,7 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
   doc.setTextColor(115, 24, 24); // Primary Rich Maroon (Bungoma Senate color)
   doc.setFont("times", "bold");
   doc.setFontSize(22);
-  doc.text("ZION DIGITAL LEADERSHIP & COMPUTER SCHOOL", w / 2, 28, { align: "center" });
+  doc.text("ZION DIGITAL LEADERSHIP & BIBLE SCHOOL", w / 2, 28, { align: "center" });
 
   doc.setTextColor(100, 110, 120);
   doc.setFont("courier", "bold");

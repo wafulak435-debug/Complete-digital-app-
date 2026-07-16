@@ -192,6 +192,25 @@
         "date": { "type": "string", "description": "Purchase transaction day tag" }
       },
       "required": ["id", "userId", "userName", "planName", "price", "phoneNumber", "status", "expiresAt", "date"]
+    },
+    "SermonVideo": {
+      "title": "SermonVideo",
+      "description": "Admin uploaded sermons and motivational videos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Video unique identifier" },
+        "title": { "type": "string", "description": "Title of the video sermon or motivation" },
+        "speaker": { "type": "string", "description": "Speaker or presenter name" },
+        "videoUrl": { "type": "string", "description": "Direct URL or stream endpoint to the video" },
+        "thumbnailUrl": { "type": "string", "description": "URL to the preview thumbnail image" },
+        "description": { "type": "string", "description": "Detailed notes or sermon script summary" },
+        "category": { "type": "string", "enum": ["Sermon", "Motivation"], "description": "Category selector" },
+        "duration": { "type": "string", "description": "Duration badge in minutes and seconds" },
+        "date": { "type": "string", "description": "ISO date representing upload time" },
+        "likesCount": { "type": "integer", "description": "Likes counter" },
+        "viewsCount": { "type": "integer", "description": "Views counter" }
+      },
+      "required": ["id", "title", "speaker", "videoUrl", "thumbnailUrl", "category", "date"]
     }
   },
   "firestore": {
@@ -242,6 +261,10 @@
     "/wifiPurchases/{purchaseId}": {
       "schema": "WifiPurchase",
       "description": "WiFi network bundle credentials and hotspot receipts"
+    },
+    "/sermonVideos/{videoId}": {
+      "schema": "SermonVideo",
+      "description": "Sermon and motivational videos archive"
     }
   }
 }

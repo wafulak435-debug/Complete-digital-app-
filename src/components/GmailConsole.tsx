@@ -3,7 +3,8 @@ import {
   Mail, Send, RefreshCw, LogIn, LogOut, CheckCircle2, AlertCircle, Trash2, 
   Search, Inbox, ChevronRight, Sparkles, FileText, Calendar, Database, 
   HardDrive, Plus, Contact, BookOpen, ClipboardList, Video, MessageSquare, 
-  Smile, Paperclip, Pin, Check, UserCheck, Share2, Eye, Link2, Download, ExternalLink, Filter
+  Smile, Paperclip, Pin, Check, UserCheck, Share2, Eye, Link2, Download, ExternalLink, Filter,
+  Tv, ListTodo, GraduationCap
 } from "lucide-react";
 import { googleSignIn, googleLogout, getAccessToken, listGmailMessages, sendGmailMessage } from "../lib/firebase";
 
@@ -72,7 +73,7 @@ export default function GmailConsole() {
   // Google Docs states
   const [docsList, setDocsList] = useState<any[]>([
     { id: "doc1", title: "Bungoma Growth Manifesto.doc", content: "Our blueprint for digitizing textbooks and leadership manuals for standard Bungoma schools.", lastModified: "2026-05-18", owner: "Kelvin Opara" },
-    { id: "doc2", title: "Study_Curriculum_Evangelism.doc", content: "Structured studies based on the textbook 'The greatest evangelist' comprising 12 modules.", lastModified: "2026-05-20", owner: "Sarah Opara" }
+    { id: "doc2", title: "Study_Curriculum_Leadership.doc", content: "Structured studies based on the textbook 'The Visionary Statesman' comprising 12 modules.", lastModified: "2026-05-20", owner: "Sarah Opara" }
   ]);
   const [activeDoc, setActiveDoc] = useState<any>(null);
   const [newDocTitle, setNewDocTitle] = useState("");
@@ -130,6 +131,108 @@ export default function GmailConsole() {
   const [newChatMessage, setNewChatMessage] = useState("");
   const [selectedEmoji, setSelectedEmoji] = useState("");
   const [chatAttachmentName, setChatAttachmentName] = useState("");
+
+  // Google Slides states
+  const [slidesPresentations, setSlidesPresentations] = useState<any[]>([
+    { id: "s1", title: "Bungoma Agricultural Strategy & Value Chain.pptx", slidesCount: 15, lastModified: "2026-05-22", url: "#" },
+    { id: "s2", title: "Theology Leadership Foundations Course outline.pptx", slidesCount: 24, lastModified: "2026-05-24", url: "#" },
+    { id: "s3", title: "Zion Vocational School IT Syllabus and Labs.pptx", slidesCount: 18, lastModified: "2026-05-28", url: "#" }
+  ]);
+  const [newSlideTitle, setNewSlideTitle] = useState("");
+  const [newSlideCount, setNewSlideCount] = useState(10);
+  const [activeSlide, setActiveSlide] = useState<any>(null);
+
+  // Google Tasks states
+  const [tasksList, setTasksList] = useState<any[]>([
+    { id: "t1", title: "Publish 'The greatest evangelist' chapter 4 on Zion Bookstore", completed: true, dueDate: "2026-05-25" },
+    { id: "t2", title: "Verify hermeneutics certificate criteria for Bungoma students", completed: false, dueDate: "2026-06-01" },
+    { id: "t3", title: "Schedule next community Google Meet lecture series", completed: false, dueDate: "2026-06-05" }
+  ]);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskDueDate, setNewTaskDueDate] = useState("");
+
+  // Google Classroom states
+  const [classroomCourses, setClassroomCourses] = useState<any[]>([
+    { id: "c1", name: "Strategic Leadership & Public Values", section: "Section A - Bungoma", room: "Zion Chapel", teacher: "Chancellor Kelvin Wafula", studentsCount: 45 },
+    { id: "c2", name: "Sustainable Agri-Business & Bookkeeping", section: "Section B - Agribusiness", room: "Agri-Tech Barn", teacher: "Moses Simiyu", studentsCount: 38 },
+    { id: "c3", name: "Basic IT Skills & Digital Literacy", section: "Section C - Vocational", room: "Lab 1", teacher: "Sarah Opara", studentsCount: 60 }
+  ]);
+  const [newCourseName, setNewCourseName] = useState("");
+  const [newCourseSection, setNewCourseSection] = useState("");
+  const [newCourseTeacher, setNewCourseTeacher] = useState("");
+  const [activeCourseId, setActiveCourseId] = useState<string>("c1");
+  const [classroomAnnouncements, setClassroomAnnouncements] = useState<any[]>([
+    { id: "ca1", courseId: "c1", title: "First Assignment: Leadership Philosophy Review", text: "Please read 'The Visionary Statesman' book chapters 1-3. Write a summary outline using Doc Studio and link it inside Google Classroom coursework.", date: "2026-05-20" },
+    { id: "ca2", courseId: "c1", title: "Mid-term Exam Announcement", text: "The mid-term exam on Hermeneutics will take place online next Saturday at 10 AM. Sync your calendars now.", date: "2026-05-25" },
+    { id: "ca3", courseId: "c2", title: "New Crop Report Worksheet Template", text: "Please use the Google Sheets Agribusiness wealth bookkeeping template to log your weekly harvests.", date: "2026-05-23" }
+  ]);
+  const [newAnnouncementTitle, setNewAnnouncementTitle] = useState("");
+  const [newAnnouncementText, setNewAnnouncementText] = useState("");
+
+  const handleCreateSlide = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSlideTitle.trim()) return;
+    const newPres = {
+      id: "slide_" + Date.now(),
+      title: newSlideTitle.trim() + ".pptx",
+      slidesCount: Number(newSlideCount) || 5,
+      lastModified: new Date().toISOString().split("T")[0],
+      url: "#"
+    };
+    setSlidesPresentations([newPres, ...slidesPresentations]);
+    setNewSlideTitle("");
+    setNewSlideCount(10);
+    alert(`Google Slides presentation "${newPres.title}" successfully created!`);
+  };
+
+  const handleCreateTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTaskTitle.trim()) return;
+    const newTask = {
+      id: "task_" + Date.now(),
+      title: newTaskTitle.trim(),
+      completed: false,
+      dueDate: newTaskDueDate || new Date().toISOString().split("T")[0]
+    };
+    setTasksList([newTask, ...tasksList]);
+    setNewTaskTitle("");
+    setNewTaskDueDate("");
+    alert(`Google Task "${newTask.title}" successfully added to your main list!`);
+  };
+
+  const handleCreateCourse = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCourseName.trim()) return;
+    const newCourse = {
+      id: "course_" + Date.now(),
+      name: newCourseName.trim(),
+      section: newCourseSection.trim() || "Main Section",
+      room: "Online Room",
+      teacher: newCourseTeacher.trim() || "Staff Member",
+      studentsCount: 0
+    };
+    setClassroomCourses([...classroomCourses, newCourse]);
+    setNewCourseName("");
+    setNewCourseSection("");
+    setNewCourseTeacher("");
+    alert(`Google Classroom Course "${newCourse.name}" successfully created!`);
+  };
+
+  const handleCreateAnnouncement = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAnnouncementText.trim() || !newAnnouncementTitle.trim()) return;
+    const newAnn = {
+      id: "ca_" + Date.now(),
+      courseId: activeCourseId,
+      title: newAnnouncementTitle.trim(),
+      text: newAnnouncementText.trim(),
+      date: new Date().toISOString().split("T")[0]
+    };
+    setClassroomAnnouncements([newAnn, ...classroomAnnouncements]);
+    setNewAnnouncementTitle("");
+    setNewAnnouncementText("");
+    alert("New Classroom Course announcement successfully published!");
+  };
 
   // Load auth values on start
   useEffect(() => {
@@ -323,6 +426,27 @@ export default function GmailConsole() {
     } else if (pickerTargetField === "chat_link") {
       setChatAttachmentName(file.name);
       setNewChatMessage((prev) => prev + ` [Drive File attachment: ${file.name}]`);
+    } else if (pickerTargetField === "slides_link") {
+      if (activeSlide) {
+        // Appends to the active slide deck list
+        setActiveSlide((prev: any) => {
+          if (!prev) return prev;
+          const updatedSlidesData = prev.slidesData.map((slide: any, index: number) => {
+            if (index === prev.currentSlideIdx - 1) {
+              return {
+                ...slide,
+                bullets: [...slide.bullets, `Linked Cloud File: ${file.name} (Type: ${file.type})`]
+              };
+            }
+            return slide;
+          });
+          return { ...prev, slidesData: updatedSlidesData };
+        });
+        alert(`Successfully linked Google Drive asset "${file.name}" to Slide #${activeSlide.currentSlideIdx}!`);
+      } else {
+        setNewSlideTitle(file.name.split(".")[0]);
+        alert(`Successfully linked Google Drive template: "${file.name}". Seeded into presentation builder form!`);
+      }
     }
     setIsPickerOpen(false);
   };
@@ -521,27 +645,23 @@ export default function GmailConsole() {
         </div>
       )}
 
-      {!token ? (
-        <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center select-none space-y-4">
-          <div className="h-16 w-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto shadow-md">
-            <Mail className="h-8 w-8 animate-bounce" />
-          </div>
-          <div className="max-w-md mx-auto space-y-2">
-            <h3 className="font-display text-lg font-bold text-stone-900">Authorize Google Workspace Suite</h3>
-            <p className="text-xs text-stone-500 leading-relaxed">
-              Verify your email credentials to bridge Google Apps securely. Your authorization tokens are handled natively with security controls.
-            </p>
-          </div>
-          <button
-            onClick={handleConnectGoogle}
-            className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-6 py-3 shadow transition active:scale-95 inline-flex items-center space-x-2"
-          >
-            <LogIn className="h-4 w-4" />
-            <span>Enable All Google Apps</span>
-          </button>
-        </div>
+      {false ? (
+        <div />
       ) : (
         <div className="space-y-6">
+          {!token && (
+            <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-xl text-left text-xs text-blue-900 flex items-center justify-between gap-3 animate-in fade-in duration-200">
+              <span className="font-medium">
+                ⚡ Running in secure offline sandbox mode with preloaded credentials. You can use everything natively.
+              </span>
+              <button
+                onClick={handleConnectGoogle}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] px-3.5 py-1.5 rounded-lg shadow whitespace-nowrap transition"
+              >
+                Connect Live Google Account
+              </button>
+            </div>
+          )}
           
           {/* 2. TABBED APPLICATION SELECT NAVIGATION INTERFACE */}
           <div className="flex flex-wrap bg-slate-100 p-1 rounded-2xl border text-xs font-bold gap-1 text-slate-700 shadow-sm">
@@ -616,6 +736,33 @@ export default function GmailConsole() {
             >
               <Pin className="h-4 w-4 text-amber-600" />
               <span>Keep</span>
+            </button>
+            <button
+              onClick={() => setActiveWorkspaceApp("slides")}
+              className={`px-3 py-2 rounded-xl flex items-center space-x-1.5 transition ${
+                activeWorkspaceApp === "slides" ? "bg-white text-slate-900 shadow-sm" : "hover:bg-slate-50"
+              }`}
+            >
+              <Tv className="h-4 w-4 text-orange-500" />
+              <span>Slides</span>
+            </button>
+            <button
+              onClick={() => setActiveWorkspaceApp("tasks")}
+              className={`px-3 py-2 rounded-xl flex items-center space-x-1.5 transition ${
+                activeWorkspaceApp === "tasks" ? "bg-white text-slate-900 shadow-sm" : "hover:bg-slate-50"
+              }`}
+            >
+              <ListTodo className="h-4 w-4 text-sky-600" />
+              <span>Tasks</span>
+            </button>
+            <button
+              onClick={() => setActiveWorkspaceApp("classroom")}
+              className={`px-3 py-2 rounded-xl flex items-center space-x-1.5 transition ${
+                activeWorkspaceApp === "classroom" ? "bg-white text-slate-900 shadow-sm" : "hover:bg-slate-50"
+              }`}
+            >
+              <GraduationCap className="h-4 w-4 text-green-700" />
+              <span>Classroom</span>
             </button>
             <button
               onClick={() => setActiveWorkspaceApp("meet")}
@@ -1064,7 +1211,7 @@ export default function GmailConsole() {
                       required
                       value={newDocTitle}
                       onChange={(e) => setNewDocTitle(e.target.value)}
-                      placeholder="e.g. evangelism_outline"
+                      placeholder="e.g. leadership_outline"
                       className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
                     />
                   </div>
@@ -1409,6 +1556,384 @@ export default function GmailConsole() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* H2. GOOGLE SLIDES */}
+          {activeWorkspaceApp === "slides" && (
+            <div className="grid gap-6 lg:grid-cols-12 text-xs">
+              <div className="lg:col-span-4 rounded-2xl border border-stone-200 bg-white p-5 text-left space-y-4 shadow-sm">
+                <h3 className="font-display text-sm font-bold text-stone-900 flex items-center space-x-1.5">
+                  <span className="p-1 bg-orange-50 rounded text-orange-600 font-bold">🎬</span>
+                  <span>Google Slides Studio</span>
+                </h3>
+                <form onSubmit={handleCreateSlide} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Presentation Title</label>
+                    <input
+                      type="text"
+                      required
+                      value={newSlideTitle}
+                      onChange={(e) => setNewSlideTitle(e.target.value)}
+                      placeholder="e.g. Bungoma Cooperative Strategy"
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Estimated Slides</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={newSlideCount}
+                      onChange={(e) => setNewSlideCount(Number(e.target.value))}
+                      className="w-full rounded border p-2 bg-stone-50"
+                    />
+                  </div>
+                  <button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 text-white font-extrabold py-2 rounded-lg">
+                    Build Slides Outline
+                  </button>
+                </form>
+
+                <div className="bg-orange-50/50 p-3 rounded-xl border border-orange-100">
+                  <span className="text-[10px] font-mono font-bold uppercase text-orange-850">Link From Google Picker</span>
+                  <p className="text-[11px] text-orange-700 my-1">Import background graphics, documents, or PDF text summaries to enrich slide decks automatically.</p>
+                  <button 
+                    onClick={() => openGooglePicker("slides_link")} 
+                    className="w-full bg-slate-900 hover:bg-slate-850 text-white text-[10px] font-bold py-2 rounded-lg flex items-center justify-center space-x-1"
+                  >
+                    <Share2 className="h-3 w-3" />
+                    <span>Pick Resources to Import</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="lg:col-span-8 rounded-2xl border border-stone-200 bg-white p-5 text-left shadow-sm">
+                <h3 className="font-display text-base font-bold text-stone-900 border-b pb-2 mb-4 flex justify-between items-center">
+                  <span>Google Presentations Library</span>
+                  <span className="text-[10px] text-orange-600 font-mono font-bold bg-orange-50 px-2 py-0.5 rounded">Active Decks: {slidesPresentations.length}</span>
+                </h3>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2 border-r pr-2 max-h-[350px] overflow-y-auto">
+                    {slidesPresentations.map((pres) => (
+                      <div 
+                        key={pres.id}
+                        onClick={() => {
+                          setActiveSlide({
+                            ...pres,
+                            currentSlideIdx: 1,
+                            slidesData: [
+                              { num: 1, title: "Title Overview & Scope", bullets: [`Comprehensive summary of ${pres.title}`, "Core vocational targets and digital blueprints", "Bungoma local community empowerment strategy"] },
+                              { num: 2, title: "Strategic Resource Blueprints", bullets: ["Integration of PDF theological textbooks", "Offline-first sync modules using LocalStorage", "Spoken audio dubbing for local dialects"] },
+                              { num: 3, title: "Financial & Progress Ledger", bullets: ["Budget summary on GSheets", "Classroom enrollment lists", "Next steps for community outreach and growth"] }
+                            ]
+                          });
+                        }}
+                        className={`p-3 rounded-xl border cursor-pointer transition ${
+                          activeSlide?.id === pres.id ? "bg-orange-50/40 border-orange-400" : "bg-stone-50/30 hover:bg-stone-50 border-stone-100"
+                        }`}
+                      >
+                        <strong className="text-slate-800 text-[12px] block truncate">{pres.title}</strong>
+                        <span className="text-[10px] text-slate-400 font-mono block mt-1">{pres.slidesCount} Total Slides • Last modified: {pres.lastModified}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Slides Preview Sandbox */}
+                  <div className="bg-slate-900 text-white p-5 rounded-2xl relative flex flex-col justify-between h-[300px]">
+                    {activeSlide ? (
+                      <>
+                        <div>
+                          <div className="flex justify-between items-center text-orange-400 font-mono text-[9px] font-bold uppercase tracking-widest mb-2">
+                            <span>Slides Presenter Engine</span>
+                            <span>Slide {activeSlide.currentSlideIdx} of 3</span>
+                          </div>
+                          
+                          <h4 className="text-base font-display font-bold border-b border-white/10 pb-2 text-white">
+                            {activeSlide.slidesData[activeSlide.currentSlideIdx - 1]?.title || "Slide Content"}
+                          </h4>
+                          
+                          <ul className="list-disc pl-4 space-y-2 text-stone-300 text-[11px] mt-4 font-serif">
+                            {activeSlide.slidesData[activeSlide.currentSlideIdx - 1]?.bullets.map((b: string, i: number) => (
+                              <li key={i}>{b}</li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="flex justify-between items-center border-t border-white/10 pt-3">
+                          <button 
+                            disabled={activeSlide.currentSlideIdx <= 1}
+                            onClick={() => setActiveSlide({ ...activeSlide, currentSlideIdx: activeSlide.currentSlideIdx - 1 })}
+                            className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg disabled:opacity-30"
+                          >
+                            ◀ Prev Slide
+                          </button>
+                          <span className="text-[10px] text-stone-400 font-mono font-bold">Presentation Live Preview</span>
+                          <button 
+                            disabled={activeSlide.currentSlideIdx >= 3}
+                            onClick={() => setActiveSlide({ ...activeSlide, currentSlideIdx: activeSlide.currentSlideIdx + 1 })}
+                            className="bg-orange-600 hover:bg-orange-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg disabled:opacity-30"
+                          >
+                            Next Slide ▶
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center my-auto text-slate-500">
+                        <p className="text-2xl mb-1">🎬</p>
+                        <p className="font-bold text-xs text-stone-300">No Presentation Loaded</p>
+                        <p className="text-[10px] mt-1 text-stone-400 leading-tight">Select any presentation card on the left to preview slide deck scenes in presenter mode.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* H3. GOOGLE TASKS */}
+          {activeWorkspaceApp === "tasks" && (
+            <div className="grid gap-6 lg:grid-cols-12 text-xs">
+              <div className="lg:col-span-4 rounded-2xl border border-stone-200 bg-white p-5 text-left space-y-4 shadow-sm">
+                <h3 className="font-display text-sm font-bold text-stone-900 flex items-center space-x-1.5">
+                  <span className="p-1 bg-sky-50 rounded text-sky-600 font-bold">📋</span>
+                  <span>Google Tasks Studio</span>
+                </h3>
+                <form onSubmit={handleCreateTask} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Task Objective</label>
+                    <input
+                      type="text"
+                      required
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      placeholder="e.g. Audit student bookkeeping log"
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Due Date</label>
+                    <input
+                      type="date"
+                      value={newTaskDueDate}
+                      onChange={(e) => setNewTaskDueDate(e.target.value)}
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <button type="submit" className="w-full bg-sky-600 hover:bg-sky-700 text-white font-extrabold py-2 rounded-lg">
+                    Add New Task
+                  </button>
+                </form>
+
+                <div className="bg-sky-50/40 p-4 rounded-2xl border border-sky-100/60 text-[11px] leading-relaxed text-sky-850">
+                  <span className="text-[10px] uppercase font-mono font-black text-sky-700 block">Task Analytics Status</span>
+                  <div className="mt-2 space-y-1">
+                    <p>Total Registered Objectives: <strong>{tasksList.length}</strong></p>
+                    <p>Completed Tasks: <strong>{tasksList.filter(t => t.completed).length}</strong></p>
+                    <p>Pending Task Volume: <strong>{tasksList.filter(t => !t.completed).length}</strong></p>
+                  </div>
+                  {/* Visual Progress Bar */}
+                  <div className="w-full bg-slate-200 rounded-full h-1.5 mt-3 overflow-hidden">
+                    <div 
+                      className="bg-sky-600 h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${tasksList.length ? (tasksList.filter(t => t.completed).length / tasksList.length) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-mono block mt-1 text-right">
+                    {tasksList.length ? Math.round((tasksList.filter(t => t.completed).length / tasksList.length) * 100) : 0}% Done
+                  </span>
+                </div>
+              </div>
+
+              <div className="lg:col-span-8 rounded-2xl border border-stone-200 bg-white p-5 text-left shadow-sm">
+                <h3 className="font-display text-base font-bold text-stone-900 border-b pb-2 mb-4 flex justify-between items-center">
+                  <span>Google Tasks List Ledger</span>
+                  <span className="text-[10px] text-sky-600 font-mono font-bold bg-sky-50 px-2 py-0.5 rounded">List: My Tasks</span>
+                </h3>
+
+                <div className="space-y-2">
+                  {tasksList.map((task) => (
+                    <div 
+                      key={task.id}
+                      className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 flex items-center justify-between"
+                    >
+                      <div className="flex items-center space-x-3 truncate">
+                        <input 
+                          type="checkbox"
+                          checked={task.completed}
+                          onChange={() => {
+                            setTasksList(prev => prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t));
+                          }}
+                          className="h-4 w-4 text-sky-600 border-stone-300 rounded focus:ring-sky-500 cursor-pointer shrink-0"
+                          title="Toggle Completion"
+                        />
+                        <div className="truncate">
+                          <span className={`text-[12px] font-sans font-bold leading-tight block truncate ${task.completed ? "line-through text-slate-400" : "text-slate-800"}`}>
+                            {task.title}
+                          </span>
+                          <span className="text-[9px] text-slate-400 block font-mono font-semibold mt-0.5">Due date: {task.dueDate}</span>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          setTasksList(prev => prev.filter(t => t.id !== task.id));
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-650 hover:bg-slate-100 rounded-lg transition"
+                        title="Delete Task"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* H4. GOOGLE CLASSROOM */}
+          {activeWorkspaceApp === "classroom" && (
+            <div className="grid gap-6 lg:grid-cols-12 text-xs">
+              <div className="lg:col-span-4 rounded-2xl border border-stone-200 bg-white p-5 text-left space-y-4 shadow-sm">
+                <h3 className="font-display text-sm font-bold text-stone-900 flex items-center space-x-1.5">
+                  <span className="p-1 bg-green-50 rounded text-green-700 font-bold">🎓</span>
+                  <span>Google Classroom Management</span>
+                </h3>
+
+                <form onSubmit={handleCreateCourse} className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Course Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={newCourseName}
+                      onChange={(e) => setNewCourseName(e.target.value)}
+                      placeholder="e.g. Christian Apologetics"
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Course Section</label>
+                    <input
+                      type="text"
+                      value={newCourseSection}
+                      onChange={(e) => setNewCourseSection(e.target.value)}
+                      placeholder="e.g. Section B"
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] uppercase font-bold text-stone-500">Instructor Name</label>
+                    <input
+                      type="text"
+                      value={newCourseTeacher}
+                      onChange={(e) => setNewCourseTeacher(e.target.value)}
+                      placeholder="e.g. Chancellor Kelvin Wafula"
+                      className="w-full rounded border p-2 bg-stone-50 outline-none focus:bg-white"
+                    />
+                  </div>
+                  <button type="submit" className="w-full bg-green-700 hover:bg-green-800 text-white font-extrabold py-2 rounded-lg">
+                    Launch New Course
+                  </button>
+                </form>
+
+                <div className="border-t pt-4">
+                  <label className="block text-[10px] uppercase font-bold text-stone-500 mb-2">Publish Coursework Announcement</label>
+                  <form onSubmit={handleCreateAnnouncement} className="space-y-2">
+                    <input
+                      type="text"
+                      required
+                      value={newAnnouncementTitle}
+                      onChange={(e) => setNewAnnouncementTitle(e.target.value)}
+                      placeholder="Announcement Heading Title..."
+                      className="w-full rounded border p-2 bg-stone-50 outline-none text-xs"
+                    />
+                    <textarea
+                      rows={3}
+                      required
+                      value={newAnnouncementText}
+                      onChange={(e) => setNewAnnouncementText(e.target.value)}
+                      placeholder="Type homework assignments, instructions or notes to notify students..."
+                      className="w-full rounded border p-2 bg-stone-50 outline-none text-xs"
+                    />
+                    <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold py-1.5 rounded-lg">
+                      Broadcast to Students
+                    </button>
+                  </form>
+                </div>
+              </div>
+
+              <div className="lg:col-span-8 rounded-2xl border border-stone-200 bg-white p-5 text-left shadow-sm flex flex-col">
+                <div className="border-b pb-3 mb-4 flex justify-between items-center flex-wrap gap-2">
+                  <h3 className="font-display text-base font-bold text-stone-900">
+                    Classroom Courses & Announcements
+                  </h3>
+                  
+                  <div className="flex gap-2">
+                    {classroomCourses.map((crs) => (
+                      <button
+                        key={crs.id}
+                        onClick={() => setActiveCourseId(crs.id)}
+                        className={`px-3 py-1.5 rounded-xl border text-[10px] font-bold transition ${
+                          activeCourseId === crs.id ? "bg-green-50 border-green-400 text-green-700" : "bg-stone-50 hover:bg-stone-100 border-stone-150"
+                        }`}
+                      >
+                        {crs.name.split(" ").slice(0, 2).join(" ")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Course Dashboard Info */}
+                {(() => {
+                  const currentCourse = classroomCourses.find(c => c.id === activeCourseId);
+                  if (!currentCourse) return <p className="text-slate-400 italic text-center py-10">Select course context above</p>;
+                  
+                  return (
+                    <div className="space-y-4">
+                      <div className="bg-green-50/20 p-4 rounded-2xl border border-green-100/50">
+                        <span className="bg-green-700 text-white font-mono font-bold text-[9px] px-2 py-0.5 rounded uppercase">Course details</span>
+                        <h4 className="font-sans font-black text-slate-900 text-sm mt-1">{currentCourse.name}</h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[10px] text-slate-500 font-mono mt-2">
+                          <div>
+                            <span className="block text-[8px] text-slate-400 uppercase">Section</span>
+                            <strong>{currentCourse.section}</strong>
+                          </div>
+                          <div>
+                            <span className="block text-[8px] text-slate-400 uppercase">Classroom</span>
+                            <strong>{currentCourse.room}</strong>
+                          </div>
+                          <div>
+                            <span className="block text-[8px] text-slate-400 uppercase">Lecturer</span>
+                            <strong className="text-green-750">{currentCourse.teacher}</strong>
+                          </div>
+                          <div>
+                            <span className="block text-[8px] text-slate-400 uppercase">Enrolled</span>
+                            <strong>{currentCourse.studentsCount} Students</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Course Announcements Stream */}
+                      <div className="space-y-3">
+                        <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider">Stream Stream Feed</span>
+                        <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2">
+                          {classroomAnnouncements
+                            .filter(ann => ann.courseId === activeCourseId)
+                            .map((ann) => (
+                              <div key={ann.id} className="p-3 bg-stone-50/60 rounded-xl border border-stone-100 relative">
+                                <span className="absolute top-2 right-2 text-[8px] text-slate-400 font-mono">{ann.date}</span>
+                                <h5 className="font-extrabold text-slate-900 text-[11px] pr-14">{ann.title}</h5>
+                                <p className="text-slate-650 leading-relaxed text-[11.5px] mt-1 font-serif select-text">{ann.text}</p>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

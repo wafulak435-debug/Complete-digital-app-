@@ -1,10 +1,93 @@
 import React, { useState, useEffect } from "react";
-import { Smartphone, Download, Settings, Shield, Award, HelpCircle, CheckCircle2, Copy, ExternalLink } from "lucide-react";
+import { Smartphone, Download, Settings, Shield, Award, HelpCircle, CheckCircle2, Copy, ExternalLink, Activity, HardDrive, Bell, Play, Square, RefreshCw, Wifi, BatteryCharging, Zap } from "lucide-react";
 
 export default function PlayStoreHub() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isReadyToInstall, setIsReadyToInstall] = useState(false);
   const [copiedStep, setCopiedStep] = useState<number | null>(null);
+
+  // === WorkManager & Foreground Services Simulator states ===
+  const [wifiConstraint, setWifiConstraint] = useState(true);
+  const [chargingConstraint, setChargingConstraint] = useState(false);
+  const [activeFGS, setActiveFGS] = useState(false);
+  const [workLog, setWorkLog] = useState<string[]>([
+    "D/WorkManager: Initialized WorkManager v2.8.1 subsystem",
+    "I/BackgroundAgent: Ready for intent broadcasts and broadcast alarms..."
+  ]);
+  const [activeTasks, setActiveTasks] = useState([
+    { id: "task_1", name: "Sermon Media Sync Service", type: "Foreground SERVICE", status: "PENDING", progress: 0 },
+    { id: "task_2", name: "Offline Bible Verse Preloader", type: "OneTimeWorkRequest", status: "ENQUEUED", progress: 0 },
+    { id: "task_3", name: "Log Analytics Push Broker", type: "PeriodicWorkRequest", status: "ENQUEUED", progress: 0 }
+  ]);
+
+  // Handle trigger foreground service simulation
+  const toggleForegroundService = () => {
+    if (!activeFGS) {
+      setActiveFGS(true);
+      setWorkLog(prev => [
+        ...prev,
+        `I/ForegroundService: startService(Sermon Media Sync Service)`,
+        `D/ForegroundService: Showing persistent status bar notification [ID 109]`,
+        `I/AudioEngine: Peak normalized to -12dB. Syncing background sockets...`
+      ]);
+      setActiveTasks(prev => prev.map(t => t.id === "task_1" ? { ...t, status: "RUNNING", progress: 45 } : t));
+    } else {
+      setActiveFGS(false);
+      setWorkLog(prev => [
+        ...prev,
+        `I/ForegroundService: stopService(Sermon Media Sync Service) requested`,
+        `D/NotificationManager: Dismissed status bar notification id 109`
+      ]);
+      setActiveTasks(prev => prev.map(t => t.id === "task_1" ? { ...t, status: "PENDING", progress: 0 } : t));
+    }
+  };
+
+  // Trigger simulated work manager task processing
+  const handleTriggerWorkManager = () => {
+    // If Constraints are met, we process instantly, otherwise warn about Wi-Fi constraint
+    if (!wifiConstraint) {
+      alert("⚠️ WorkManager Constraints Blocked: This OneTimeWorkRequest requires active client Wi-Fi connection. Enable Wi-Fi constraint first!");
+      setWorkLog(prev => [
+        ...prev,
+        `W/WorkManager: Job com.wafula.task_2 deferred - WiFi constraint not met!`
+      ]);
+      return;
+    }
+
+    setWorkLog(prev => [
+      ...prev,
+      `D/WorkManager: Begin constraint check... [WiFi: MET, Charging: ${chargingConstraint ? "MET" : "OPTIONAL"}]`,
+      `I/WorkManager: Awakening Worker: com.wafula.digital.reads.VersePreloader`,
+      `D/VersePreloader: Downloading daily theological scripture packs...`
+    ]);
+
+    setActiveTasks(prev => prev.map(t => t.type === "OneTimeWorkRequest" ? { ...t, status: "RUNNING", progress: 40 } : t));
+
+    setTimeout(() => {
+      setActiveTasks(prev => prev.map(t => t.type === "OneTimeWorkRequest" ? { ...t, status: "RUNNING", progress: 85 } : t));
+      setWorkLog(prev => [
+        ...prev,
+        `D/VersePreloader: Caching 42 offline scriptures into local Room database...`
+      ]);
+    }, 1200);
+
+    setTimeout(() => {
+      setActiveTasks(prev => prev.map(t => t.type === "OneTimeWorkRequest" ? { ...t, status: "COMPLETED", progress: 100 } : t));
+      setWorkLog(prev => [
+        ...prev,
+        `I/WorkManager: Worker completed successfully: Result.success()`,
+        `D/NotificationManager: Triggered System notification: Bible Caching complete!`
+      ]);
+      alert("✅ WorkManager Task executed successfully in background! Check out the active process console logs below.");
+    }, 2400);
+  };
+
+  const clearProcessLogs = () => {
+    setWorkLog([
+      "D/WorkManager: Log buffers flushed cleanly.",
+      "I/BackgroundAgent: Ready for fresh trigger criteria updates..."
+    ]);
+  };
 
   const handleDownloadAPK = () => {
     const apkHeader = "WAFULA_READS_ANDROID_APK_MANIFEST_v2.1_CORE_STANDALONE";
@@ -279,6 +362,194 @@ npx cap sync`
               </span>
               <span>Compiled Format support: .APK, .AAB</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* FULL-WIDTH INTERACTIVE PROCESS VISUALIZER MODULE */}
+      <div className="bg-slate-900 rounded-2xl border border-slate-800 p-6 text-white space-y-6">
+        <div className="border-b border-slate-800 pb-4">
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="bg-emerald-500/10 text-emerald-400 font-mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-emerald-500/20">
+              Active Android Runtime Simulator
+            </span>
+            <span className="bg-blue-500/10 text-blue-400 font-mono text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-blue-500/20">
+              WorkManager API Met
+            </span>
+          </div>
+          <h3 className="text-base font-bold text-white mt-1.5 flex items-center gap-2">
+            <Activity className="h-5 w-5 text-emerald-400 animate-pulse" />
+            <span>Interactive Android WorkManager & Foreground Service Simulator</span>
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">
+            See exactly how background launching works on modern platforms. Simulate OS-level battery optimizations, Wi-Fi connectivity gates, WorkManager scheduled tasks, and persistent Foreground audio streaming services natively!
+          </p>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-12">
+          {/* OS Battery & WiFi Controls */}
+          <div className="md:col-span-4 bg-slate-950/50 rounded-xl p-4 border border-slate-800/80 space-y-4">
+            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest font-mono flex items-center gap-1.5">
+              <span>📱 System Constraints Controller</span>
+            </h4>
+            
+            <div className="space-y-3 pt-1">
+              {/* Wifi check button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setWifiConstraint(!wifiConstraint);
+                  setWorkLog(prev => [...prev, `D/SystemReceiver: WiFi State changed to ${!wifiConstraint ? "CONNECTED" : "DISCONNECTED"}`]);
+                }}
+                className={`w-full p-3 rounded-xl border flex items-center justify-between text-left transition select-none cursor-pointer ${
+                  wifiConstraint 
+                    ? "bg-slate-900 border-emerald-500/30 text-white" 
+                    : "bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Wifi className={`h-4.5 w-4.5 ${wifiConstraint ? "text-emerald-400" : "text-slate-600"}`} />
+                  <div className="text-xs">
+                    <p className="font-bold">Device WiFi Connection</p>
+                    <p className="text-[9px] text-slate-400">Required for most background download syncs</p>
+                  </div>
+                </div>
+                <div className={`h-4 w-8 rounded-full p-0.5 transition ${wifiConstraint ? "bg-emerald-500" : "bg-slate-800"}`}>
+                  <div className={`h-3 w-3 rounded-full bg-white transition-all ${wifiConstraint ? "ml-4" : "ml-0"}`} />
+                </div>
+              </button>
+
+              {/* Charging check button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setChargingConstraint(!chargingConstraint);
+                  setWorkLog(prev => [...prev, `D/BatteryReceiver: Device power plugged state: ${!chargingConstraint}`]);
+                }}
+                className={`w-full p-3 rounded-xl border flex items-center justify-between text-left transition select-none cursor-pointer ${
+                  chargingConstraint 
+                    ? "bg-slate-900 border-amber-500/30 text-white" 
+                    : "bg-slate-950 border-slate-800 text-slate-500 hover:text-slate-400"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <BatteryCharging className={`h-4.5 w-4.5 ${chargingConstraint ? "text-amber-400 animate-pulse" : "text-slate-600"}`} />
+                  <div className="text-xs">
+                    <p className="font-bold">Device AC Charging</p>
+                    <p className="text-[9px] text-slate-400">OS allows heavy background database tasks</p>
+                  </div>
+                </div>
+                <div className={`h-4 w-8 rounded-full p-0.5 transition ${chargingConstraint ? "bg-amber-500" : "bg-slate-800"}`}>
+                  <div className={`h-3 w-3 rounded-full bg-white transition-all ${chargingConstraint ? "ml-4" : "ml-0"}`} />
+                </div>
+              </button>
+            </div>
+
+            {/* Test triggers buttons */}
+            <div className="pt-2 border-t border-slate-800/80 space-y-2">
+              <button
+                type="button"
+                onClick={toggleForegroundService}
+                className={`w-full py-2.5 px-4 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  activeFGS 
+                    ? "bg-rose-600 hover:bg-rose-700 text-white" 
+                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                }`}
+              >
+                {activeFGS ? (
+                  <>
+                    <Square className="h-4 w-4 fill-white" />
+                    <span>Stop Foreground Service</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 fill-white animate-pulse" />
+                    <span>Start Foreground Service</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTriggerWorkManager}
+                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="h-4 w-4 text-emerald-250 shrink-0 animate-spin-slow" />
+                <span>Whip WorkManager Task</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Background Tasks Running Monitor state */}
+          <div className="md:col-span-8 flex flex-col space-y-4">
+            
+            {/* Active task list */}
+            <div className="bg-slate-950/40 rounded-xl p-4 border border-slate-800/80 flex-1 space-y-3">
+              <span className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-black block mb-2">
+                📂 Active Scheduled Procedures Monitor
+              </span>
+
+              <div className="space-y-2.5">
+                {activeTasks.map((task) => (
+                  <div key={task.id} className="bg-slate-950 border border-slate-850 p-3 rounded-lg flex items-center justify-between text-xs font-sans">
+                    <div className="space-y-1 text-left">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`inline-block text-[8px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                          task.type.includes("SERVICE") 
+                            ? "bg-indigo-900/40 text-indigo-300 border border-indigo-500/20" 
+                            : "bg-teal-900/40 text-teal-300 border border-teal-500/20"
+                        }`}>
+                          {task.type}
+                        </span>
+                        <strong className="text-slate-200">{task.name}</strong>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-[10px] text-slate-400">
+                        <span>Pacing: OS-Dependent</span>
+                        {task.progress > 0 && (
+                          <div className="flex items-center gap-1.5 w-24">
+                            <div className="flex-1 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                              <div className="bg-emerald-450 bg-emerald-400 h-full transition-all duration-300" style={{ width: `${task.progress}%` }}></div>
+                            </div>
+                            <span className="font-mono text-[9px] text-emerald-400 font-bold">{task.progress}%</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-black border ${
+                        task.status === "COMPLETED"
+                          ? "bg-emerald-950 text-emerald-400 border-emerald-500/20 font-bold"
+                          : task.status === "RUNNING"
+                          ? "bg-blue-950 text-blue-400 border-blue-500/20 animate-pulse font-bold"
+                          : "bg-slate-900 text-slate-400 border-slate-705 border-slate-700"
+                      }`}>
+                        {task.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Android Studio Shell Console logs */}
+            <div className="bg-black/80 rounded-xl border border-slate-850 p-3 font-mono text-[10px] text-emerald-400 h-[100px] overflow-y-auto space-y-1 relative text-left">
+              <button
+                type="button"
+                onClick={clearProcessLogs}
+                className="absolute right-2 top-2 bg-slate-900 hover:bg-slate-800 text-[9px] font-bold py-0.5 px-2 rounded border border-slate-700 cursor-pointer text-slate-300 transition"
+              >
+                Clear Console
+              </button>
+              {workLog.map((log, i) => (
+                <div key={i} className="truncate select-text">
+                  <span>&gt; </span>
+                  <span className={log.includes("W/") ? "text-amber-400" : log.includes("E/") ? "text-rose-450 text-rose-400" : ""}>{log}</span>
+                </div>
+              ))}
+            </div>
+
           </div>
         </div>
       </div>

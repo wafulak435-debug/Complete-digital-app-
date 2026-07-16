@@ -3,7 +3,7 @@ import {
   query, where, orderBy, limit, addDoc 
 } from "firebase/firestore";
 import { db } from "./firebase";
-import { User, Book, CommunityMessage, SavedDocument, MemberUploadRequest, AppSettings, BookOrder, SystemNotification, WifiPurchase } from "../types";
+import { User, Book, CommunityMessage, SavedDocument, MemberUploadRequest, AppSettings, BookOrder, SystemNotification, WifiPurchase, SearchHistoryItem } from "../types";
 
 /**
  * Normalizes Firebase Firestore permission-denied errors into structured JSON.
@@ -506,6 +506,69 @@ export async function logUserActivity(
     });
   } catch (err) {
     console.warn("Could not log user activity to Firestore:", err);
+  }
+}
+
+/**
+ * Fetch search histories
+ */
+export async function fetchSearchHistoriesFromFirestore(): Promise<SearchHistoryItem[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "searchHistories"));
+    const list: SearchHistoryItem[] = [];
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      list.push({ ...data } as SearchHistoryItem);
+    });
+    try {
+      localStorage.setItem("WAFULA_CACHED_SEARCH_HISTORIES", JSON.stringify(list));
+    } catch (_) {}
+    return list;
+  } catch (e) {
+    console.warn("Offline/unreachable firestore search histories fetch. Restoring local cache:", e);
+    const cached = localStorage.getItem("WAFULA_CACHED_SEARCH_HISTORIES");
+    if (cached) {
+      try {
+        return JSON.parse(cached) as SearchHistoryItem[];
+      } catch (_) {}
+    }
+    return [];
+  }
+}
+
+/**
+ * Save new search history item
+ */
+export async function saveSearchHistoryToFirestore(item: SearchHistoryItem): Promise<void> {
+  try {
+    await setDoc(doc(db, "searchHistories", item.id), sanitizeForFirestore(item));
+  } catch (e) {
+    handleFirestoreError(e, "saveSearchHistoryToFirestore");
+  }
+}
+
+/**
+ * Delete a search history item
+ */
+export async function deleteSearchHistoryFromFirestore(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "searchHistories", id));
+  } catch (e) {
+    handleFirestoreError(e, "deleteSearchHistoryFromFirestore");
+  }
+}
+
+/**
+ * Delete all search histories for a specific user
+ */
+export async function clearSearchHistoriesFromFirestore(userId: string): Promise<void> {
+  try {
+    const q = query(collection(db, "searchHistories"), where("userId", "==", userId));
+    const querySnapshot = await getDocs(q);
+    const promises = querySnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
+    await Promise.all(promises);
+  } catch (e) {
+    handleFirestoreError(e, "clearSearchHistoriesFromFirestore");
   }
 }
 

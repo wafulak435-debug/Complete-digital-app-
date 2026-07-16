@@ -7,11 +7,12 @@ import {
   Plus, Trash2
 } from "lucide-react";
 import { User, Book } from "../types";
-import { PREBUILT_LESSONS, COMPUTER_LESSONS, BIBLE_LESSONS, Lesson, AssessmentQuestion } from "../schoolCurriculum";
+import { PREBUILT_LESSONS, BIBLE_LESSONS, Lesson, AssessmentQuestion } from "../schoolCurriculum";
 import { collection, addDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { generateAccreditedCertificatePdf } from "../utils/pdfGenerator";
 import { QRCodeGenerator } from "../utils/qrCode";
+import AIChat from "./AIChat";
 
 
 interface LeadershipSchoolProps {
@@ -60,6 +61,195 @@ export default function LeadershipSchool({
   const [isProcessingLibraryPayment, setIsProcessingLibraryPayment] = useState(false);
   const [libraryPhone, setLibraryPhone] = useState("");
 
+  // Faculty Roles & Permission gates
+  const isUserTeacher = (currentUser?.role as any) === "teacher" || currentUser?.email?.toLowerCase().includes("teacher") || currentUser?.name?.toLowerCase().includes("teacher");
+  const isUserAdmin = currentUser?.role === "admin" || currentUser?.email === "wafulak435@gmail.com";
+  const isAuthorizedTeacher = isUserTeacher || isUserAdmin;
+
+  const isUserAdminOrSeniorTeacher = (() => {
+    if (!currentUser) return false;
+    const role = currentUser.role?.toLowerCase() || "";
+    const email = currentUser.email?.toLowerCase() || "";
+    const name = currentUser.name?.toLowerCase() || "";
+    
+    if (role === "admin" || email === "wafulak435@gmail.com") return true;
+    
+    if (role === "teacher" || role === "faculty" || role === "professor") {
+      if (
+        email.includes("head") || 
+        email.includes("chancellor") || 
+        email.includes("vc") || 
+        email.includes("principal") ||
+        name.includes("head teacher") || 
+        name.includes("chancellor") || 
+        name.includes("vc") || 
+        name.includes("muliro")
+      ) {
+        return true;
+      }
+    }
+    return false;
+  })();
+
+  // Teacher Syllabus Workshop Editor states
+  const [teacherSelectedMode, setTeacherSelectedMode] = useState<"create" | "update">("create");
+  const [teacherSelectedLessonId, setTeacherSelectedLessonId] = useState<string>("");
+  const [teacherLessonTopic, setTeacherLessonTopic] = useState("");
+  const [teacherLessonSlogan, setTeacherLessonSlogan] = useState("");
+  const [teacherLessonTrack, setTeacherLessonTrack] = useState<"leadership" | "computer" | "bible">("leadership");
+  const [teacherLessonNotes, setTeacherLessonNotes] = useState("");
+  const [teacherCustomQuestions, setTeacherCustomQuestions] = useState<any[]>([]);
+  const [isCompilingAILesson, setIsCompilingAILesson] = useState(false);
+
+  const handleSelectLessonToUpdate = (lessonId: string) => {
+    if (!lessonId) {
+      setTeacherSelectedMode("create");
+      setTeacherSelectedLessonId("");
+      setTeacherLessonTopic("");
+      setTeacherLessonSlogan("");
+      setTeacherLessonNotes("");
+      setTeacherCustomQuestions([]);
+      return;
+    }
+    
+    // Find in active syllabus
+    const found = activeLessonsList.find(l => l.id === lessonId) as any;
+    if (found) {
+      setTeacherSelectedMode("update");
+      setTeacherSelectedLessonId(found.id);
+      setTeacherLessonTopic(found.topic);
+      setTeacherLessonSlogan(found.slogan);
+      setTeacherLessonTrack((found.category as any) || "leadership");
+      
+      const contentText = found.lectures?.[0]?.content || found.points?.join("\n\n") || "";
+      setTeacherLessonNotes(contentText);
+      setTeacherCustomQuestions(found.selfAssessment || []);
+    }
+  };
+
+  const handleCompileAILessonQuestions = async () => {
+    if (!teacherLessonTopic.trim() || !teacherLessonNotes.trim()) {
+      alert("Please enter the Topic Title and Lecture Notes first.");
+      return;
+    }
+    setIsCompilingAILesson(true);
+    try {
+      const resp = await fetch("/api/ai/compile-lecture-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: teacherLessonTopic,
+          content: teacherLessonNotes
+        })
+      });
+      const data = await resp.json();
+      if (data.success && Array.isArray(data.questions)) {
+        setTeacherCustomQuestions(data.questions);
+        alert("✨ SUCCESS! AI has analyzed the lecture text and compiled exactly 3 highly relevant quiz questions!");
+      } else {
+        alert("Could not automatically compile quiz questions. Falling back to default assessments.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Error compiling questions with AI.");
+    } finally {
+      setIsCompilingAILesson(false);
+    }
+  };
+
+  const handlePublishOrUpdateSyllabus = () => {
+    if (!teacherLessonTopic.trim() || !teacherLessonNotes.trim()) {
+      alert("Please provide the topic title and detailed lecture notes.");
+      return;
+    }
+
+    const points = teacherLessonNotes.split("\n\n").filter(p => p.trim());
+    
+    const finalQuestions = teacherCustomQuestions.length > 0 ? teacherCustomQuestions : [
+      {
+        question: `Which fundamental aspect is highlighted under this custom lesson topic of "${teacherLessonTopic}"?`,
+        options: ["Strategic integration", "Secondary validation rules", "Unverified random processes", "Complete bypass metrics"],
+        correctIndex: 0,
+        explanation: "This chapter focuses on structured academic integration and consistent master verification."
+      }
+    ];
+
+    const targetLessonId = teacherSelectedMode === "update" && teacherSelectedLessonId
+      ? teacherSelectedLessonId
+      : `custom-less-${Date.now()}`;
+
+    const customLesson = {
+      id: targetLessonId,
+      topic: teacherLessonTopic,
+      slogan: teacherLessonSlogan || "Official Teacher Contributed Topic",
+      courseCode: teacherLessonTrack === "computer" ? "COMP/ADV/AI" : teacherLessonTrack === "bible" ? "THEO/DIV/BIBLE" : "LEAD/STRAT/GOV",
+      category: teacherLessonTrack,
+      points: points.length > 5 ? points.slice(0, 5) : points,
+      selfAssessment: finalQuestions,
+      lectures: [
+        {
+          title: "Introduction",
+          content: teacherLessonNotes
+        }
+      ]
+    };
+
+    const storedStr = localStorage.getItem("ZION_CUSTOM_TEACHER_LESSONS") || "[]";
+    let storedList: any[] = [];
+    try { storedList = JSON.parse(storedStr); } catch (_) {}
+
+    if (teacherSelectedMode === "update") {
+      const idx = storedList.findIndex(x => x.id === targetLessonId);
+      if (idx > -1) {
+        storedList[idx] = customLesson;
+      } else {
+        storedList.push(customLesson);
+      }
+    } else {
+      storedList.push(customLesson);
+    }
+
+    localStorage.setItem("ZION_CUSTOM_TEACHER_LESSONS", JSON.stringify(storedList));
+    
+    alert(`🎉 SYSTEM CONFIRMED! "${teacherLessonTopic}" has been successfully published to the ${teacherLessonTrack.toUpperCase()} database!`);
+    
+    setTeacherLessonTopic("");
+    setTeacherLessonSlogan("");
+    setTeacherLessonNotes("");
+    setTeacherCustomQuestions([]);
+    setTeacherSelectedLessonId("");
+    setTeacherSelectedMode("create");
+    
+    window.dispatchEvent(new Event("storage"));
+  };
+
+  // Course Completion Transcript Analytics helper
+  const checkCourseCompletion = () => {
+    if (!currentUser) return { completedAll: false, completedCount: 0, totalCount: 0 };
+    
+    const userMail = currentUser.email;
+    const gradesKey = `WAFULA_STUDENT_GRADES_${userMail}`;
+    const gradesStr = localStorage.getItem(gradesKey);
+    let grades: Record<string, any> = {};
+    if (gradesStr) {
+      try { grades = JSON.parse(gradesStr); } catch (_) {}
+    }
+
+    const totalCount = activeLessonsList.length;
+    let completedCount = 0;
+    activeLessonsList.forEach(l => {
+      if (grades[l.id] && grades[l.id].passed) {
+        completedCount++;
+      }
+    });
+
+    return {
+      completedAll: completedCount === totalCount && totalCount > 0,
+      completedCount,
+      totalCount
+    };
+  };
+
   // Sync state intervals for portal heads & library payment
   useEffect(() => {
     const handleSync = () => {
@@ -79,16 +269,43 @@ export default function LeadershipSchool({
   }, [isLibraryPaid]);
 
   // Lesson states
-  const [activeSchool, setActiveSchool] = useState<"leadership" | "computer" | "bible" | "all">(() => {
-    return (localStorage.getItem("WAFULA_ACTIVE_SCHOOL") as "leadership" | "computer" | "bible" | "all") || "leadership";
+  const [activeSchool, setActiveSchool] = useState<"leadership" | "bible" | "all">(() => {
+    const saved = localStorage.getItem("WAFULA_ACTIVE_SCHOOL");
+    if (saved === "bible" || saved === "all") return saved;
+    return "leadership";
   });
-  const activeLessonsList = activeSchool === "all"
-    ? [...PREBUILT_LESSONS, ...COMPUTER_LESSONS, ...BIBLE_LESSONS]
-    : activeSchool === "computer"
-    ? COMPUTER_LESSONS
-    : activeSchool === "bible"
-    ? BIBLE_LESSONS
-    : PREBUILT_LESSONS;
+  const activeLessonsList = (() => {
+    let customLessons: Lesson[] = [];
+    try {
+      customLessons = JSON.parse(localStorage.getItem("ZION_CUSTOM_TEACHER_LESSONS") || "[]");
+    } catch (_) {}
+
+    let base: Lesson[] = [];
+    if (activeSchool === "all") {
+      base = [...PREBUILT_LESSONS, ...BIBLE_LESSONS];
+    } else if (activeSchool === "bible") {
+      base = [...BIBLE_LESSONS];
+    } else {
+      base = [...PREBUILT_LESSONS];
+    }
+
+    const filteredCustom = customLessons.filter((cl: any) => 
+      activeSchool === "all" || cl.category === activeSchool
+    );
+
+    const updatedCombined = base.map(bLesson => {
+      const customized = filteredCustom.find(cl => cl.id === bLesson.id);
+      return customized ? customized : bLesson;
+    });
+
+    filteredCustom.forEach((cl: any) => {
+      if (!updatedCombined.some(item => item.id === cl.id)) {
+        updatedCombined.push(cl);
+      }
+    });
+
+    return updatedCombined;
+  })();
 
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
   
@@ -453,7 +670,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       return;
     }
 
-    const selectedCourse = COMPUTER_LESSONS.find(c => c.id === enrolmentSelectedCourseId);
+    const selectedCourse = [...PREBUILT_LESSONS, ...BIBLE_LESSONS].find(c => c.id === enrolmentSelectedCourseId);
     if (!selectedCourse) {
       alert("Selected academy course could not be located in syllabus catalog.");
       return;
@@ -848,15 +1065,6 @@ Prepare for your master certifications by reviewing the definitions of absolute 
         setCertStatus("approved");
         localStorage.setItem(`WAFULA_CERT_STATUS_${currentUser.email || "guest@wafula.com"}`, "approved");
       }
-
-      // Auto download immediately as requested!
-      setTimeout(() => {
-        try {
-          handleDownloadCertificatePdf(scorePct);
-        } catch (e) {
-          console.error("Auto pdf download compilation run err:", e);
-        }
-      }, 100);
     }
 
     // Set Congrats Modal states
@@ -979,7 +1187,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                 <span>ADMISSIONS ACTIVE FOR COHORT 2026</span>
               </div>
               <h2 className="font-display text-3xl font-black tracking-tight leading-tight">
-                Zion Digital Leadership & Computer School
+                Zion Digital Leadership & Bible School
               </h2>
               <p className="text-xs text-red-100/90 leading-relaxed font-sans">
                 A prestigious center modeled for absolute scholarly integrity and advanced digital skillsets. Serving with ethical standards to coordinate future statesman and code engineers across developing cohorts.
@@ -1160,7 +1368,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               />
             </div>
             <h1 className="font-serif text-3xl sm:text-4xl font-extrabold tracking-tight text-amber-955 uppercase">
-              Zion Digital Leadership & Computer School
+              Zion Digital Leadership & Bible School
             </h1>
             <p className="font-mono text-[9px] uppercase tracking-widest text-amber-800 font-bold">
               ESTABLISHED IN COVENANT EXCELLENCE & SACRED STEWARDSHIP
@@ -1284,7 +1492,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                 <span>Zion Digital Academic Center of Excellence</span>
               </div>
               <h2 className="font-display text-3xl font-black tracking-tight sm:text-4xl leading-tight">
-                Zion Digital Leadership & Computer School
+                Zion Digital Leadership & Bible School
               </h2>
               <p className="mt-2 text-sm text-red-200/90 font-medium italic">
                 "Equipping administrative statesmen and skilled developers to serve with absolute dignity."
@@ -1326,13 +1534,20 @@ Prepare for your master certifications by reviewing the definitions of absolute 
         </div>
       </div>
 
-      {/* 5 Portals Navigation Bar Slider */}
+      {/* Portals Navigation Bar Slider (Filtered dynamically by Authorized User Roles) */}
       <div className="flex border-b border-stone-200 dark:border-stone-850 mb-8 pb-3.5 space-x-3 overflow-x-auto scrollbar-none text-left">
         {[
           { id: "student", label: "👤 Student Classroom Desk", desc: `Overseer: ${headStudent}` },
-          { id: "teacher", label: "🧑‍🏫 Teacher Admin Desk", desc: `Overseer: ${headTeacher}` },
-          { id: "financial", label: "💸 Financial & Tuition Portal", desc: `Overseer: ${headFinance}` },
-          { id: "certificate", label: "🎖️ Certificate & Academic Grades", desc: `Overseer: ${headCertificate}` },
+          ...(isAuthorizedTeacher ? [
+            { id: "teacher", label: "🧑‍🏫 Teacher Admin Desk", desc: `Overseer: ${headTeacher}` }
+          ] : []),
+          ...(isUserAdminOrSeniorTeacher ? [
+            { id: "financial", label: "💸 Financial & Tuition Portal", desc: `Overseer: ${headFinance}` },
+            { id: "certificate", label: "🎖️ Certificate & Academic Grades", desc: `Overseer: ${headCertificate}` }
+          ] : []),
+          ...(isAuthorizedTeacher ? [
+            { id: "aichat", label: "🤖 AI Support Desk", desc: "Permanent search & research history" }
+          ] : []),
           { id: "library", label: "📚 Bookshelf Library Sector", desc: `Overseer: ${headLibrary}` }
         ].map(portal => (
           <button
@@ -1384,21 +1599,6 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               <button
                 type="button"
                 onClick={() => {
-                  setActiveSchool("computer");
-                  localStorage.setItem("WAFULA_ACTIVE_SCHOOL", "computer");
-                  setSelectedLesson(null);
-                  setShowAssessment(false);
-                  setAssessmentResult(null);
-                }}
-                className={`pb-2.5 px-2 text-center border-b-2 transition uppercase tracking-wider cursor-pointer whitespace-nowrap ${
-                  activeSchool === "computer" ? "text-blue-700 border-blue-700 font-black dark:text-blue-400 dark:border-blue-400" : "border-transparent hover:text-stone-850 dark:hover:text-stone-250"
-                }`}
-              >
-                💻 Computer
-              </button>
-              <button
-                type="button"
-                onClick={() => {
                   setActiveSchool("bible");
                   localStorage.setItem("WAFULA_ACTIVE_SCHOOL", "bible");
                   setSelectedLesson(null);
@@ -1428,9 +1628,9 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               </button>
             </div>
 
-            <h3 className="font-display text-xs font-extrabold text-stone-900 dark:text-stone-100 mb-4 flex items-center space-x-2 border-b border-stone-100 dark:border-stone-900 pb-2.5">
-              <BookCheck className={`h-4.5 w-4.5 ${activeSchool === "all" ? "text-purple-600 dark:text-purple-450" : (activeSchool === "bible" ? "text-amber-600 dark:text-amber-400" : activeSchool === "computer" ? "text-blue-600 dark:text-blue-400" : "text-red-700 dark:text-red-400")}`} />
-              <span>{activeSchool === "all" ? "Combined Syllabus Core" : (activeSchool === "bible" ? "Bible School Theological Syllabus" : activeSchool === "computer" ? "Computer IT Core Syllabus" : "Leadership Core Syllabus")}</span>
+            <h3 className="font-display text-xs font-extrabold text-stone-900 dark:text-stone-101 mb-4 flex items-center space-x-2 border-b border-stone-100 dark:border-stone-900 pb-2.5">
+              <BookCheck className={`h-4.5 w-4.5 ${activeSchool === "all" ? "text-purple-600 dark:text-purple-450" : (activeSchool === "bible" ? "text-amber-600 dark:text-amber-400" : "text-red-700 dark:text-red-400")}`} />
+              <span>{activeSchool === "all" ? "Combined Syllabus Core" : (activeSchool === "bible" ? "Bible School Theological Syllabus" : "Leadership Core Syllabus")}</span>
             </h3>
 
             <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
@@ -1440,8 +1640,8 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                   onClick={() => handleStartLesson(l)}
                   className={`flex w-full items-start justify-between rounded-xl p-3.5 text-left border transition cursor-pointer ${
                     selectedLesson?.id === l.id 
-                      ? COMPUTER_LESSONS.some(comp => comp.id === l.id)
-                        ? "border-blue-450 bg-blue-50/50 dark:bg-blue-950/25 text-blue-950 dark:text-blue-300"
+                      ? BIBLE_LESSONS.some(comp => comp.id === l.id)
+                        ? "border-amber-450 bg-amber-50/50 dark:bg-amber-950/25 text-amber-950 dark:text-amber-300"
                         : "border-red-450 bg-red-50/50 dark:bg-red-950/25 text-red-950 dark:text-red-300" 
                       : "border-stone-200 dark:border-stone-850 bg-stone-50 dark:bg-stone-900/60 hover:bg-stone-100 dark:hover:bg-stone-900 text-stone-850 dark:text-stone-200"
                   }`}
@@ -1472,12 +1672,12 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               <div className="bg-stone-50 dark:bg-stone-900/55 p-3.5 rounded-2xl border border-stone-250 dark:border-stone-800">
                 <span className="text-[8.5px] uppercase tracking-widest font-mono font-extrabold text-stone-400 dark:text-stone-500 block mb-1">OFFICE OF THE REGISTRAR</span>
                 <h4 className="text-xs font-black text-stone-905 dark:text-stone-105 uppercase tracking-tight mb-2">Continuing & Repeat Course Enrollment</h4>
-                <p className="text-[10px] text-stone-500 dark:text-stone-400 leading-relaxed mb-3">Register officially for core, continuing, or repeat/supplementary computer school classes with certified Zion code indices.</p>
+                <p className="text-[10px] text-stone-500 dark:text-stone-400 leading-relaxed mb-3">Register officially for core, continuing, or repeat/supplementary leadership and Bible school classes with certified Zion code indices.</p>
                 <button
                   type="button"
                   onClick={() => {
-                    if (!enrolmentSelectedCourseId && COMPUTER_LESSONS.length > 0) {
-                      setEnrolmentSelectedCourseId(COMPUTER_LESSONS[0].id);
+                    if (!enrolmentSelectedCourseId && PREBUILT_LESSONS.length > 0) {
+                      setEnrolmentSelectedCourseId(PREBUILT_LESSONS[0].id);
                     }
                     setShowEnrolmentModal(true);
                   }}
@@ -1510,43 +1710,55 @@ Prepare for your master certifications by reviewing the definitions of absolute 
             </div>
           </div>
 
-          {/* AI Teacher Custom Topic Generator (Completely Overhauled) */}
+          {/* AI Teacher Custom Topic Generator (Completely Overhauled - Teacher restricted block) */}
           <div className="rounded-2xl border border-stone-250 bg-gradient-to-br from-stone-50 to-white p-5 text-left space-y-4 shadow-sm transition-colors light-only">
             <div className="flex items-center space-x-1.5 text-red-700 font-bold text-xs uppercase tracking-wider">
               <Sparkles className="h-4 w-4" />
               <span>AI Elite Course Generator</span>
             </div>
             
-            <p className="text-[11px] text-stone-500 leading-relaxed font-sans">
-              Enter any leadership challenge or custom technology platform. The high-capacity AI will build comprehensive detailed notes and a dynamic 5-question automated marked assessment. <strong className="text-emerald-600 block mt-1">✓ Unlimited Free AI: All companion illustrations and lessons generated by the school AI are 100% free with no limits.</strong>
-            </p>
+            {!isAuthorizedTeacher ? (
+              <div className="p-3 bg-stone-50 border rounded-xl text-center space-y-1.5">
+                <ShieldAlert className="h-5 w-5 text-red-700 mx-auto animate-pulse" />
+                <span className="text-[10px] font-bold text-stone-700 block uppercase tracking-wide">FACULTY ONLY AI TOOL</span>
+                <p className="text-[10px] text-stone-500 leading-relaxed">
+                  Only premium teachers and lead VC chancellors are authorized to run custom AI subject compilers in Zion.
+                </p>
+              </div>
+            ) : (
+              <>
+                <p className="text-[11px] text-stone-500 leading-relaxed font-sans">
+                  Enter any leadership challenge or custom technology platform. The high-capacity AI will build comprehensive detailed notes and a dynamic 5-question automated marked assessment. <strong className="text-emerald-600 block mt-1">✓ Unlimited Free AI: All companion illustrations and lessons generated by the school AI are 100% free with no limits.</strong>
+                </p>
 
-            <div className="space-y-2">
-              <input
-                type="text"
-                value={customTopic}
-                onChange={(e) => setCustomTopic(e.target.value)}
-                placeholder="e.g. serverless routing or public finance"
-                className="w-full rounded-xl border border-stone-250 bg-white px-3.5 py-2.5 text-xs outline-none focus:ring-1 focus:ring-red-700 cursor-text text-stone-850 placeholder-stone-400"
-              />
-              <button
-                onClick={handleGenerateCustom}
-                disabled={isGeneratingCustom || !customTopic.trim()}
-                className="w-full flex items-center justify-center space-x-1 rounded-xl bg-red-700 hover:bg-red-850 py-3 text-xs font-extrabold text-white transition disabled:opacity-40 cursor-pointer shadow-xs uppercase tracking-wider"
-              >
-                {isGeneratingCustom ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>Formulating Scholarly Notes...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkle className="h-3.5 w-3.5 shrink-0" />
-                    <span>Synthesize Custom Class</span>
-                  </>
-                )}
-              </button>
-            </div>
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={customTopic}
+                    onChange={(e) => setCustomTopic(e.target.value)}
+                    placeholder="e.g. serverless routing or public finance"
+                    className="w-full rounded-xl border border-stone-250 bg-white px-3.5 py-2.5 text-xs outline-none focus:ring-1 focus:ring-red-700 cursor-text text-stone-850 placeholder-stone-400"
+                  />
+                  <button
+                    onClick={handleGenerateCustom}
+                    disabled={isGeneratingCustom || !customTopic.trim()}
+                    className="w-full flex items-center justify-center space-x-1 rounded-xl bg-red-700 hover:bg-red-850 py-3 text-xs font-extrabold text-white transition disabled:opacity-40 cursor-pointer shadow-xs uppercase tracking-wider"
+                  >
+                    {isGeneratingCustom ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Formulating Scholarly Notes...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkle className="h-3.5 w-3.5 shrink-0" />
+                        <span>Synthesize Custom Class</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
         </div>
@@ -1560,31 +1772,44 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               <Sparkle className="h-4.5 w-4.5 mr-1 text-red-700 shrink-0" />
               <span>AI Problem Solver & Classroom Tutor</span>
             </h3>
-            <p className="text-xs text-stone-500 leading-relaxed mb-4 font-sans">
-              Solve complex coding loops, organization conflicts, mathematical formulations, or seek administrative guidance instantly.
-            </p>
-            <div className="flex gap-2.5">
-              <input 
-                type="text"
-                placeholder="Ask teacher a custom leadership or technical question..."
-                value={aiTeacherQuestion}
-                onChange={(e) => setAiTeacherQuestion(e.target.value)}
-                className="flex-grow text-xs rounded-xl border border-stone-250 bg-stone-50 px-4 py-3 cursor-text text-stone-905 focus:bg-white focus:outline-none focus:ring-1 focus:ring-red-700"
-              />
-              <button
-                onClick={handleAskQuestion}
-                disabled={isAskingAi || !aiTeacherQuestion.trim()}
-                className="bg-red-700 hover:bg-red-850 text-white font-black text-xs uppercase tracking-wider rounded-xl px-4.5 shrink-0 transition cursor-pointer disabled:opacity-45 shadow-sm"
-              >
-                {isAskingAi ? "Solving..." : "Ask AI Teacher"}
-              </button>
-            </div>
 
-            {aiTeacherAnswer && (
-              <div className="mt-4 p-4 rounded-xl bg-orange-50/40 border border-orange-200/35 text-xs text-stone-800 whitespace-pre-wrap leading-relaxed">
-                <span className="font-bold text-orange-950 block mb-1">🎓 AI Teacher Solver:</span>
-                {aiTeacherAnswer}
+            {!isAuthorizedTeacher ? (
+              <div className="p-4 bg-stone-50 border border-dashed rounded-xl text-center space-y-1">
+                <ShieldAlert className="h-5 w-5 text-red-650 mx-auto animate-pulse" />
+                <span className="text-[10.5px] font-bold text-stone-700 block uppercase">SECURE TUTOR ENCRYPTED</span>
+                <p className="text-[10px] text-stone-500 leading-relaxed">
+                  Active AI classroom tutoring and smart analytical guidance are reserved exclusively for school teachers, VC Chancellor, and senior coordinators.
+                </p>
               </div>
+            ) : (
+              <>
+                <p className="text-xs text-stone-500 leading-relaxed mb-4 font-sans">
+                  Solve complex coding loops, organization conflicts, mathematical formulations, or seek administrative guidance instantly.
+                </p>
+                <div className="flex gap-2.5">
+                  <input 
+                    type="text"
+                    placeholder="Ask teacher a custom leadership or technical question..."
+                    value={aiTeacherQuestion}
+                    onChange={(e) => setAiTeacherQuestion(e.target.value)}
+                    className="flex-grow text-xs rounded-xl border border-stone-250 bg-stone-50 px-4 py-3 cursor-text text-stone-905 focus:bg-white focus:outline-none focus:ring-1 focus:ring-red-700"
+                  />
+                  <button
+                    onClick={handleAskQuestion}
+                    disabled={isAskingAi || !aiTeacherQuestion.trim()}
+                    className="bg-red-700 hover:bg-red-850 text-white font-black text-xs uppercase tracking-wider rounded-xl px-4.5 shrink-0 transition cursor-pointer disabled:opacity-45 shadow-sm"
+                  >
+                    {isAskingAi ? "Solving..." : "Ask AI Teacher"}
+                  </button>
+                </div>
+
+                {aiTeacherAnswer && (
+                  <div className="mt-4 p-4 rounded-xl bg-orange-50/40 border border-orange-200/35 text-xs text-stone-800 whitespace-pre-wrap leading-relaxed">
+                    <span className="font-bold text-orange-950 block mb-1">🎓 AI Teacher Solver:</span>
+                    {aiTeacherAnswer}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -2053,87 +2278,143 @@ Prepare for your master certifications by reviewing the definitions of absolute 
               </div>
             ) : (
               <div className="space-y-6">
-                 <div className="grid md:grid-cols-2 gap-6 bg-[#fcfcfa] dark:bg-stone-900/10 p-5 rounded-2xl border border-stone-200 dark:border-stone-850">
-                     <div className="space-y-3 text-left">
-                        <h4 className="font-extrabold text-xs text-stone-900 dark:text-stone-100 uppercase tracking-wide">✍️ Append Custom Chapter Lecture</h4>
-                        <p className="text-[11px] text-stone-500">Tutors can author dynamic, custom study chapters instantly. Published core topics instantly propagate to the primary student syllabus directories!</p>
-                        
-                        <form onSubmit={(e) => {
-                          e.preventDefault();
-                          const fd = new FormData(e.currentTarget);
-                          const topic = fd.get("topic") as string;
-                          const slogan = fd.get("slogan") as string;
-                          const targetTrack = fd.get("targetTrack") as string;
-                          const outline = fd.get("outline") as string;
-                          
-                          if (!topic || !outline) {
-                            alert("Please provide the topic title and detailed outline notes.");
-                            return;
-                          }
+                  <div className="grid md:grid-cols-11 gap-6 bg-[#fcfcfa] dark:bg-stone-900/10 p-5 rounded-2xl border border-stone-200 dark:border-stone-850">
+                      <div className="md:col-span-7 space-y-4 text-left">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-2.5 gap-2">
+                          <div>
+                            <h4 className="font-extrabold text-xs text-stone-900 dark:text-stone-100 uppercase tracking-wide">✍️ Syllabus Workshop & AI Exam Compiler</h4>
+                            <p className="text-[10px] text-stone-500">Tutors can author courses, customize notes, and auto-formulate test questions with AI.</p>
+                          </div>
+                          <span className="text-[9px] font-mono font-bold bg-amber-50 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 px-2 py-1 rounded shrink-0">ROLE: FACULTY COVENANT OVERSEER</span>
+                        </div>
 
-                          const points = outline.split("\n\n").filter(p => p.trim());
-                          const customLesson = {
-                            id: `custom-less-${Date.now()}`,
-                            topic,
-                            slogan: slogan || "Official Teacher Contributed Topic",
-                            courseCode: targetTrack === "computer" ? "COMP/ADV/AI" : targetTrack === "bible" ? "THEO/DIV/BIBLE" : "LEAD/STRAT/GOV",
-                            category: targetTrack,
-                            points: points.length > 5 ? points.slice(0, 5) : points,
-                            selfAssessment: [
-                              {
-                                question: `Which fundamental aspect is highlighted under this custom lesson topic of "${topic}"?`,
-                                options: ["Strategic integration", "Secondary validation rules", "Unverified random processes", "Complete bypass metrics"],
-                                correctIndex: 0,
-                                explanation: "This chapter focuses on structured academic integration and consistent master verification."
-                              }
-                            ],
-                            lectures: [
-                              {
-                                title: "Introduction",
-                                content: outline
-                              }
-                            ]
-                          };
+                        {/* MODE / SYLLABUS SELECTOR DROPDOWN */}
+                        <div className="space-y-1.5 p-3.5 bg-white dark:bg-stone-950 rounded-xl border border-stone-150 dark:border-stone-850">
+                          <label className="block text-[9.5px] font-mono uppercase font-bold text-stone-500">Select Syllabus Module to Edit/Update:</label>
+                          <select
+                            value={teacherSelectedLessonId}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setTeacherSelectedLessonId(v);
+                              handleSelectLessonToUpdate(v);
+                            }}
+                            className="w-full bg-stone-50 text-stone-900 dark:bg-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg text-xs font-bold leading-relaxed focus:bg-white"
+                          >
+                            <option value="">➕ [CREATE BRAND NEW COURSE LECTURE MODULE]</option>
+                            {activeLessonsList.map(item => (
+                              <option key={item.id} value={item.id}>
+                                📝 {item.topic} ({item.courseCode || (item as any).category?.toUpperCase()})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                          const stored = JSON.parse(localStorage.getItem("ZION_CUSTOM_TEACHER_LESSONS") || "[]");
-                          stored.push(customLesson);
-                          localStorage.setItem("ZION_CUSTOM_TEACHER_LESSONS", JSON.stringify(stored));
-                          
-                          if (targetTrack === "computer") {
-                            COMPUTER_LESSONS.push(customLesson as any);
-                          } else if (targetTrack === "bible") {
-                            BIBLE_LESSONS.push(customLesson as any);
-                          } else {
-                            PREBUILT_LESSONS.push(customLesson as any);
-                          }
+                        {/* STUDY FORM */}
+                        <div className="space-y-3.5 text-xs text-left">
+                           <div className="grid sm:grid-cols-2 gap-3">
+                             <div className="space-y-1">
+                               <label className="block text-[9.5px] uppercase font-bold text-stone-500 dark:text-stone-400">Course Topic Title:</label>
+                               <input 
+                                 type="text" 
+                                 value={teacherLessonTopic}
+                                 onChange={(e) => setTeacherLessonTopic(e.target.value)}
+                                 placeholder="e.g. History of the Early Church" 
+                                 className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg placeholder-stone-400" 
+                                 required 
+                               />
+                             </div>
+                             <div className="space-y-1 font-sans">
+                               <label className="block text-[9.5px] uppercase font-bold text-stone-500 dark:text-stone-400">Context / Slogan:</label>
+                               <input 
+                                 type="text" 
+                                 value={teacherLessonSlogan}
+                                 onChange={(e) => setTeacherLessonSlogan(e.target.value)}
+                                 placeholder="e.g. Analyzing theological shifts in the first century" 
+                                 className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg placeholder-stone-400" 
+                               />
+                             </div>
+                           </div>
 
-                          alert(`🎉 SYLLABUS UPDATED! "${topic}" has been added to the student ${targetTrack.toUpperCase()} curriculum!`);
-                          e.currentTarget.reset();
-                          window.dispatchEvent(new Event("storage"));
-                        }} className="space-y-3.5 text-xs text-left">
-                           <div>
-                              <input type="text" name="topic" placeholder="e.g. History of the Early Church" className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg" required />
+                           <div className="grid sm:grid-cols-2 gap-3">
+                             <div className="space-y-1">
+                               <label className="block text-[9.5px] uppercase font-bold text-stone-500 dark:text-stone-400">Curriculum Academy Track Track:</label>
+                               <select 
+                                 value={teacherLessonTrack}
+                                 onChange={(e) => setTeacherLessonTrack(e.target.value as any)}
+                                 className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg font-bold"
+                               >
+                                  <option value="leadership">🎓 Strategic Leadership School</option>
+                                  <option value="computer">💻 Computer Science & IT School</option>
+                                  <option value="bible">📖 Bible school Track</option>
+                               </select>
+                             </div>
+                             <div className="space-y-1 flex flex-col justify-end">
+                               {/* AI Questions generation call button */}
+                               <button
+                                 type="button"
+                                 onClick={handleCompileAILessonQuestions}
+                                 disabled={isCompilingAILesson || !teacherLessonTopic.trim() || !teacherLessonNotes.trim()}
+                                 className="w-full text-center bg-stone-900 hover:bg-stone-950 text-white font-extrabold text-[11px] py-2 px-3.5 rounded-xl transition cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-40 border border-stone-800 dark:border-stone-700"
+                               >
+                                 {isCompilingAILesson ? (
+                                   <>
+                                     <RefreshCw className="h-3.5 w-3.5 animate-spin text-yellow-500" />
+                                     <span>Syncing with AI Model...</span>
+                                   </>
+                                 ) : (
+                                   <>
+                                     <Sparkles className="h-3.5 w-3.5 text-yellow-500 animate-pulse" />
+                                     <span>Compile MCQ Questions with AI</span>
+                                   </>
+                                 )}
+                               </button>
+                             </div>
                            </div>
-                           <div>
-                              <input type="text" name="slogan" placeholder="e.g. Analyzing theological shifts in the first century" className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg" />
+
+                           <div className="space-y-1">
+                             <label className="block text-[9.5px] uppercase font-bold text-stone-500 dark:text-stone-400">Lecture Notes Content (Untouched upon uploads):</label>
+                             <textarea 
+                               rows={7} 
+                               value={teacherLessonNotes}
+                               onChange={(e) => setTeacherLessonNotes(e.target.value)}
+                               placeholder="Paste/write raw lecture text. Students will study this without any changes or omissions. Separate paragraphs with double-spaces." 
+                               className="w-full bg-white dark:bg-stone-900 text-stone-905 dark:text-stone-100 border px-3 py-2.5 rounded-lg text-xs leading-relaxed font-sans cursor-text focus:outline-none focus:border-red-850"
+                               required
+                             />
                            </div>
-                           <div>
-                              <select name="targetTrack" className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg font-bold">
-                                 <option value="bible">📖 Bible School Track</option>
-                                 <option value="leadership">🎓 Leadership Track</option>
-                                 <option value="computer">💻 Computer IT Track</option>
-                              </select>
-                           </div>
-                           <div>
-                              <textarea name="outline" rows={4} placeholder="Paste/write lecture notes paragraphs. Separate paragraphs with a blank double-line space..." className="w-full bg-white dark:bg-stone-900 text-stone-90 border px-3 py-2 rounded-lg text-[11px]" required></textarea>
-                           </div>
-                           <button type="submit" className="w-full bg-red-800 hover:bg-red-850 text-white font-bold py-2 px-4 rounded-xl transition cursor-pointer">
-                              Publish Syllabus Lesson
+
+                           {/* Generated AI questions preview */}
+                           {teacherCustomQuestions.length > 0 && (
+                             <div className="p-4 bg-emerald-50/40 dark:bg-emerald-950/10 rounded-xl border border-emerald-100 dark:border-emerald-800 space-y-2 text-left">
+                               <span className="text-[10px] font-mono text-emerald-850 dark:text-emerald-400 font-extrabold block uppercase tracking-wider">✓ PROCESSED AI QUESTIONS PREVIEW ({teacherCustomQuestions.length})</span>
+                               <div className="space-y-2 text-[10.5px]">
+                                 {teacherCustomQuestions.map((q, qIndex) => (
+                                   <div key={qIndex} className="p-2 border border-stone-150 dark:border-stone-850 rounded bg-white dark:bg-stone-950">
+                                     <div className="font-bold text-stone-850 dark:text-stone-200">Q{qIndex+1}: {q.question}</div>
+                                     <div className="grid grid-cols-2 gap-1.5 mt-1.5 text-[9.5px] text-stone-500 font-mono">
+                                       {q.options?.map((opt: string, optIdx: number) => (
+                                         <div key={optIdx} className={optIdx === q.correctIndex ? "text-emerald-650 font-bold font-sans" : ""}>
+                                           {optIdx}. {opt} {optIdx === q.correctIndex && "✓"}
+                                         </div>
+                                       ))}
+                                     </div>
+                                   </div>
+                                 ))}
+                               </div>
+                             </div>
+                           )}
+
+                           <button 
+                             type="button"
+                             onClick={handlePublishOrUpdateSyllabus}
+                             className="w-full bg-red-800 hover:bg-red-850 text-white font-extrabold py-3 px-4 rounded-xl transition cursor-pointer text-xs uppercase tracking-wide"
+                           >
+                              {teacherSelectedMode === "update" ? "🔄 Publish & Propagate Syllabus Updates" : "✨ Process & Publish Syllabus Lesson"}
                            </button>
-                        </form>
-                     </div>
+                        </div>
+                      </div>
 
-                     <div className="space-y-3 text-left font-sans">
+                      <div className="md:col-span-4 space-y-3 text-left font-sans">
                         <h4 className="font-extrabold text-xs text-stone-900 dark:text-stone-100 uppercase tracking-wide">💼 Faculty & Employee Registry</h4>
                         <p className="text-[11px] text-stone-550">View commissioned instructors and monthly salaries assigned by the Manager Admin.</p>
                         
@@ -2281,10 +2562,9 @@ Prepare for your master certifications by reviewing the definitions of absolute 
             <div className="space-y-4">
                <h4 className="font-bold text-xs uppercase text-stone-800 dark:text-stone-250 tracking-wider">📜 Completed Coursework Credentials Status Tracker</h4>
                
-               <div className="grid md:grid-cols-3 gap-4 font-sans">
+               <div className="grid md:grid-cols-2 gap-4 font-sans">
                   {[
                     { tag: "leadership", title: "Strategic Leadership & Public Values", code: "LEAD/STRAT" },
-                    { tag: "computer", title: "Computer Science & Advanced IT", code: "COMP/SCI" },
                     { tag: "bible", title: "Theology & Pastoral Covenant Studies", code: "BIBLE/MIN" }
                   ].map(track => {
                      const userMail = currentUser?.email || "guest@wafula.com";
@@ -2292,10 +2572,17 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                      let grades: any = {};
                      try { grades = JSON.parse(gradesStr); } catch(e){}
                      
-                     const hasPassed = Object.values(grades).some((g: any) => {
-                        if (track.tag === "computer") {
-                           return COMPUTER_LESSONS.some(cl => cl.id === g.lessonId) && g.passed;
-                        } else if (track.tag === "bible") {
+                     const trackLessons = track.tag === "bible" 
+                       ? BIBLE_LESSONS 
+                       : PREBUILT_LESSONS;
+
+                     const completedCount = trackLessons.filter(l => grades[l.id] && grades[l.id].passed).length;
+                     const totalCount = trackLessons.length;
+
+                     const hasPassed = trackLessons.length > 0 && trackLessons.every(l => {
+                       return grades[l.id] && grades[l.id].passed;
+                     }) && Object.values(grades).some((g: any) => {
+                        if (track.tag === "bible") {
                            return BIBLE_LESSONS.some(bl => bl.id === g.lessonId) && g.passed;
                         } else {
                            return PREBUILT_LESSONS.some(pl => pl.id === g.lessonId) && g.passed;
@@ -2347,6 +2634,24 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                   })}
                </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- REVOLUTIONARY AI SUPPORT CHAT PORTAL --- */}
+      {activePortal === "aichat" && (
+        <div className="mt-8 pt-6 border-t border-stone-200 dark:border-stone-850 space-y-4 text-left bg-white dark:bg-stone-950 p-6 rounded-3xl border shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b pb-4">
+            <div>
+              <span className="text-[10px] tracking-wider font-mono font-bold text-stone-400 block uppercase">Zion Faculty Companion Neural Engine</span>
+              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">🤖 Permanent Neural Research Terminal</h3>
+              <p className="text-xs text-stone-550 dark:text-stone-300 mt-1">This terminal preserves your search history permanently and supports professional publication formatting and media extraction.</p>
+            </div>
+            <span className="bg-red-50 text-red-750 dark:bg-red-950/40 dark:text-red-300 border border-red-200 text-[10px] font-mono font-bold px-3 py-1.5 rounded-xl uppercase shrink-0">ACTIVE INTELLIGENT COMPANION</span>
+          </div>
+
+          <div className="p-1.5 border border-stone-150 dark:border-stone-800 rounded-2xl bg-stone-50/40 dark:bg-stone-900/10">
+            <AIChat currentUser={currentUser} onUnlockBadge={(badgeId) => console.log("Unlocked badge:", badgeId)} />
           </div>
         </div>
       )}
@@ -3162,7 +3467,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                   onChange={(e) => setEnrolmentSelectedCourseId(e.target.value)}
                   className="w-full text-xs p-3 border border-stone-300 dark:border-stone-800 bg-white dark:bg-stone-950 rounded-xl text-stone-900 dark:text-stone-100 focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
                 >
-                  {COMPUTER_LESSONS.map((c) => (
+                  {[...PREBUILT_LESSONS, ...BIBLE_LESSONS].map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.courseCode ? `[${c.courseCode.split('/')[0]}] ` : ""}{c.topic} (KES {c.courseFee?.toLocaleString()} - {c.duration || "4 Months"})
                     </option>
@@ -3241,7 +3546,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                 <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-stone-450 block">EXPECTED ADMISSION LEDGER CODE</span>
                 <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-450 tracking-wider">
                   {enrolmentAdmNo.trim() || `${
-                    COMPUTER_LESSONS.find(c => c.id === enrolmentSelectedCourseId)?.courseCode?.split('/')[0] || "ZIO01"
+                    [...PREBUILT_LESSONS, ...BIBLE_LESSONS].find(c => c.id === enrolmentSelectedCourseId)?.courseCode?.split('/')[0] || "ZIO01"
                   }/015/26`}
                 </span>
               </div>

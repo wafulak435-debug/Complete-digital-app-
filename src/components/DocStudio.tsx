@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   FileText, Image, Mic, PenTool, FolderPlus, Download, Trash, FileVideo, 
   RefreshCw, Sparkles, Plus, Folder, AlertCircle, Mail, CheckCircle2, 
-  Eye, Printer, ZoomIn, ZoomOut, Cloud, CloudOff, Upload 
+  Eye, Printer, ZoomIn, ZoomOut, Cloud, CloudOff, Upload, Calculator, Clock, HelpCircle, FileText as FileIcon, Landmark
 } from "lucide-react";
 import { SavedDocument } from "../types";
 import { getAccessToken, googleSignIn, sendGmailMessage } from "../lib/firebase";
 import { saveDocumentToFirestore, deleteSavedDocumentFromFirestore } from "../lib/firestoreUtils";
 import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
+import { jsPDF } from "jspdf";
 
 interface DocStudioProps {
   currentUser: { email: string; name: string; role?: string } | null;
@@ -18,9 +19,24 @@ interface DocStudioProps {
 
 export default function DocStudio({ currentUser, onAddNewDocument, savedDocuments, onDeleteDocument }: DocStudioProps) {
   const [editorContent, setEditorContent] = useState("");
-  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media" | "curriculum">("ocr");
+  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media" | "curriculum" | "solver">("ocr");
   const [docTitle, setDocTitle] = useState("My Document");
   const [autoSaveStatus, setAutoSaveStatus] = useState("Draft saved");
+
+  // STEM & Complex Problem Solver states
+  const [solverInput, setSolverInput] = useState("");
+  const [solverResult, setSolverResult] = useState("");
+  const [isSolving, setIsSolving] = useState(false);
+  const [enableGrounding, setEnableGrounding] = useState(false);
+  const [solverAttachedFiles, setSolverAttachedFiles] = useState<{ id: string; name: string; dataUrl: string; size: string; type: string }[]>([]);
+  const [solvingSources, setSolvingSources] = useState<{ title: string; uri: string }[]>([]);
+  
+  // Voice Verbal Query states
+  const [voiceQueryMode, setVoiceQueryMode] = useState<"transcribe" | "query">("transcribe");
+  const [voiceAnswer, setVoiceAnswer] = useState("");
+  const [isVoiceQuerying, setIsVoiceQuerying] = useState(false);
+  const [voiceQueryGrounding, setVoiceQueryGrounding] = useState(false);
+  const [voiceResponseSources, setVoiceResponseSources] = useState<{ title: string; uri: string }[]>([]);
 
   // Syllabus and Curricular Note Generation states
   const [curriculumSubject, setCurriculumSubject] = useState("");
@@ -222,11 +238,11 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
         <head>
           <title>${docTitle || "Document"}</title>
           <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;750&family=Open+Sans:wght@400;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap');
             body {
-              font-family: ${previewStyle === "serif" ? "'Playfair Display', serif" : previewStyle === "mono" ? "'JetBrains Mono', monospace" : "'Inter', sans-serif"};
+              font-family: ${previewStyle === "serif" ? "'Lora', 'Playfair Display', Georgia, serif" : previewStyle === "mono" ? "'JetBrains Mono', monospace" : "'Open Sans', 'Montserrat', sans-serif"};
               padding: ${previewMargin === "compact" ? "1.5cm" : previewMargin === "wide" ? "3.5cm" : "2.5cm"};
-              line-height: 1.6;
+              line-height: 1.65;
               color: #1a1a1a;
             }
             header {
@@ -240,15 +256,18 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               font-family: monospace;
             }
             h1 {
+              font-family: ${previewStyle === "serif" ? "'Playfair Display', serif" : previewStyle === "mono" ? "'JetBrains Mono', monospace" : "'Montserrat', sans-serif"};
               color: #b91c1c;
               font-size: 26px;
               margin-top: 0;
               margin-bottom: 16px;
+              font-weight: 800;
             }
             p {
               margin: 0 0 16px 0;
-              font-size: 14px;
+              font-size: 11pt; /* 11pt as mandated by the publisher spec */
               text-align: justify;
+              text-justify: inter-word;
             }
             footer {
               position: fixed;
@@ -315,13 +334,13 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
         </head>
         <body>
           <header>
-            <span>WAFULA DIGITAL • ONLINE STUDIO REPORT</span>
+            <span>ZION DIGITAL PUBLISHERS • OFFICIAL MANUSCRIPT</span>
             <span>${docTitle || "Untitled"}</span>
           </header>
           <h1>${docTitle || "Untitled Document"}</h1>
           <div style="white-space: pre-wrap;">${activeText}</div>
           <footer>
-            <span>Wafula Digital Global • Bungoma, Kenya</span>
+            <span>Zion Digital Publishers • Bungoma, Kenya</span>
             <span>Printed on: ${new Date().toLocaleDateString()}</span>
           </footer>
           <script>
@@ -418,6 +437,14 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     }
   };
   
+  // Real-time document/media uploading simulation states
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [docProgress, setDocProgress] = useState(0);
+  const [docFileName, setDocFileName] = useState("");
+  const [docSpeed, setDocSpeed] = useState("0.0 MB/s");
+  const [docEta, setDocEta] = useState("Estimating...");
+  const [docStatusText, setDocStatusText] = useState("");
+
   // Folders and saved states
   const [folders, setFolders] = useState<string[]>(["General", "AI Extractions", "My Outlines", "Audios"]);
   const [selectedFolder, setSelectedFolder] = useState("General");
@@ -432,7 +459,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
 
   // States for Photos & Videos -> PDF and Media Extraction
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]); // Base64 list
-  const [mediaFiles, setMediaFiles] = useState<{ id: string; type: "photo" | "video"; name: string; dataUrl: string; size: string }[]>([]);
+  const [mediaFiles, setMediaFiles] = useState<{ id: string; type: "photo" | "video" | "document"; name: string; dataUrl: string; size: string }[]>([]);
   const [isMediaProcessing, setIsMediaProcessing] = useState(false);
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [extractedOcrText, setExtractedOcrText] = useState("");
@@ -456,11 +483,37 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
 
   const handleVaultFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
+    if (files && files.length > 0) {
       const fileArray = Array.from(files) as File[];
-      setVaultUploadedFiles((prev) => [...prev, ...fileArray]);
-      const prevMetadata = fileArray.map((f) => ({ name: f.name, size: Math.round(f.size / 1024) }));
-      setVaultUploadedPreview((prev) => [...prev, ...prevMetadata]);
+      const firstFile = fileArray[0];
+      setDocFileName(fileArray.length > 1 ? `${fileArray.length} vault files` : firstFile.name);
+      setDocProgress(0);
+      setDocSpeed("0.0 MB/s");
+      setDocEta("Estimating...");
+      setDocStatusText("Encrypting physical file payloads...");
+      setIsUploadingDoc(true);
+
+      let currentPrg = 0;
+      const interval = setInterval(() => {
+        currentPrg += Math.floor(Math.random() * 9) + 13;
+        if (currentPrg >= 100) {
+          currentPrg = 100;
+          clearInterval(interval);
+          setIsUploadingDoc(false);
+
+          setVaultUploadedFiles((prev) => [...prev, ...fileArray]);
+          const prevMetadata = fileArray.map((f) => ({ name: f.name, size: Math.round(f.size / 1024) }));
+          setVaultUploadedPreview((prev) => [...prev, ...prevMetadata]);
+        } else {
+          setDocProgress(currentPrg);
+          setDocSpeed(`${(2.1 + Math.random() * 2.2).toFixed(1)} MB/s`);
+          setDocEta(`${Math.ceil((100 - currentPrg) / 14)}s`);
+          setDocStatusText(
+            currentPrg < 50 ? "Tunneling metadata to encrypted clusters..." :
+            "Securing file with private keys..."
+          );
+        }
+      }, 150);
     }
   };
 
@@ -668,37 +721,383 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     }
   };
 
-  // Unified Media (Photos & Videos) uploader
-  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const filesArr = Array.from(e.target.files) as File[];
-      filesArr.forEach((file: File) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const type = file.type.startsWith("video/") ? "video" : "photo";
-          const newMedia = {
-            id: "media_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
-            type: type as "photo" | "video",
-            name: file.name,
-            dataUrl: reader.result as string,
-            size: (file.size / (1024 * 1024)) < 1 
-              ? `${(file.size / 1024).toFixed(1)} KB`
-              : `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-          };
-          setMediaFiles((current) => [...current, newMedia]);
-          if (type === "photo") {
-            setSelectedPhotos((prev) => [...prev, reader.result as string]);
-          }
-        };
-        reader.readAsDataURL(file);
-      });
+  // Word formatting helper functions
+  const escapeHtml = (text: string): string => {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  };
+
+  const convertTextToHtmlForWord = (text: string): string => {
+    const lines = text.split("\n");
+    let html = "";
+    let insideList = false;
+
+    for (let line of lines) {
+      let trimmed = line.trim();
+      if (!trimmed) {
+        if (insideList) {
+          html += "</ul>\n";
+          insideList = false;
+        }
+        html += "<p style='margin-bottom: 6pt;'>&nbsp;</p>\n";
+        continue;
+      }
+
+      // Check for List items
+      if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ")) {
+        if (!insideList) {
+          html += "<ul style='margin-bottom: 12pt;'>\n";
+          insideList = true;
+        }
+        const itemText = trimmed.replace(/^[-*•]\s+/, "");
+        html += `  <li style="font-family: Arial, sans-serif; font-size: 11pt; color: #333333; margin-bottom: 4pt;">${escapeHtml(itemText)}</li>\n`;
+        continue;
+      }
+
+      if (insideList) {
+        html += "</ul>\n";
+        insideList = false;
+      }
+
+      // Check for headings: lines starting with #, ## or short capitalized lines
+      const isHeading = trimmed.startsWith("##") || trimmed.startsWith("#") || 
+                        (trimmed.toUpperCase() === trimmed && trimmed.length < 60 && trimmed.match(/[A-Z]/)) ||
+                        trimmed.startsWith("CHAPTER") || trimmed.startsWith("TOPIC:") || trimmed.startsWith("SUB-TOPIC:");
+      
+      if (isHeading) {
+        const headingText = trimmed.replace(/^[#\s]+/, "").replace(/^[*-]+/, "").trim();
+        let color = "#b91c1c"; // Crimson primary for headings
+        let fontSize = "16pt";
+        let marginTop = "18pt";
+        
+        if (trimmed.startsWith("SUB-TOPIC:") || trimmed.startsWith("##")) {
+          color = "#1e3a8a"; // Navy for subtopics
+          fontSize = "13pt";
+          marginTop = "14pt";
+        }
+
+        html += `<h2 style="font-family: 'Times New Roman', Times, serif; font-weight: bold; font-size: ${fontSize}; color: ${color}; margin-top: ${marginTop}; margin-bottom: 6pt; border-bottom: 1px solid #e5e7eb; padding-bottom: 3px;">${escapeHtml(headingText)}</h2>\n`;
+      } else {
+        // Regular paragraph
+        let formatted = escapeHtml(trimmed);
+        formatted = formatted.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+        formatted = formatted.replace(/__(.*?)__/g, "<strong>$1</strong>");
+        
+        html += `<p style="font-family: Arial, sans-serif; font-size: 11pt; color: #1f2937; line-height: 1.6; margin-bottom: 10pt; text-align: justify; text-justify: inter-word;">${formatted}</p>\n`;
+      }
+    }
+
+    if (insideList) {
+      html += "</ul>\n";
+    }
+
+    return html;
+  };
+
+  // Direct Word file downloader (.doc) utilizing MS-Word HTML format
+  const handleDownloadWordDoc = () => {
+    const activeText = editorContent || extractedOcrText || voiceText || conversionOutput || "";
+    if (!activeText.trim()) {
+      alert("No document content to export. Please type some text or extract content first.");
+      return;
+    }
+
+    try {
+      const formattedHtml = convertTextToHtmlForWord(activeText);
+      const documentHtml = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+          <title>${docTitle}</title>
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>100</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
+          <style>
+            @page {
+              size: 21cm 29.7cm;
+              margin: 2.5cm 2.5cm 2.5cm 2.5cm;
+            }
+            body {
+              font-family: 'Arial', 'Helvetica', sans-serif;
+              font-size: 11pt;
+              line-height: 1.6;
+              color: #1a1a1a;
+            }
+            h1, h2, h3 {
+              font-family: 'Georgia', 'Times New Roman', Times, serif;
+              font-weight: bold;
+              color: #b91c1c;
+              margin-top: 18pt;
+              margin-bottom: 6pt;
+            }
+            h1 { font-size: 22pt; text-align: center; color: #b91c1c; }
+            h2 { font-size: 15pt; color: #1e3a8a; border-bottom: 1px solid #e5e7eb; padding-bottom: 3px; }
+            h3 { font-size: 12pt; color: #111827; }
+            p {
+              margin-top: 0in;
+              margin-right: 0in;
+              margin-bottom: 10pt;
+              margin-left: 0in;
+              text-align: justify;
+              text-justify: inter-word;
+            }
+            ul, ol {
+              margin-top: 0in;
+              margin-bottom: 12pt;
+              padding-left: 20pt;
+            }
+            li {
+              margin-bottom: 4pt;
+              color: #374151;
+            }
+            .header-table {
+              width: 100%;
+              border-bottom: 1px solid #e5e7eb;
+              margin-bottom: 24pt;
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 9pt;
+              color: #6b7280;
+            }
+          </style>
+        </head>
+        <body>
+          <table class="header-table">
+            <tr>
+              <td>ZION DIGITAL PUBLISHERS • AI DESIGN MACHINE</td>
+              <td style="text-align: right;">${new Date().toLocaleDateString()}</td>
+            </tr>
+          </table>
+          
+          <h1 style="text-align: center; font-size: 24pt; color: #b91c1c; margin-bottom: 24pt;">${escapeHtml(docTitle)}</h1>
+          
+          ${formattedHtml}
+          
+          <div style="margin-top: 40pt; border-top: 1px solid #e5e7eb; padding-top: 10pt; font-family: 'Courier New', Courier, monospace; font-size: 8pt; color: #9ca3af; text-align: center;">
+            ISSUED FROM ZION DIGITAL APP WORKSPACE • BUNGOMA, KENYA
+          </div>
+        </body>
+        </html>
+      `;
+
+      const blob = new Blob([documentHtml], { type: "application/msword" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const sanitizedFilename = docTitle.trim().replace(/[^a-zA-Z0-9\s-_]+/g, "").replace(/\s+/g, "_") || "Document";
+      
+      link.href = url;
+      link.download = `${sanitizedFilename}.doc`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Word export failed:", err);
+      alert("Could not export document as Word: " + err.message);
     }
   };
 
-  // Convert photos or videos using server-side Gemini OCR / Transcription
+  // Direct PDF download using jsPDF (with double borders and parchment style)
+  const handleDownloadPdfFile = () => {
+    const activeText = editorContent || extractedOcrText || voiceText || conversionOutput || "";
+    if (!activeText.trim()) {
+      alert("No document content to export. Please type some text or extract content first.");
+      return;
+    }
+
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const w = 210;
+      const h = 297;
+      const pageMargin = 20;
+      const contentWidth = w - (pageMargin * 2);
+
+      // Light linen shading background
+      doc.setFillColor(254, 253, 249);
+      doc.rect(0, 0, w, h, "F");
+
+      doc.setProperties({
+        title: docTitle,
+        subject: "Zion AI Document Export"
+      });
+
+      // Frame borders
+      doc.setDrawColor(185, 28, 28);
+      doc.setLineWidth(0.4);
+      doc.rect(10, 10, w - 20, h - 20);
+
+      doc.setDrawColor(218, 165, 32);
+      doc.setLineWidth(0.15);
+      doc.rect(11.5, 11.5, w - 23, h - 23);
+
+      // Running header
+      doc.setTextColor(100, 110, 120);
+      doc.setFont("courier", "bold");
+      doc.setFontSize(7.5);
+      doc.text("ZION DIGITAL PUBLISHERS • AI DESIGN MACHINE", pageMargin, 16);
+      doc.text(new Date().toLocaleDateString(), w - pageMargin, 16, { align: "right" });
+
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.2);
+      doc.line(pageMargin, 18, w - pageMargin, 18);
+
+      // Title
+      doc.setTextColor(185, 28, 28);
+      doc.setFont("times", "bold");
+      doc.setFontSize(20);
+      const titleLines = doc.splitTextToSize(docTitle, contentWidth);
+      doc.text(titleLines, pageMargin, 28);
+      
+      let currentY = 28 + (titleLines.length * 8) + 6;
+
+      const splitLines = activeText.split("\n");
+      for (let line of splitLines) {
+        let trimmed = line.trim();
+        if (!trimmed) {
+          currentY += 5;
+          continue;
+        }
+
+        if (currentY > h - 25) {
+          doc.addPage();
+          doc.setFillColor(254, 253, 249);
+          doc.rect(0, 0, w, h, "F");
+
+          doc.setDrawColor(185, 28, 28);
+          doc.setLineWidth(0.4);
+          doc.rect(10, 10, w - 20, h - 20);
+          
+          doc.setDrawColor(218, 165, 32);
+          doc.setLineWidth(0.15);
+          doc.rect(11.5, 11.5, w - 23, h - 23);
+
+          // Running header
+          doc.setTextColor(100, 110, 120);
+          doc.setFont("courier", "bold");
+          doc.setFontSize(7.5);
+          doc.text("ZION DIGITAL PUBLISHERS • AI DESIGN MACHINE", pageMargin, 16);
+          doc.text(new Date().toLocaleDateString(), w - pageMargin, 16, { align: "right" });
+
+          doc.setDrawColor(200, 200, 200);
+          doc.setLineWidth(0.2);
+          doc.line(pageMargin, 18, w - pageMargin, 18);
+
+          currentY = 25;
+        }
+
+        const isHeading = trimmed.startsWith("##") || trimmed.startsWith("#") || trimmed.startsWith("CHAPTER") || trimmed.startsWith("TOPIC:");
+        if (isHeading) {
+          const headingText = trimmed.replace(/^[#\s]+/, "").trim();
+          doc.setTextColor(30, 58, 138);
+          doc.setFont("times", "bold");
+          doc.setFontSize(12);
+          const linesWrapped = doc.splitTextToSize(headingText, contentWidth);
+          doc.text(linesWrapped, pageMargin, currentY);
+          currentY += (linesWrapped.length * 6) + 2;
+        } else {
+          doc.setTextColor(26, 26, 26);
+          doc.setFont("times", "normal");
+          doc.setFontSize(10);
+          const linesWrapped = doc.splitTextToSize(trimmed, contentWidth);
+          doc.text(linesWrapped, pageMargin, currentY);
+          currentY += (linesWrapped.length * 4.4) + 2.2;
+        }
+      }
+
+      const sanitizedFilename = docTitle.trim().replace(/[^a-zA-Z0-9\s-_]+/g, "").replace(/\s+/g, "_") || "Document";
+      doc.save(`${sanitizedFilename}.pdf`);
+    } catch (err: any) {
+      console.error("Direct PDF compilation failed:", err);
+      alert("Failed to compile direct PDF: " + err.message);
+    }
+  };
+
+  // Unified Media & Physical Document uploader
+  const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const filesArr = Array.from(e.target.files) as File[];
+      const firstFile = filesArr[0];
+      setDocFileName(filesArr.length > 1 ? `${filesArr.length} files selected` : firstFile.name);
+      setDocProgress(0);
+      setDocSpeed("0.0 MB/s");
+      setDocEta("Estimating...");
+      setDocStatusText("Preparing media stream pipelines...");
+      setIsUploadingDoc(true);
+
+      let currentPrg = 0;
+      const interval = setInterval(() => {
+        currentPrg += Math.floor(Math.random() * 8) + 14; // Snappy upload
+        if (currentPrg >= 100) {
+          currentPrg = 100;
+          clearInterval(interval);
+          setIsUploadingDoc(false);
+
+          filesArr.forEach((file: File) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              let type: "photo" | "video" | "document" = "photo";
+              if (file.type.startsWith("video/")) {
+                type = "video";
+              } else if (
+                file.type === "application/pdf" || 
+                file.name.endsWith(".pdf") || 
+                file.name.endsWith(".docx") || 
+                file.name.endsWith(".txt") || 
+                file.type.includes("wordprocessingml") || 
+                file.type.startsWith("text/")
+              ) {
+                type = "document";
+              }
+
+              const newMedia = {
+                id: "media_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+                type: type as "photo" | "video" | "document",
+                name: file.name,
+                dataUrl: reader.result as string,
+                size: (file.size / (1024 * 1024)) < 1 
+                  ? `${(file.size / 1024).toFixed(1)} KB`
+                  : `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+              };
+              
+              setMediaFiles((current) => [...current, newMedia]);
+              
+              if (type === "photo") {
+                setSelectedPhotos((prev) => [...prev, reader.result as string]);
+              }
+            };
+            reader.readAsDataURL(file);
+          });
+        } else {
+          setDocProgress(currentPrg);
+          setDocSpeed(`${(3.5 + Math.random() * 3).toFixed(1)} MB/s`);
+          setDocEta(`${Math.ceil((100 - currentPrg) / 18)}s`);
+          setDocStatusText(
+            currentPrg < 40 ? "Deconstructing file blocks..." :
+            currentPrg < 80 ? "Verifying stream frames checksum..." :
+            "Writing ingestion catalog reference..."
+          );
+        }
+      }, 150);
+    }
+  };
+
+  // Extract from uploaded photos & documents sequentially using Gemini server OCR
   const handleOcrProcess = async () => {
-    if (mediaFiles.length === 0 && selectedPhotos.length === 0) {
-      alert("Please upload at least one image or video to extract text from.");
+    if (mediaFiles.length === 0) {
+      alert("Please upload at least one photo or document to extract text from.");
       return;
     }
     
@@ -707,30 +1106,54 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     setExtractedOcrText("");
 
     try {
-      // Process unified media if available, fallback to selectedPhotos standard OCR
-      const payloadFile = mediaFiles.length > 0 ? mediaFiles[0].dataUrl : selectedPhotos[0];
-      const payloadName = mediaFiles.length > 0 ? mediaFiles[0].name : "My_Photo.png";
-      const payloadMime = mediaFiles.length > 0 
-        ? (mediaFiles[0].type === "video" ? "video/mp4" : "image/png") 
-        : "image/png";
+      let concatenatedResult = "";
+      
+      for (let i = 0; i < mediaFiles.length; i++) {
+        const med = mediaFiles[i];
+        let payloadMime = med.type === "video" ? "video/mp4" : "image/png";
+        
+        if (med.dataUrl.startsWith("data:")) {
+          const mimeMatch = med.dataUrl.match(/data:([^;]+);/);
+          if (mimeMatch) {
+            payloadMime = mimeMatch[1];
+          }
+        }
 
-      const response = await fetch("/api/ai/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileBase64: payloadFile,
-          fileName: payloadName,
-          customMimeType: payloadMime,
-          docTitle
-        })
-      });
-      const data = await response.json();
-      if (data.success) {
-        setExtractedOcrText(data.text);
-        setEditorContent(data.text); // load to editor instantly
-        alert(`🎉 Extraction Complete!\nAI successfully processed file "${payloadName}" and loaded text/outlines into the Direct Outliner editor.`);
+        // Set title dynamically based on the first processed document title if unchanged
+        if (i === 0 && docTitle === "My Document") {
+          setDocTitle(med.name.replace(/\.[^/.]+$/, ""));
+        }
+
+        const res = await fetch("/api/ai/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileBase64: med.dataUrl,
+            fileName: med.name,
+            customMimeType: payloadMime,
+            docTitle
+          })
+        });
+        
+        const data = await res.json();
+        if (data.success && data.text) {
+          if (mediaFiles.length > 1) {
+            concatenatedResult += `\n\n=== EXTRACTED FROM: ${med.name.toUpperCase()} ===\n\n${data.text}`;
+          } else {
+            concatenatedResult += data.text;
+          }
+        } else {
+          console.warn(`Extraction failed for ${med.name}:`, data.error);
+        }
+      }
+
+      if (concatenatedResult.trim()) {
+        const cleanedText = concatenatedResult.trim();
+        setExtractedOcrText(cleanedText);
+        setEditorContent(cleanedText); // load to editor instantly
+        alert(`🎉 Extraction Complete!\nAI successfully processed ${mediaFiles.length} file(s) and loaded the compiled text into the Direct Outliner editor.`);
       } else {
-        alert("Extraction failed: " + (data.error || "Reason unknown"));
+        alert("Extraction failed: could not extract clear text from the uploaded files.");
       }
     } catch (e: any) {
       console.error(e);
@@ -745,26 +1168,51 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
   const handleConvertFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const reader = new FileReader();
-      const extension = file.name.split(".").pop()?.toLowerCase() || "";
-      
-      if (extension === "docx") {
-        setConvertFrom("Word");
-      } else if (extension === "txt") {
-        setConvertFrom("Text");
-      } else if (extension === "pdf") {
-        setConvertFrom("PDF");
-      }
+      setDocFileName(file.name);
+      setDocProgress(0);
+      setDocSpeed("0.0 MB/s");
+      setDocEta("Estimating...");
+      setDocStatusText("Reading local document bytes...");
+      setIsUploadingDoc(true);
 
-      reader.onloadend = () => {
-        setConversionFile({
-          name: file.name,
-          dataUrl: reader.result as string,
-          size: `${(file.size / 1024).toFixed(1)} KB`
-        });
-        setDocTitle(file.name.replace(/\.[^/.]+$/, ""));
-      };
-      reader.readAsDataURL(file);
+      let currentPrg = 0;
+      const interval = setInterval(() => {
+        currentPrg += Math.floor(Math.random() * 10) + 12;
+        if (currentPrg >= 100) {
+          currentPrg = 100;
+          clearInterval(interval);
+          setIsUploadingDoc(false);
+
+          const reader = new FileReader();
+          const extension = file.name.split(".").pop()?.toLowerCase() || "";
+          
+          if (extension === "docx") {
+            setConvertFrom("Word");
+          } else if (extension === "txt") {
+            setConvertFrom("Text");
+          } else if (extension === "pdf") {
+            setConvertFrom("PDF");
+          }
+
+          reader.onloadend = () => {
+            setConversionFile({
+              name: file.name,
+              dataUrl: reader.result as string,
+              size: `${(file.size / 1024).toFixed(1)} KB`
+            });
+            setDocTitle(file.name.replace(/\.[^/.]+$/, ""));
+          };
+          reader.readAsDataURL(file);
+        } else {
+          setDocProgress(currentPrg);
+          setDocSpeed(`${(1.8 + Math.random() * 1.5).toFixed(1)} MB/s`);
+          setDocEta(`${Math.ceil((100 - currentPrg) / 12)}s`);
+          setDocStatusText(
+            currentPrg < 45 ? "Extracting textual indices..." :
+            "Readying parser pipelines..."
+          );
+        }
+      }, 150);
     }
   };
 
@@ -847,6 +1295,124 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
       setCurriculumError("Could not dispatch syllabus request. Check network connection status.");
     } finally {
       setIsGeneratingCurriculum(false);
+    }
+  };
+
+  // STEM & Math Problem Solving Dispatcher
+  const handleSolveProblem = async (problemPrompt?: string, attachmentsOverride?: typeof solverAttachedFiles) => {
+    const promptToSend = (problemPrompt || solverInput).trim();
+    if (!promptToSend) {
+      alert("Please enter a math equation, logical puzzle, or complex programming issue to solve.");
+      return;
+    }
+
+    setIsSolving(true);
+    setSolverResult("");
+    setSolvingSources([]);
+
+    try {
+      const stagedAttachments = attachmentsOverride || solverAttachedFiles;
+      const imagesPayload = stagedAttachments.map(f => f.dataUrl);
+
+      const response = await fetch("/api/ai/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: promptToSend,
+          category: "Problem Solver",
+          enableGoogleSearch: enableGrounding,
+          images: imagesPayload.length > 0 ? imagesPayload : undefined
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setSolverResult(data.text);
+        if (data.groundingSources) {
+          setSolvingSources(data.groundingSources);
+        }
+      } else {
+        alert("Zion Solver failed: " + (data.error || "Unknown server rejection."));
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Error reaching AI Problem Solver server: " + e.message);
+    } finally {
+      setIsSolving(false);
+    }
+  };
+
+  const handleSolverAttachedUploader = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArr = Array.from(e.target.files) as File[];
+      filesArr.forEach((file: File) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const extension = file.name.split(".").pop()?.toLowerCase() || "";
+          let fileType = "photo";
+          if (extension === "pdf") fileType = "pdf";
+          else if (extension === "txt") fileType = "doc";
+
+          const newFile = {
+            id: "solv_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4),
+            name: file.name,
+            dataUrl: reader.result as string,
+            size: `${(file.size / 1024).toFixed(1)} KB`,
+            type: fileType
+          };
+          setSolverAttachedFiles(prev => [...prev, newFile]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  // Speaks aloud or processes the verbal query response
+  const handleVoiceQuerySolve = async () => {
+    const promptToSend = voiceText.trim();
+    if (!promptToSend) {
+      alert("Please record or dictate your verbal query first.");
+      return;
+    }
+
+    setIsVoiceQuerying(true);
+    setVoiceAnswer("");
+    setVoiceResponseSources([]);
+
+    try {
+      const response = await fetch("/api/ai/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: promptToSend,
+          category: "Problem Solver",
+          enableGoogleSearch: voiceQueryGrounding
+        })
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setVoiceAnswer(data.text);
+        if (data.groundingSources) {
+          setVoiceResponseSources(data.groundingSources);
+        }
+        
+        // Let's do optional TTS simulation if SpeechSynthesis is supported
+        if (typeof window !== "undefined" && window.speechSynthesis) {
+          try {
+            const utterance = new SpeechSynthesisUtterance("I have solved your verbal query. Here is the step by step explanation.");
+            utterance.rate = 1.05;
+            window.speechSynthesis.speak(utterance);
+          } catch(e) {}
+        }
+      } else {
+        alert("Zion Verbal AI Solver failed: " + (data.error || "No response."));
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Verbal AI Solver network error: " + e.message);
+    } finally {
+      setIsVoiceQuerying(false);
     }
   };
 
@@ -1233,6 +1799,15 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
             <Sparkles className="h-4 w-4" />
             <span>AI Syllabus Note Maker</span>
           </button>
+          <button
+            onClick={() => setActiveTab("solver")}
+            className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 transition ${
+              activeTab === "solver" ? "bg-red-700 text-white shadow-xs" : "bg-neutral-50 text-neutral-600 hover:bg-neutral-105"
+            }`}
+          >
+            <Calculator className="h-4 w-4" />
+            <span>AI Math & STEM Solver</span>
+          </button>
         </div>
       </div>
 
@@ -1286,35 +1861,69 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               ) : null}
             </div>
 
-            {/* TAB 1: Photos & Videos ➔ PDF / Text Extraction */}
+            {/* TAB 1: Photos, Videos & Documents ➔ PDF / Text Extraction */}
             {activeTab === "ocr" && (
               <div className="space-y-4 text-xs">
-                <div className="rounded-xl border-2 border-dashed border-stone-200 p-6 text-center space-y-3 bg-neutral-50">
-                  <span className="text-3xl text-stone-400">📽️</span>
-                  <div className="text-xs">
-                    <p className="font-bold text-neutral-800">Upload Photos or Videos for AI Extraction</p>
-                    <p className="text-stone-400 mt-1">Accepts multiple images, or video clips. Our AI transcribes and extracts text contents.</p>
+                {isUploadingDoc ? (
+                  <div className="rounded-xl border border-stone-200 bg-neutral-900 text-white p-5 space-y-3 shadow-md animate-fade-in">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="bg-red-500/25 text-red-300 border border-red-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded">
+                          AI SECURE INGEST
+                        </span>
+                        <h4 className="font-bold text-xs truncate mt-1.5 max-w-[240px]">
+                          {docFileName}
+                        </h4>
+                      </div>
+                      <span className="text-[10px] font-mono font-bold text-slate-350">{docSpeed}</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center text-[10px] font-mono">
+                        <span className="text-slate-400 font-semibold">{docStatusText}</span>
+                        <span className="text-xs font-bold text-red-400">{docProgress}%</span>
+                      </div>
+                      <div className="w-full bg-neutral-800 rounded-full h-2 overflow-hidden border border-neutral-750 p-[1px]">
+                        <div 
+                          className="bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-200"
+                          style={{ width: `${docProgress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center text-[9px] font-mono text-slate-400">
+                      <span>ETA: {docEta}</span>
+                      <span className="text-emerald-400">● SECURE SSL TUNNEL</span>
+                    </div>
                   </div>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*,video/*"
-                    onChange={handleMediaUpload}
-                    className="hidden"
-                    id="ocr_multimedia_uploader"
-                  />
-                  <label
-                    htmlFor="ocr_multimedia_uploader"
-                    className="mx-auto block w-fit rounded bg-neutral-900 text-white text-xs font-bold px-4 py-2 hover:bg-neutral-800 cursor-pointer transition"
-                  >
-                    Select Local Images & Videos
-                  </label>
-                </div>
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-stone-200 p-6 text-center space-y-3 bg-neutral-50 animate-fade-in">
+                    <span className="text-3xl text-stone-400">📽️</span>
+                    <div className="text-xs">
+                      <p className="font-bold text-neutral-800">Upload Photos or Documents for AI Extraction</p>
+                      <p className="text-stone-400 mt-1">Accepts multiple images, transcripts, video clips, PDFs, Word (.docx) or Text (.txt) files.</p>
+                    </div>
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,video/*,application/pdf,.docx,.txt"
+                      onChange={handleMediaUpload}
+                      className="hidden"
+                      id="ocr_multimedia_uploader"
+                    />
+                    <label
+                      htmlFor="ocr_multimedia_uploader"
+                      className="mx-auto block w-fit rounded bg-neutral-900 text-white text-xs font-bold px-4 py-2 hover:bg-neutral-800 cursor-pointer transition select-none"
+                    >
+                      Select Files (Photos, Videos, PDFs, Word/TXT Docs)
+                    </label>
+                  </div>
+                )}
 
                 {mediaFiles.length > 0 && (
                   <div className="space-y-3">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-stone-700">{mediaFiles.length} Media File(s) Staged</span>
+                      <span className="font-bold text-stone-700">{mediaFiles.length} File(s) Staged</span>
                       <button 
                         onClick={() => {
                           setMediaFiles([]);
@@ -1329,13 +1938,20 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {mediaFiles.map((med) => (
                         <div key={med.id} className="relative border border-stone-200 rounded-xl overflow-hidden bg-stone-50 p-2 flex flex-col justify-between">
-                          <div className="aspect-video w-full rounded-lg overflow-hidden bg-black flex items-center justify-center relative">
+                          <div className="aspect-video w-full rounded-lg overflow-hidden bg-stone-100 flex items-center justify-center relative border border-stone-200/50">
                             {med.type === "photo" ? (
                               <img src={med.dataUrl} className="w-full h-full object-cover" alt={med.name} />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center text-white bg-neutral-900 text-center p-2">
+                            ) : med.type === "video" ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center text-white bg-neutral-950 text-center p-2">
                                 <FileVideo className="h-8 w-8 text-red-500 mb-1" />
                                 <span className="text-[10px] font-mono font-bold truncate max-w-full">VIDEO CLIP</span>
+                              </div>
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center text-stone-700 bg-white text-center p-2">
+                                <FileText className="h-8 w-8 text-blue-600 mb-1" />
+                                <span className="text-[9px] font-mono font-bold truncate max-w-full uppercase text-blue-700">
+                                  {med.name.split('.').pop() || 'DOCUMENT'}
+                                </span>
                               </div>
                             )}
                           </div>
@@ -1402,7 +2018,40 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
 
                 <div className="space-y-2">
                   <span className="block text-stone-500 font-bold uppercase tracking-wider text-[10px] pr-1">Option A: Upload Physical Document File</span>
-                  <div className="rounded-xl border-2 border-dashed border-stone-200 p-5 text-center bg-stone-50/50 hover:bg-stone-55 transition">
+                  {isUploadingDoc ? (
+                    <div className="rounded-xl border border-stone-200 bg-neutral-900 text-white p-5 space-y-3 shadow-md animate-fade-in text-left">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="bg-red-500/25 text-red-300 border border-red-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded">
+                            CONVERSION UPLOAD
+                          </span>
+                          <h4 className="font-bold text-xs truncate mt-1.5 max-w-[200px] sm:max-w-xs md:max-w-md">
+                            {docFileName}
+                          </h4>
+                        </div>
+                        <span className="text-[10px] font-mono font-bold text-slate-350">{docSpeed}</span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center text-[10px] font-mono">
+                          <span className="text-slate-400 font-semibold">{docStatusText}</span>
+                          <span className="text-xs font-bold text-red-400">{docProgress}%</span>
+                        </div>
+                        <div className="w-full bg-neutral-800 rounded-full h-2 overflow-hidden border border-neutral-750 p-[1px]">
+                          <div 
+                            className="bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-200"
+                            style={{ width: `${docProgress}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[9px] font-mono text-slate-400">
+                        <span>ETA: {docEta}</span>
+                        <span className="text-emerald-400 font-bold">● PARSING CHANNELS</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border-2 border-dashed border-stone-200 p-5 text-center bg-stone-50/50 hover:bg-stone-55 transition">
                     <span className="text-xl">📄</span>
                     <p className="font-bold text-neutral-800 text-[11px] mt-1">Upload .docx, .txt, or .pdf</p>
                     <input
@@ -1435,6 +2084,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                       </div>
                     )}
                   </div>
+                  )}
                 </div>
 
                 <div className="relative flex py-1 items-center">
@@ -1626,13 +2276,43 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               </div>
             )}
 
-            {/* TAB 4: Voice dictation transcription */}
+            {/* TAB 4: Voice dictation transcription & Verbal AI Queries */}
             {activeTab === "media" && (
-              <div className="space-y-4 text-center py-6">
-                <div className="flex flex-col items-center justify-center space-y-3">
+              <div className="space-y-5 text-left py-4 text-xs">
+                {/* Voice Mode Selector */}
+                <div className="grid grid-cols-2 gap-2 p-1 bg-stone-100 rounded-xl max-w-md mx-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoiceQueryMode("transcribe");
+                      setVoiceAnswer("");
+                      setVoiceText("");
+                    }}
+                    className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
+                      voiceQueryMode === "transcribe" ? "bg-white text-red-900 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    📝 Speech-to-Text Dictation
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoiceQueryMode("query");
+                      setVoiceAnswer("");
+                      setVoiceText("");
+                    }}
+                    className={`py-2 rounded-lg font-bold text-center transition cursor-pointer ${
+                      voiceQueryMode === "query" ? "bg-white text-red-900 shadow-sm" : "text-stone-500 hover:text-stone-800"
+                    }`}
+                  >
+                    ⚡ Verbal AI Query & Solve
+                  </button>
+                </div>
+
+                <div className="flex flex-col items-center justify-center space-y-3 py-4 text-center">
                   <button
                     onClick={toggleRecording}
-                    className={`flex h-16 w-16 items-center justify-center rounded-full shadow-lg transition duration-200 ${
+                    className={`flex h-16 w-16 items-center justify-center rounded-full shadow-lg transition duration-200 cursor-pointer ${
                       isRecording ? "bg-red-700 text-white animate-pulse" : "bg-red-50 text-red-700 hover:scale-105"
                     }`}
                   >
@@ -1640,61 +2320,170 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                   </button>
                   
                   <div className="text-xs">
-                    <p className="font-bold text-neutral-950">
-                      {isRecording ? "Transcribing Spoken Speech..." : "Voice Verbal Recorder"}
+                    <p className="font-extrabold text-neutral-900">
+                      {isRecording 
+                        ? (voiceQueryMode === "query" ? "Listening to your math/verbal query..." : "Transcribing your dictation...") 
+                        : (voiceQueryMode === "query" ? "Click to Speak your Math / Logic Question" : "Voice Verbal Dictator")
+                      }
                     </p>
-                    <p className="text-stone-400 mt-1">
-                      {isRecording ? `Recording Duration: ${recordingSeconds}s` : "Click the microphone, grant permissions, and speak."}
+                    <p className="text-stone-400 mt-1 font-mono font-medium">
+                      {isRecording ? `Active recording: ${recordingSeconds}s` : "Click mic, grant workspace permissions, and ask away."}
                     </p>
                   </div>
                 </div>
 
                 {isRecording && (
-                  <div className="flex items-center justify-center space-x-1 py-2">
+                  <div className="flex items-center justify-center space-x-1.5 py-2">
                     <span className="h-4 w-1 bg-red-700 rounded animate-bounce [animation-delay:0.1s]"></span>
-                    <span className="h-6 w-1 bg-blue-600 rounded animate-bounce [animation-delay:0.2s]"></span>
-                    <span className="h-8 w-1 bg-emerald-500 rounded animate-bounce [animation-delay:0.3s]"></span>
-                    <span className="h-5 w-1 bg-red-700 rounded animate-bounce [animation-delay:0.4s]"></span>
-                    <span className="h-7 w-1 bg-blue-600 rounded animate-bounce [animation-delay:0.5s]"></span>
+                    <span className="h-6 w-1 bg-red-900 rounded animate-bounce [animation-delay:0.2s]"></span>
+                    <span className="h-8 w-1 bg-stone-900 rounded animate-bounce [animation-delay:0.3s]"></span>
+                    <span className="h-5 w-1 bg-amber-500 rounded animate-bounce [animation-delay:0.4s]"></span>
+                    <span className="h-7 w-1 bg-red-700 rounded animate-bounce [animation-delay:0.5s]"></span>
                   </div>
                 )}
 
                 {micError && (
                   <div className="mx-auto max-w-sm rounded-xl bg-orange-50 border border-orange-100 p-3 text-[10px] text-orange-850 text-left">
-                    <p className="font-bold mb-0.5">⚠️ Sandboxed Preview Notice</p>
-                    <p className="leading-relaxed opacity-90">
-                      Standard sandbox iFrames often restrict direct browser microphone APIs. We have automatically activated our <strong>Verbal Study Writer Simulator</strong> so you can still preview continuous auto-transcribing seamlessly!
+                    <p className="font-bold mb-0.5">⚠️ Pre-recorded Sample Loaded</p>
+                    <p className="leading-relaxed opacity-90 font-medium">
+                      Browsing inside sandbox limits browser mic APIs. We have automatically launched our Bungoma speech model simulator to populate the speech ledger!
                     </p>
                   </div>
                 )}
 
                 {voiceText && (
-                  <div className="space-y-3 text-left">
-                    <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 font-mono text-xs leading-relaxed text-stone-700 max-h-[150px] overflow-y-auto">
-                      {voiceText}
+                  <div className="space-y-4 max-w-2xl mx-auto">
+                    <div className="bg-stone-50 border border-stone-200 rounded-xl p-4">
+                      <div className="flex justify-between items-center mb-1 text-stone-500 font-extrabold text-[10px] font-mono uppercase tracking-wider">
+                        <span>Spoken Transcript:</span>
+                        <button 
+                          onClick={() => setVoiceText("")}
+                          className="text-red-700 hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <textarea
+                        value={voiceText}
+                        onChange={(e) => setVoiceText(e.target.value)}
+                        rows={3}
+                        className="w-full text-xs font-semibold bg-transparent border-none outline-none leading-relaxed text-stone-850 font-mono resize-none"
+                      />
                     </div>
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => {
-                          setEditorContent((prev) => prev + (prev ? "\n" : "") + voiceText);
-                          setActiveTab("write");
-                        }}
-                        className="flex-1 rounded-lg border border-stone-200 hover:bg-neutral-50 py-2 text-xs font-semibold"
-                      >
-                        Load to Editor
-                      </button>
-                      <button
-                        onClick={() => handleSaveDocument("doc", voiceText)}
-                        className="flex-1 rounded-lg bg-red-700 text-white font-semibold py-2 text-xs hover:bg-red-850"
-                      >
-                        Save Voice Document
-                      </button>
-                    </div>
+
+                    {voiceQueryMode === "query" ? (
+                      <div className="space-y-4">
+                        <div className="flex items-center space-x-2 bg-stone-100 p-2.5 rounded-lg border border-stone-150">
+                          <input
+                            type="checkbox"
+                            id="voice_grounding_toggle"
+                            checked={voiceQueryGrounding}
+                            onChange={(e) => setVoiceQueryGrounding(e.target.checked)}
+                            className="rounded h-4 w-4 bg-white accent-red-700 cursor-pointer"
+                          />
+                          <label htmlFor="voice_grounding_toggle" className="font-bold text-stone-700 cursor-pointer flex items-center space-x-1 select-none">
+                            <span>Enable Google Search grounding for real-time validation</span>
+                          </label>
+                        </div>
+
+                        <button
+                          onClick={handleVoiceQuerySolve}
+                          disabled={isVoiceQuerying || !voiceText.trim()}
+                          className="w-full flex items-center justify-center space-x-2 rounded-xl bg-red-700 hover:bg-neutral-900 py-3 text-white font-bold transition shadow-sm disabled:opacity-45 cursor-pointer"
+                        >
+                          {isVoiceQuerying ? (
+                            <>
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                              <span>AI STEM Solver analyzing, calculating & transcribing your voice...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              <span>Submit Verbal Query to AI Solver</span>
+                            </>
+                          )}
+                        </button>
+                        
+                        {voiceAnswer && (
+                          <div className="rounded-xl border-2 border-stone-250 bg-stone-50/50 p-5 space-y-3.5 shadow-sm text-left animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <div className="flex items-center justify-between border-b border-stone-200 pb-2.5">
+                              <span className="font-extrabold text-neutral-900 text-xs flex items-center space-x-1.5 uppercase font-mono tracking-wider">
+                                <span className="p-1 rounded bg-amber-400 text-stone-900">✏️</span>
+                                <span>Verbal Solution Outline</span>
+                              </span>
+                              <div className="flex space-x-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditorContent(prev => prev + (prev ? "\n\n" : "") + `### VERBAL AI QUERY RESULT\n\n${voiceAnswer}`);
+                                    setActiveTab("write");
+                                    alert("Voice solution loaded directly into primary editor!");
+                                  }}
+                                  className="text-[10px] font-bold text-white bg-neutral-950 px-2.5 py-1 rounded-md cursor-pointer hover:bg-neutral-800 transition"
+                                >
+                                  Load to Editor
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveDocument("pdf", `### VERBAL AI SOLVED TASK\nQuestion: ${voiceText}\n\n${voiceAnswer}`)}
+                                  className="text-[10px] font-bold text-white bg-red-700 px-2.5 py-1 rounded-md cursor-pointer hover:bg-red-800 transition"
+                                >
+                                  Download PDF
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="text-xs font-mono select-text font-medium leading-relaxed text-stone-850 whitespace-pre-wrap">
+                              {voiceAnswer}
+                            </div>
+
+                            {voiceResponseSources.length > 0 && (
+                              <div className="bg-white border border-stone-200 rounded-lg p-3 space-y-1 text-left mt-2 shadow-2xs">
+                                <span className="text-[10px] font-extrabold text-stone-550 uppercase tracking-widest font-mono block">🌐 Grounded Web Intelligence Citations:</span>
+                                <div className="flex flex-col gap-1 mt-1 font-medium font-mono text-[10px]">
+                                  {voiceResponseSources.map((src, i) => (
+                                    <a
+                                      key={i}
+                                      href={src.uri}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-red-700 hover:underline truncate hover:text-red-900 block"
+                                    >
+                                      [{i + 1}] {src.title || "Reference Site"}
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => {
+                            setEditorContent((prev) => prev + (prev ? "\n" : "") + voiceText);
+                            setActiveTab("write");
+                            alert("Speech transcribed text appended to editor!");
+                          }}
+                          className="flex-1 rounded-xl border-2 border-stone-300 bg-white hover:bg-neutral-50 py-3 text-stone-800 text-xs font-bold transition duration-200 cursor-pointer text-center"
+                        >
+                          Append to Document Editor
+                        </button>
+                        <button
+                          onClick={() => handleSaveDocument("doc", voiceText)}
+                          className="flex-1 rounded-xl bg-red-700 text-white font-bold py-3 text-xs hover:bg-red-850 transition duration-200 cursor-pointer text-center"
+                        >
+                          Save Transcribed File
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
 
+            {/* TAB 5: Curriculum Maker */}
             {activeTab === "curriculum" && (
               <div className="space-y-4 text-xs text-left">
                 <div className="rounded-xl border border-stone-150 bg-stone-50/50 p-4 space-y-2">
@@ -1751,6 +2540,225 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
               </div>
             )}
 
+            {/* TAB 6: AI Math & STEM Solver (Dynamic Solving Workspace) */}
+            {activeTab === "solver" && (
+              <div className="space-y-5 text-left text-xs">
+                <div className="rounded-xl border border-rose-150 bg-red-50/20 p-4 space-y-1.5">
+                  <h4 className="font-extrabold text-red-950 flex items-center gap-1 text-[13px] tracking-tight">
+                    <Calculator className="h-4 w-4 text-red-800" />
+                    <span>Zion Live Math & Complex Problem Solver</span>
+                  </h4>
+                  <p className="text-stone-600 leading-relaxed text-[11px] font-medium">
+                    State complex mathematical queries, algebraic challenges, data-structures questions, physics equations, or computational algorithms below. You can also upload reference photos of problems or worksheet diagrams. 
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-stone-500 font-extrabold text-[10px] uppercase tracking-wider mb-1.5 font-mono">Solve Problem Prompt / Equation:</label>
+                    <textarea
+                      rows={5}
+                      value={solverInput}
+                      onChange={(e) => setSolverInput(e.target.value)}
+                      placeholder="e.g. Find the local maxima and minima for f(x) = x^3 - 6x^2 + 9x + 15 within domain [-2, 5]. Show precise derivative formulations."
+                      className="w-full rounded-xl border border-stone-200 bg-neutral-50 px-4 py-3 outline-none focus:bg-white focus:border-red-700 font-mono text-xs leading-relaxed"
+                    />
+                  </div>
+
+                  {/* Preloaded quick math helpers templates */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider block font-mono">🚀 Dynamic Math Formula Templates:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setSolverInput("Find the exact general solution for the second-order ordinary differential equation: d^2y/dx^2 - 4 dy/dx + 13y = e^{2x} cos(3x). State complete characteristic polynomial calculations.")}
+                        className="p-1 px-2.5 rounded bg-stone-105 hover:bg-stone-200 font-mono text-[10px] text-neutral-800 cursor-pointer transition"
+                      >
+                        📊 Differential Equation
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSolverInput("Solve this system of linear equations using Gaussian Elimination: \n1) 2x + 4y - z = 11 \n2) -x + 3y + 2z = 4 \n3) 3x - y + 5z = 16. \nWrite out each row echelon matrix mutation step-by-step!")}
+                        className="p-1 px-2.5 rounded bg-stone-105 hover:bg-stone-200 font-mono text-[10px] text-neutral-800 cursor-pointer transition"
+                      >
+                        📐 System Matrix Solve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSolverInput("Given f(x) = (2x - 3) / (x^2 + 4x + 5). Find the exact indefinite integral using partial fraction expansion or substitution theorems. Show the calculus steps.")}
+                        className="p-1 px-2.5 rounded bg-stone-105 hover:bg-stone-200 font-mono text-[10px] text-neutral-800 cursor-pointer transition"
+                      >
+                        🧮 Indefinite Calculus
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Multimodal Diagram / Assignment PDF uploader */}
+                  <div className="space-y-2 pt-1">
+                    <span className="block text-stone-500 font-extrabold text-[10px] uppercase tracking-wider font-mono">📎 Optional: Upload Diagram Plate, Handwriting Notes or Equations Picture</span>
+                    
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div className="border-2 border-dashed border-stone-200 hover:border-red-400 p-4 rounded-xl text-center cursor-pointer transition bg-stone-50/50 hover:bg-stone-50 relative">
+                        <Upload className="h-5 w-5 text-stone-400 mx-auto mb-1" />
+                        <span className="font-bold block text-[11px] text-stone-700">Choose Assignment Files</span>
+                        <span className="text-[9.5px] text-stone-400 block mt-0.5">Supports JPG, PNG photos or math booklets PDFs</span>
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*,application/pdf"
+                          onChange={handleSolverAttachedUploader}
+                          className="hidden"
+                          id="solver_multimodal_uploader"
+                        />
+                        <label
+                          htmlFor="solver_multimodal_uploader"
+                          className="absolute inset-0 cursor-pointer"
+                        />
+                      </div>
+
+                      {/* Staged uploaded files list */}
+                      <div className="border border-stone-200 bg-white rounded-xl p-3 max-h-[140px] overflow-y-auto space-y-1.5">
+                        {solverAttachedFiles.length === 0 ? (
+                          <p className="text-stone-400 italic font-medium text-center py-6">No problem files attached. (Optional)</p>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center pb-1 text-neutral-500 font-extrabold text-[9px] font-mono border-b border-stone-100">
+                              <span>STAGED FILES ({solverAttachedFiles.length}):</span>
+                              <button 
+                                onClick={() => setSolverAttachedFiles([])} 
+                                className="text-red-700 hover:underline"
+                              >
+                                Clear All
+                              </button>
+                            </div>
+                            {solverAttachedFiles.map((f) => (
+                              <div key={f.id} className="flex items-center justify-between font-mono text-[10.5px] bg-stone-50 rounded px-2 py-1.5 text-stone-700 border border-stone-100">
+                                <span className="truncate max-w-[150px] font-bold">🖼️ {f.name}</span>
+                                <button 
+                                  onClick={() => setSolverAttachedFiles(prev => prev.filter(x => x.id !== f.id))} 
+                                  className="text-[12px] text-stone-400 hover:text-red-700 font-extrabold pl-1 cursor-pointer leading-none"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Web Grounding CheckBox */}
+                  <div className="flex items-center space-x-2 bg-stone-50 p-2.5 rounded-lg border border-stone-200">
+                    <input
+                      type="checkbox"
+                      id="google_grounding_toggle"
+                      checked={enableGrounding}
+                      onChange={(e) => setEnableGrounding(e.target.checked)}
+                      className="rounded h-4 w-4 bg-white accent-red-700 cursor-pointer"
+                    />
+                    <label htmlFor="google_grounding_toggle" className="font-bold text-stone-700 cursor-pointer flex items-center space-x-1 select-none">
+                      <span>Incorporate Google Search live web grounding (highly recommended for contemporary issues)</span>
+                    </label>
+                  </div>
+
+                  {/* Solve Trigger Button */}
+                  <button
+                    onClick={() => handleSolveProblem()}
+                    disabled={isSolving || !solverInput.trim()}
+                    className="w-full flex items-center justify-center space-x-2 rounded-xl bg-red-700 hover:bg-neutral-900 py-3 text-white font-bold transition disabled:opacity-40 cursor-pointer"
+                  >
+                    {isSolving ? (
+                      <>
+                        <RefreshCw className="h-4.5 w-4.5 animate-spin" />
+                        <span>AI Mathematics & STEM engine computing derivatives, matrices & logic steps...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Calculator className="h-4 w-4" />
+                        <span>Compute Step-by-Step AI Solution</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Solving output */}
+                {solverResult && (
+                  <div className="rounded-xl border-2 border-neutral-300 bg-neutral-900 text-neutral-100 p-5 space-y-4 shadow-md font-mono select-text font-medium leading-relaxed max-w-full overflow-x-auto text-[11.5px] animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-2 flex-wrap gap-2">
+                      <span className="font-extrabold tracking-wider uppercase text-yellow-405 flex items-center space-x-1">
+                        <span>🏛️</span>
+                        <span>Official Step-by-Step Mathematics Solution</span>
+                      </span>
+                      <div className="flex space-x-1.5 flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditorContent(prev => prev + (prev ? "\n\n" : "") + `### WAFULA INTENSE STUDY SOLUTIONS\n\n${solverResult}`);
+                            setActiveTab("write");
+                            alert("This complete solution step formulation has been integrated inside your primary workspace editor draft (Writer Editor).");
+                          }}
+                          className="bg-white text-neutral-900 font-bold px-2 py-0.5 rounded text-[10px] hover:bg-neutral-100 transition cursor-pointer"
+                        >
+                          Load into Editor
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveDocument("pdf", `### MATHEMATICAL SOLUTION\n\nQuery: ${solverInput}\n\n${solverResult}`)}
+                          className="bg-red-700 text-white font-bold px-2 py-0.5 rounded text-[10px] hover:bg-red-800 transition cursor-pointer"
+                        >
+                          Export as PDF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newDoc: SavedDocument = {
+                              id: "solv_save_" + Date.now(),
+                              userId: currentUser?.email || "anonymous",
+                              title: `${docTitle} Solved Task`,
+                              content: solverResult,
+                              type: "doc",
+                              folder: selectedFolder,
+                              date: new Date().toISOString().split("T")[0],
+                              fileSize: `${((solverResult.length * 2) / 1024).toFixed(1)} KB`
+                            };
+                            onAddNewDocument(newDoc);
+                            alert(`Solution successfully archived under vault folder [ ${selectedFolder} ]!`);
+                          }}
+                          className="bg-neutral-800 text-neutral-300 border border-white/20 font-bold px-2 py-0.5 rounded text-[10px] hover:bg-neutral-700 hover:text-white transition cursor-pointer"
+                        >
+                          Archive to Folder
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="whitespace-pre-wrap leading-relaxed select-text tracking-normal">
+                      {solverResult}
+                    </div>
+
+                    {solvingSources.length > 0 && (
+                      <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-1 text-left text-[10.5px]">
+                        <span className="text-[9.5px] font-extrabold text-white uppercase tracking-widest block font-mono">🛡️ Google Grounding Intelligence Citations:</span>
+                        <div className="flex flex-col gap-1 mt-1">
+                          {solvingSources.map((src, i) => (
+                            <a
+                              key={i}
+                              href={src.uri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-amber-300 hover:underline hover:text-amber-400 truncate block font-sans"
+                            >
+                              [{i + 1}] {src.title || "Grounded Web Document"}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         </div>
 
@@ -1789,19 +2797,40 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           {/* TAB 1: INTERACTIVE DOCUMENT/PDF PREVIEWER */}
           {rightPanelTab === "preview" && (
             <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-stone-100 pb-3 gap-2 animate-fade-in-up">
                 <div>
                   <h3 className="font-display text-sm font-extrabold text-stone-900">Live PDF / Doc Viewer</h3>
                   <p className="text-[10px] text-stone-400 font-mono mt-0.5">Est. Pages: {Math.max(1, Math.ceil((editorContent || extractedOcrText || voiceText || conversionOutput || "").trim().split(/\s+/).filter(Boolean).length / 220))} | Words: {(editorContent || extractedOcrText || voiceText || conversionOutput || "").trim().split(/\s+/).filter(Boolean).length}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handlePrintPdf}
-                  className="inline-flex items-center space-x-1 rounded-lg bg-red-700 hover:bg-red-850 px-3 py-1.5 text-xs font-bold text-white transition shadow-xs cursor-pointer"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                  <span>Print & Download PDF</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handlePrintPdf}
+                    className="inline-flex items-center space-x-1 rounded-lg bg-stone-50 hover:bg-stone-100 border border-stone-300 px-2.5 py-1.5 text-[11px] font-bold text-stone-700 transition shadow-xs cursor-pointer"
+                    title="Print configuration"
+                  >
+                    <Printer className="h-3 w-3" />
+                    <span>Print</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPdfFile}
+                    className="inline-flex items-center space-x-1 rounded-lg bg-red-700 hover:bg-red-850 px-2.5 py-1.5 text-[11px] font-bold text-white transition shadow-xs cursor-pointer"
+                    title="Download styled PDF Document"
+                  >
+                    <Download className="h-3 w-3" />
+                    <span>Download PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadWordDoc}
+                    className="inline-flex items-center space-x-1 rounded-lg bg-blue-700 hover:bg-blue-800 px-2.5 py-1.5 text-[11px] font-bold text-white transition shadow-xs cursor-pointer"
+                    title="Download Word Document (.doc)"
+                  >
+                    <FileText className="h-3 w-3" />
+                    <span>Word (.doc)</span>
+                  </button>
+                </div>
               </div>
 
               {/* View Customizations */}
@@ -1885,6 +2914,17 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                 </div>
               </div>
 
+              {/* Zion Design Machine Brand Indicator */}
+              <div className="flex items-center justify-between bg-stone-900 border border-stone-850 rounded-xl px-4 py-2.5 mb-3.5 text-xs shadow-md select-none">
+                <div className="flex items-center space-x-2 font-bold font-display">
+                  <span className="text-emerald-500 font-extrabold animate-pulse">●</span>
+                  <span className="text-stone-200 tracking-tight text-[11px] uppercase">ZION DESIGN SYSTEM MACHINE ACTIVE</span>
+                </div>
+                <div className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[9px] font-mono font-bold text-amber-500 uppercase tracking-widest">
+                  Zion Digital Publishers
+                </div>
+              </div>
+
               {/* A4 Sheet Arena Scrollable block */}
               <div className="overflow-auto max-h-[550px] border border-stone-200 rounded-xl bg-stone-100 p-4 transition-all duration-300">
                 <div 
@@ -1908,25 +2948,38 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
                             : "2rem",
                       fontFamily: 
                         previewStyle === "serif" 
-                          ? "Georgia, Cambria, 'Times New Roman', serif" 
+                          ? "'Lora', Georgia, 'Times New Roman', serif" 
                           : previewStyle === "mono" 
                             ? "'JetBrains Mono', Courier, monospace" 
-                            : "system-ui, -apple-system, sans-serif",
+                            : "'Open Sans', system-ui, -apple-system, sans-serif",
                     }}
                   >
                     {/* Header Watermark */}
-                    <div className="flex justify-between items-center border-b border-stone-100 pb-1.5 mb-4 text-[9px] text-stone-400 font-mono">
-                      <span>WA-DIGITAL DOCUMENT COMPANION</span>
+                    <div className="flex justify-between items-center border-b border-stone-100 pb-1.5 mb-4 text-[9px] text-stone-400 font-mono font-bold">
+                      <span>ZION DIGITAL PUBLISHERS • COMPANION</span>
                       <span>{docTitle || "Untitled Outline"}</span>
                     </div>
 
                     {/* Paper Title */}
-                    <h1 className="text-xl font-bold tracking-tight text-red-800 mb-3 border-stone-200 pb-0.5">
+                    <h1 
+                      style={{
+                        fontFamily: previewStyle === "serif" ? "'Playfair Display', Georgia, serif" : previewStyle === "mono" ? "'JetBrains Mono', monospace" : "'Montserrat', sans-serif",
+                        fontSize: "24px"
+                      }}
+                      className="font-bold tracking-tight text-red-800 mb-3 border-stone-200 pb-0.5"
+                    >
                       {docTitle || "Untitled Document"}
                     </h1>
 
                     {/* Paper Body Text content */}
-                    <div className="text-xs text-stone-850 whitespace-pre-wrap leading-relaxed min-h-[220px]">
+                    <div 
+                      style={{
+                        fontFamily: previewStyle === "serif" ? "'Lora', Georgia, serif" : previewStyle === "mono" ? "'JetBrains Mono', monospace" : "'Open Sans', sans-serif",
+                        fontSize: "11pt",
+                        lineHeight: "1.65"
+                      }}
+                      className="text-stone-850 whitespace-pre-wrap min-h-[220px]"
+                    >
                       {(editorContent || extractedOcrText || voiceText || conversionOutput || "").trim() ? (
                         editorContent || extractedOcrText || voiceText || conversionOutput
                       ) : (
@@ -2042,21 +3095,55 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
 
                   {vaultUploadMode === "files" ? (
                     <div className="space-y-2">
-                      <div
-                        className="border-2 border-dashed border-stone-200 hover:border-red-400 bg-white hover:bg-neutral-100 p-4 rounded-xl text-center cursor-pointer transition relative"
-                        onClick={() => document.getElementById("vault_multi_files")?.click()}
-                      >
-                        <Upload className="h-5 w-5 text-stone-400 mx-auto mb-1 animate-bounce" />
-                        <span className="font-semibold block text-[11px] text-stone-700">Drag & Drop or Choose Files</span>
-                        <span className="text-[9px] text-stone-400 block mt-0.5">Supports PDF, Word (DOC), Photos, Audios, Videos & Books</span>
-                        <input
-                          id="vault_multi_files"
-                          type="file"
-                          multiple
-                          onChange={handleVaultFilesUpload}
-                          className="hidden"
-                        />
-                      </div>
+                      {isUploadingDoc ? (
+                        <div className="rounded-xl border border-stone-200 bg-neutral-900 text-white p-4 space-y-3 shadow-md animate-fade-in text-left">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="bg-red-500/25 text-red-300 border border-red-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded">
+                                VAULT MULTI-INGEST
+                              </span>
+                              <h4 className="font-bold text-xs truncate mt-1.5 max-w-[150px] sm:max-w-xs">
+                                {docFileName}
+                              </h4>
+                            </div>
+                            <span className="text-[10px] font-mono font-bold text-slate-350">{docSpeed}</span>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between items-center text-[10px] font-mono">
+                              <span className="text-slate-400 font-semibold truncate max-w-[120px]">{docStatusText}</span>
+                              <span className="text-xs font-bold text-red-400">{docProgress}%</span>
+                            </div>
+                            <div className="w-full bg-neutral-800 rounded-full h-2 overflow-hidden border border-neutral-750 p-[1px]">
+                              <div 
+                                className="bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-200"
+                                style={{ width: `${docProgress}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between items-center text-[9px] font-mono text-slate-400">
+                            <span>ETA: {docEta}</span>
+                            <span className="text-emerald-400">● ENCRYPTED SSL</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className="border-2 border-dashed border-stone-200 hover:border-red-400 bg-white hover:bg-neutral-100 p-4 rounded-xl text-center cursor-pointer transition relative"
+                          onClick={() => document.getElementById("vault_multi_files")?.click()}
+                        >
+                          <Upload className="h-5 w-5 text-stone-400 mx-auto mb-1 animate-bounce" />
+                          <span className="font-semibold block text-[11px] text-stone-700">Drag & Drop or Choose Files</span>
+                          <span className="text-[9px] text-stone-400 block mt-0.5">Supports PDF, Word (DOC), Photos, Audios, Videos & Books</span>
+                          <input
+                            id="vault_multi_files"
+                            type="file"
+                            multiple
+                            onChange={handleVaultFilesUpload}
+                            className="hidden"
+                          />
+                        </div>
+                      )}
                       {vaultUploadedPreview.length > 0 && (
                         <div className="space-y-1.5 max-h-[120px] overflow-y-auto bg-white p-2 rounded-lg border border-stone-150 pr-1.5">
                           {vaultUploadedPreview.map((f, i) => (

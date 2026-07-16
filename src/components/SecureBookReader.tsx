@@ -193,16 +193,31 @@ export default function SecureBookReader({
   onTriggerPayment,
   onAddNewDocument
 }: SecureBookReaderProps) {
+  const canAccessFully = hasPaid || isAdmin || (book.id.startsWith("book_") && !["b1", "b2", "b3"].includes(book.id)) || (book.pdfUrl && (book.pdfUrl.includes("/api/books/pdf/") || book.pdfUrl.startsWith("indexeddb://")));
+
+  const isAdminUploadedMainBook = book.id.startsWith("book_") && !book.id.startsWith("book_ai_doc_") && !["b1", "b2", "b3"].includes(book.id);
+  const isWordDoc = book.pdfUrl?.includes("/api/books/docx/") || book.pdfUrl?.endsWith(".docx") || book.pdfUrl?.endsWith(".doc");
+
   // Dynamic book content local state (to allow compiling missing text via Gemini / caching)
   const [localBookContent, setLocalBookContent] = useState<string>(() => {
     if (book.content) return book.content;
     const cached = typeof window !== "undefined" ? localStorage.getItem(`WAFULA_BOOK_CONTENT_${book.id}`) : null;
     if (cached) return cached;
+    if (isAdminUploadedMainBook) {
+      return "Authentic document presentation. Please read in 'Original PDF Presentation' mode using the selector above.";
+    }
     return getDefaultBookContent(book.title, book.author, book.description || "");
   });
 
   // View presentation mode: text by default if there's text content, else default to 'pdf' if it has a pdfUrl, else 'text'
   const [viewMode, setViewMode] = useState<'text' | 'pdf'>(() => {
+    if (isWordDoc) {
+      return 'text';
+    }
+    if (isAdminUploadedMainBook && book.pdfUrl) {
+      return 'pdf';
+    }
+    
     const titleLower = book.title.toLowerCase();
     const isSpecialTitle = titleLower.includes("seven spirits") || 
                            titleLower.includes("investment") || 
@@ -216,7 +231,7 @@ export default function SecureBookReader({
     const cached = typeof window !== "undefined" ? localStorage.getItem(`WAFULA_BOOK_CONTENT_${book.id}`) : null;
     if (cached) return 'text';
     
-    if (book.pdfUrl && (book.pdfUrl.startsWith("http://") || book.pdfUrl.startsWith("https://") || book.pdfUrl.startsWith("blob:") || book.pdfUrl.startsWith("data:"))) {
+    if (book.pdfUrl && (book.pdfUrl.startsWith("http://") || book.pdfUrl.startsWith("https://") || book.pdfUrl.startsWith("blob:") || book.pdfUrl.startsWith("data:") || book.pdfUrl.startsWith("/") || book.pdfUrl.startsWith("api/"))) {
       return 'pdf';
     }
     return 'text';
@@ -270,7 +285,89 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
 
   // Reading layout state
   const [currentPage, setCurrentPage] = useState(1);
-  const [isTimerActive, setIsTimerActive] = useState(!hasPaid && !isAdmin && !!book.allowPreview);
+  const [cloudStatus, setCloudStatus] = useState<'idle' | 'syncing' | 'synced'>('idle');
+
+  // Synchronize reading progress from Firestore (Load on mount)
+  useEffect(() => {
+    if (!currentUser || !book.id) return;
+    
+    const loadProgress = async () => {
+      setCloudStatus('syncing');
+      try {
+        const { getDocs, query, collection, where } = await import("firebase/firestore");
+        const q = query(
+          collection(db, "reading_progress"),
+          where("userId", "==", currentUser.id || "guest"),
+          where("bookId", "==", book.id)
+        );
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const docData = snapshot.docs[0].data();
+          if (docData.currentPage) {
+            setCurrentPage(docData.currentPage);
+          }
+        }
+        setCloudStatus('synced');
+      } catch (err) {
+        console.error("Failed to load reading progress from Firestore:", err);
+        setCloudStatus('idle');
+      }
+    };
+    
+    loadProgress();
+  }, [currentUser?.id, book.id]);
+
+  // Synchronize reading progress back to Firestore (Save on change)
+  useEffect(() => {
+    if (!currentUser || !book.id) return;
+    
+    const saveProgress = async () => {
+      setCloudStatus('syncing');
+      try {
+        const { getDocs, query, collection, where, doc, addDoc } = await import("firebase/firestore");
+        const q = query(
+          collection(db, "reading_progress"),
+          where("userId", "==", currentUser.id || "guest"),
+          where("bookId", "==", book.id)
+        );
+        const snapshot = await getDocs(q);
+        const totalPages = book.pages || 10;
+        const progressPercent = Math.min(100, Math.floor((currentPage / totalPages) * 100));
+        
+        if (!snapshot.empty) {
+          const docId = snapshot.docs[0].id;
+          const { updateDoc } = await import("firebase/firestore");
+          await updateDoc(doc(db, "reading_progress", docId), {
+            currentPage,
+            percentage: progressPercent,
+            updatedAt: new Date().toISOString()
+          });
+        } else {
+          await addDoc(collection(db, "reading_progress"), {
+            userId: currentUser.id || "guest",
+            bookId: book.id,
+            currentPage,
+            percentage: progressPercent,
+            updatedAt: new Date().toISOString()
+          });
+        }
+        // Sync local storage as well
+        localStorage.setItem(`wafula_bookmark_${book.id}`, currentPage.toString());
+        setCloudStatus('synced');
+      } catch (err) {
+        console.error("Failed to save reading progress to Firestore:", err);
+        setCloudStatus('idle');
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      saveProgress();
+    }, 1200);
+    
+    return () => clearTimeout(timeout);
+  }, [currentPage, currentUser?.id, book.id]);
+
+  const [isTimerActive, setIsTimerActive] = useState(!canAccessFully && !!book.allowPreview);
   const [timeLeft, setTimeLeft] = useState(book.previewDuration || 30);
   const [isExpired, setIsExpired] = useState(false);
   
@@ -299,6 +396,19 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
       if (!book.pdfUrl) {
         setResolvedPdfUrl(null);
         return;
+      }
+
+      // Check IndexedDB offline cache first for optimal speed and reliability
+      try {
+        const offlineBlob = await getPdfFromOfflineDb(book.id);
+        if (offlineBlob && active) {
+          console.log(`Loading Book "${book.title}" from local high-speed IndexedDB cache...`);
+          localUrlObj = URL.createObjectURL(offlineBlob);
+          setResolvedPdfUrl(localUrlObj);
+          return;
+        }
+      } catch (err) {
+        console.warn("Local IndexedDB file lookup failed, falling back to server URL...", err);
       }
 
       if (book.pdfUrl.startsWith("indexeddb://")) {
@@ -360,6 +470,23 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
   // Speaks active book content out loud
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechRate, setSpeechRate] = useState(1);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        setAvailableVoices(voices);
+        if (voices.length > 0 && !selectedVoiceURI) {
+          const defaultVoice = voices.find(v => v.lang.startsWith("en")) || voices[0];
+          setSelectedVoiceURI(defaultVoice.voiceURI);
+        }
+      };
+      loadVoices();
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, [selectedVoiceURI]);
 
   useEffect(() => {
     return () => {
@@ -386,9 +513,16 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
       utterance.rate = speechRate;
       
       const voices = window.speechSynthesis.getVoices();
-      const matchVoice = voices.find(v => v.lang.startsWith("en-")) || voices[0];
-      if (matchVoice) {
-        utterance.voice = matchVoice;
+      if (selectedVoiceURI) {
+        const matchVoice = voices.find(v => v.voiceURI === selectedVoiceURI);
+        if (matchVoice) {
+          utterance.voice = matchVoice;
+        }
+      } else {
+        const matchVoice = voices.find(v => v.lang.startsWith("en-")) || voices[0];
+        if (matchVoice) {
+          utterance.voice = matchVoice;
+        }
       }
 
       utterance.onend = () => setIsSpeaking(false);
@@ -1006,7 +1140,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
 
   // --- Real Document Download exporter ---
   const handleDownloadOriginal = () => {
-    if (!hasPaid && !isAdmin) {
+    if (!canAccessFully) {
       alert("Verification Error: Downloading has been locked. Please purchase this book to download.");
       return;
     }
@@ -1104,35 +1238,81 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
           <div className="bg-slate-850 text-stone-200 border-b border-slate-950 px-4 py-2 flex flex-col sm:flex-row items-center justify-between gap-2 z-10 text-xs shadow-sm">
             <div className="flex items-center space-x-2 font-bold select-none">
               <BookOpen className="h-4 w-4 text-indigo-400" />
-              <span>Select Reader Presentation Mode:</span>
+              <span>{isWordDoc ? "Original Word Document (.docx) loaded:" : "Select Reader Presentation Mode:"}</span>
             </div>
-            <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-700">
-              <button
-                onClick={() => setViewMode('text')}
-                className={`px-3 py-1 rounded-md font-extrabold transition cursor-pointer flex items-center space-x-1.5 ${
-                  viewMode === 'text' 
-                    ? 'bg-slate-700 text-white shadow' 
-                    : 'text-stone-400 hover:text-stone-200 hover:bg-slate-900'
-                }`}
-              >
-                <span>📖 Enhanced Text Reader</span>
-                <span className="text-[9px] bg-slate-900 text-indigo-300 px-1 py-0.5 rounded font-mono font-black border border-indigo-950">AI Support</span>
-              </button>
-              <button
-                onClick={() => setViewMode('pdf')}
-                className={`px-3 py-1 rounded-md font-extrabold transition cursor-pointer flex items-center space-x-1.5 ${
-                  viewMode === 'pdf' 
-                    ? 'bg-slate-700 text-white shadow' 
-                    : 'text-stone-400 hover:text-stone-200 hover:bg-slate-900'
-                }`}
-              >
-                <span>📄 Original PDF (Iframe)</span>
-              </button>
-            </div>
+            
+            {isAdminUploadedMainBook ? (
+              <div className="flex items-center space-x-2">
+                {isWordDoc ? (
+                  <>
+                    <div className="px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/35 text-emerald-400 rounded-lg text-xs font-mono font-bold">
+                      📖 AUTHENTIC WORD EXTRACTED TEXT
+                    </div>
+                    <a 
+                      href={book.pdfUrl}
+                      download={`${book.title}.docx`}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold transition cursor-pointer flex items-center space-x-1.5 border border-emerald-850 shadow"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download Original docx</span>
+                    </a>
+                  </>
+                ) : (
+                  <div className="px-3.5 py-1.5 bg-indigo-500/10 border border-indigo-500/35 text-indigo-400 rounded-lg text-xs font-mono font-bold uppercase">
+                    📄 SECURE ORIGINAL PDF PRESENTATION
+                  </div>
+                )}
+              </div>
+            ) : isWordDoc ? (
+              <div className="flex items-center space-x-2">
+                <a 
+                  href={book.pdfUrl}
+                  download={`${book.title}.docx`}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold transition cursor-pointer flex items-center space-x-1.5 border border-emerald-800 shadow"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download Original Word Document</span>
+                </a>
+              </div>
+            ) : (
+              <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => setViewMode('text')}
+                  className={`px-3 py-1 rounded-md font-extrabold transition cursor-pointer flex items-center space-x-1.5 ${
+                    viewMode === 'text' 
+                      ? 'bg-slate-700 text-white shadow' 
+                      : 'text-stone-400 hover:text-stone-200 hover:bg-slate-900'
+                  }`}
+                >
+                  <span>📖 Enhanced Text Reader</span>
+                  {!isAdminUploadedMainBook && (
+                    <span className="text-[9px] bg-slate-900 text-indigo-300 px-1 py-0.5 rounded font-mono font-black border border-indigo-950">AI Support</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setViewMode('pdf')}
+                  className={`px-3 py-1 rounded-md font-extrabold transition cursor-pointer flex items-center space-x-1.5 ${
+                    viewMode === 'pdf' 
+                      ? 'bg-slate-700 text-white shadow' 
+                      : 'text-stone-400 hover:text-stone-200 hover:bg-slate-900'
+                  }`}
+                >
+                  <span>📄 Original PDF (Iframe)</span>
+                </button>
+              </div>
+            )}
+
             <div className="text-[10px] text-stone-300 font-bold select-none italic text-center sm:text-right">
-              {viewMode === 'pdf' 
-                ? "⚠️ If your browser blocks secure plugin display, toggle the Enhanced Text Reader!" 
-                : "✨ Web Read Aloud and Highlight Brush features are fully active in Text Mode."}
+              {isAdminUploadedMainBook ? (
+                isWordDoc 
+                  ? "✨ Complete Word Document content parsed above. Authentic administrative edition."
+                  : "✨ Authorized copy registered by Overseer Kelvin Wafula. Displaying official PDF layout."
+              ) : isWordDoc 
+                ? "✨ This Word Document was parsed to authentic text. Read the actual contents below."
+                : (viewMode === 'pdf' 
+                  ? "⚠️ If your browser blocks secure plugin display, toggle the Enhanced Text Reader!" 
+                  : "✨ Web Read Aloud and Highlight Brush features are fully active in Text Mode.")
+              }
             </div>
           </div>
         )}
@@ -1247,6 +1427,25 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
               <span className="font-mono font-black text-white bg-slate-900 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px]">
                 {safePercent}%
               </span>
+              {currentUser && (
+                <div className="flex items-center space-x-1 pl-1 text-[9px] font-mono select-none">
+                  {cloudStatus === 'syncing' && (
+                    <span className="text-amber-600 flex items-center space-x-1">
+                      <span className="inline-block h-2.5 w-2.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                      <span>Syncing...</span>
+                    </span>
+                  )}
+                  {cloudStatus === 'synced' && (
+                    <span className="text-emerald-600 font-extrabold flex items-center space-x-0.5">
+                      <span>☁️</span>
+                      <span>Synced to Cloud</span>
+                    </span>
+                  )}
+                  {cloudStatus === 'idle' && (
+                    <span className="text-slate-400">Offline Standby</span>
+                  )}
+                </div>
+              )}
             </div>
             
             <div className="hidden sm:block flex-1 max-w-lg mx-3 sm:mx-6 h-2 bg-stone-200 rounded-full overflow-hidden border border-stone-300">
@@ -1339,7 +1538,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
                 /* SIMULATED DIGITAL BOOK SHEETS */
                 <div className="flex flex-col items-center w-full">
                   {/* CONTINUOUS SCROLL VIEW ONCE PAID */}
-                  {hasPaid || isAdmin ? (
+                  {canAccessFully ? (
                     <div className="space-y-8 w-full max-w-2xl select-text pb-12">
                       <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs text-indigo-950 font-bold mb-4">
                         📖 Scroll Mode Active: Scroll downwards to continue reading this ebook continuously in full width!
@@ -1767,11 +1966,28 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
                   <option value={1.5}>1.5x</option>
                 </select>
               </div>
+
+              {availableVoices.length > 0 && (
+                <div className="flex items-center space-x-1 text-[10px] font-bold text-slate-350 shrink-0 border-l border-slate-700 pl-2">
+                  <span>Voice:</span>
+                  <select
+                    value={selectedVoiceURI}
+                    onChange={(e) => setSelectedVoiceURI(e.target.value)}
+                    className="bg-slate-950/80 text-white font-mono font-bold border-0 p-1 rounded cursor-pointer scale-90 max-w-[110px] truncate"
+                  >
+                    {availableVoices.map((v) => (
+                      <option key={v.voiceURI} value={v.voiceURI}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Offline study document downloader or locked statement */}
             <div className="flex items-center space-x-2">
-              {hasPaid || isAdmin ? (
+              {canAccessFully ? (
                 <button
                   type="button"
                   onClick={handleDownloadOriginal}
@@ -1789,7 +2005,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
             </div>
 
             {/* Single Page Navigation indicators (Only displayed if NOT in full vertical scroll Mode) */}
-            {(!hasPaid && !isAdmin) && (
+            {!canAccessFully && (
               <div className="flex items-center space-x-3 bg-slate-800 border border-slate-700 py-1 px-2 rounded-xl">
                 <button
                   disabled={currentPage === 1}

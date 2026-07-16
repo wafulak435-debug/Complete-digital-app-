@@ -2,7 +2,9 @@ import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage } from "../types";
 import { BADGES } from "../data";
-import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye } from "lucide-react";
+import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles } from "lucide-react";
+import { db } from "../lib/firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import SecureBookReader from "./SecureBookReader";
 
@@ -56,6 +58,41 @@ export default function Dashboard({
   const [userStreak, setUserStreak] = useState(5);
   const [loggedMinutes, setLoggedMinutes] = useState(15);
   const [readingBook, setReadingBook] = useState<Book | null>(null);
+
+  // Synchronize reading progress from Firestore
+  const [firestoreProgress, setFirestoreProgress] = useState<Record<string, { currentPage: number; percentage: number }>>({});
+
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    const progressQuery = query(
+      collection(db, "reading_progress"),
+      where("userId", "==", currentUser.id || "guest")
+    );
+    
+    const unsubscribe = onSnapshot(progressQuery, (snapshot) => {
+      const data: Record<string, { currentPage: number; percentage: number }> = {};
+      snapshot.forEach((doc) => {
+        const item = doc.data();
+        if (item.bookId) {
+          data[item.bookId] = {
+            currentPage: item.currentPage || 1,
+            percentage: item.percentage || 0
+          };
+          // Heat up local storage bookmark for the reader fallback
+          localStorage.setItem(`wafula_bookmark_${item.bookId}`, (item.currentPage || 1).toString());
+        }
+      });
+      setFirestoreProgress(data);
+    }, (err) => {
+      console.error("Error subscribing to Firestore reading progress:", err);
+    });
+    
+    return () => unsubscribe();
+  }, [currentUser?.id]);
+
+  const [quickSearchWord, setQuickSearchWord] = useState("");
+  const [showSwahiliBibleVerse, setShowSwahiliBibleVerse] = useState(false);
 
   const [monthlyLogs, setMonthlyLogs] = useState<{ dateStr: string; label: string; minutes: number }[]>([]);
   const [syllabusProgress, setSyllabusProgress] = useState<any[]>([]);
@@ -291,7 +328,7 @@ export default function Dashboard({
 
   if (!currentUser) {
     return (
-      <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 text-center text-xs text-stone-500">
+      <div className="ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 py-16 text-center text-xs text-stone-500">
         <Trophy className="h-12 w-12 text-red-700 mx-auto mb-4 animate-pulse" />
         <h3 className="font-display text-lg font-bold text-stone-900">Sign In Required</h3>
         <p className="max-w-xs mx-auto mt-2">Sign into your Wafula Digital account to load your study statistics, streak, wishlists, and purchase histories.</p>
@@ -301,7 +338,7 @@ export default function Dashboard({
   }
 
   return (
-    <div id="user_dashboard" className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-8">
+    <div id="user_dashboard" className="ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 space-y-7">
       
       {/* Automated Inactivity Session Tracker Status Panel */}
       <div className="bg-slate-50 dark:bg-stone-900 border border-slate-200 dark:border-stone-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 select-none animate-in fade-in slide-in-from-top-3 duration-250">
@@ -421,6 +458,227 @@ export default function Dashboard({
           </div>
         </div>
       )}
+
+      {/* THREE PILLARS SYNERGY BENTO DASHBOARD */}
+      <div className="grid gap-6 md:grid-cols-3 select-none">
+        
+        {/* CARD 1: LANGUAGE TUTOR (Current Study Session) */}
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-5 text-left flex flex-col justify-between shadow-xs">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
+                <BookOpen className="h-3 w-3 text-emerald-500" />
+                <span>Language Tutor Pillar</span>
+              </span>
+              <button 
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "language-teacher" } }));
+                }}
+                className="text-xs text-blue-500 hover:underline font-bold"
+              >
+                Launch Hub
+              </button>
+            </div>
+
+            <div>
+              <h4 className="font-display font-black text-xs text-stone-900 dark:text-stone-100 uppercase tracking-tight">Active Study Deck</h4>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 leading-normal">
+                Course: <strong>Beginner Swahili</strong> (Session Ready). Perfect your bilingual speech and visual vocabulary cards.
+              </p>
+            </div>
+
+            <div className="space-y-1 bg-stone-50 dark:bg-stone-950/40 p-3 rounded-xl border border-stone-150 dark:border-stone-800">
+              <div className="flex justify-between text-[10px] font-mono text-stone-400 dark:text-stone-550">
+                <span>Class Milestones</span>
+                <span className="font-bold text-amber-500">60% Complete</span>
+              </div>
+              <div className="w-full h-1 bg-stone-200 dark:bg-stone-800 rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500" style={{ width: "60%" }} />
+              </div>
+              <p className="text-[9px] text-stone-400 dark:text-stone-500 mt-1 leading-tight">Excellent progress! Your oral review is waiting.</p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "language-teacher" } }));
+            }}
+            className="w-full mt-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors text-center cursor-pointer"
+          >
+            Practice Oral Drills Now
+          </button>
+        </div>
+
+        {/* CARD 2: DEVOTIONAL BIBLE (Recent Bible Verse with Click-to-Translate) */}
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-5 text-left flex flex-col justify-between shadow-xs">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="bg-amber-500/10 text-amber-700 dark:text-amber-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
+                <Compass className="h-3 w-3 text-amber-500" />
+                <span>Devotional Bible Pillar</span>
+              </span>
+              <button 
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "devotional" } }));
+                }}
+                className="text-xs text-blue-500 hover:underline font-bold"
+              >
+                Launch Bible
+              </button>
+            </div>
+
+            <div>
+              <h4 className="font-display font-black text-xs text-stone-900 dark:text-stone-100 uppercase tracking-tight">Interactive Verse of the Day</h4>
+              
+              {/* English & Swahili Bible text rendered in side-by-side card with click-to-define active words! */}
+              <div className="mt-2 p-3 rounded-lg bg-stone-50 dark:bg-stone-950/40 border border-stone-150 dark:border-stone-800 space-y-2">
+                {!showSwahiliBibleVerse ? (
+                  <p className="text-[11px] leading-relaxed text-stone-850 dark:text-stone-200 italic font-medium">
+                    {`"Thy word is a lamp unto my feet, and a light unto my path."`.split(" ").map((word, idx) => {
+                      const cleanWord = word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, "");
+                      return (
+                        <span 
+                          key={idx} 
+                          onClick={() => {
+                            const cleaned = cleanWord.trim();
+                            if (cleaned) {
+                              localStorage.setItem("WAFULA_DIC_PREFILL", cleaned);
+                              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+                              setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent("WAFULA_DIC_PREFILL_UPDATE"));
+                              }, 50);
+                            }
+                          }}
+                          className="hover:text-amber-500 cursor-pointer underline decoration-dotted decoration-stone-400 hover:decoration-amber-500 transition mr-1 select-text inline-block"
+                          title="Click word to view translation & definition"
+                        >
+                          {word}
+                        </span>
+                      );
+                    })}
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-relaxed text-stone-850 dark:text-stone-200 italic font-medium">
+                    {`"Neno lako ni taa ya miguu yangu, na mwanga wa njia yangu."`.split(" ").map((word, idx) => {
+                      const cleanWord = word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"']/g, "");
+                      return (
+                        <span 
+                          key={idx} 
+                          onClick={() => {
+                            const cleaned = cleanWord.trim();
+                            if (cleaned) {
+                              localStorage.setItem("WAFULA_DIC_PREFILL", cleaned);
+                              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+                              setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent("WAFULA_DIC_PREFILL_UPDATE"));
+                              }, 50);
+                            }
+                          }}
+                          className="hover:text-amber-500 cursor-pointer underline decoration-dotted decoration-stone-400 hover:decoration-amber-500 transition mr-1 select-text inline-block"
+                          title="Bofya ili kutafsiri neno katika Kamusi"
+                        >
+                          {word}
+                        </span>
+                      );
+                    })}
+                  </p>
+                )}
+                
+                <div className="flex justify-between items-center text-[9px] text-stone-400 dark:text-stone-500 uppercase font-mono pt-1">
+                  <span>Psalms / Zaburi 119:105</span>
+                  <button 
+                    type="button"
+                    onClick={() => setShowSwahiliBibleVerse(!showSwahiliBibleVerse)}
+                    className="text-amber-600 dark:text-amber-400 font-extrabold hover:underline cursor-pointer"
+                  >
+                    {showSwahiliBibleVerse ? "🇺🇸 English" : "🇰🇪 Kiswahili"}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[9.5px] text-stone-400 dark:text-stone-500 mt-1 leading-normal italic text-left">
+                💡 <span className="font-bold text-amber-600 dark:text-amber-400">Contextual Translation:</span> Tap or click on any word in the verse to see its definition instantly.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "devotional" } }));
+            }}
+            className="w-full mt-4 py-2 bg-amber-500 hover:bg-amber-600 dark:bg-amber-500/20 dark:hover:bg-amber-500/35 text-amber-950 dark:text-amber-300 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors text-center border border-amber-500/20 cursor-pointer"
+          >
+            Study Side-by-Side Bible
+          </button>
+        </div>
+
+        {/* CARD 3: OFFLINE DICTIONARY (Quick Search & Instant Lookup) */}
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-5 text-left flex flex-col justify-between shadow-xs">
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="bg-[#6366F1]/10 text-[#6366F1] dark:text-indigo-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
+                <BookOpen className="h-3 w-3 text-indigo-500" />
+                <span>Offline Dictionary Pillar</span>
+              </span>
+              <button 
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+                }}
+                className="text-xs text-blue-500 hover:underline font-bold"
+              >
+                Launch Dict
+              </button>
+            </div>
+
+            <div>
+              <h4 className="font-display font-black text-xs text-stone-900 dark:text-stone-100 uppercase tracking-tight">Instant Dictionary Search</h4>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 leading-normal">
+                Search over 120,000+ words offline. Type in a word below to instantly pre-fill and switch to lookup.
+              </p>
+            </div>
+
+            {/* Quick search input field */}
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!quickSearchWord.trim()) return;
+                localStorage.setItem("WAFULA_DIC_PREFILL", quickSearchWord.trim());
+                window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+                setTimeout(() => {
+                  window.dispatchEvent(new CustomEvent("WAFULA_DIC_PREFILL_UPDATE"));
+                }, 50);
+              }}
+              className="mt-2 flex items-center space-x-2"
+            >
+              <input
+                type="text"
+                placeholder="Enter word (e.g. grace, love)..."
+                value={quickSearchWord}
+                onChange={(e) => setQuickSearchWord(e.target.value)}
+                className="flex-grow rounded-lg border border-stone-300 dark:border-stone-850 bg-white dark:bg-stone-950 px-3 py-2 text-[11px] text-stone-900 dark:text-white placeholder-stone-400 dark:placeholder-stone-600 focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-indigo-650 hover:bg-indigo-700 hover:scale-105 active:scale-95 transition-all text-white px-3 py-2 rounded-lg text-[10.5px] font-black uppercase tracking-wider cursor-pointer font-mono"
+              >
+                Search
+              </button>
+            </form>
+            <p className="text-[9px] text-stone-400 dark:text-stone-550 italic leading-tight">
+              Searches are real-time, zero-delay, and work 100% offline.
+            </p>
+          </div>
+
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+            }}
+            className="w-full mt-4 py-2 bg-indigo-600 hover:bg-indigo-750 text-white rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors text-center cursor-pointer"
+          >
+            Access Dictionary Index
+          </button>
+        </div>
+
+      </div>
 
       {/* 1. Header Streaks & Quick Stats */}
       <div className="grid gap-4 md:grid-cols-4 select-none">
@@ -815,12 +1073,13 @@ export default function Dashboard({
                       
                       {/* Visual Progress Indicator */}
                       {(() => {
-                        const progress = getBookProgress(b.id, b.pages);
-                        const lastPage = getBookLastReadPage(b.id);
+                        const fp = firestoreProgress[b.id];
+                        const progress = fp ? fp.percentage : getBookProgress(b.id, b.pages);
+                        const lastPage = fp ? fp.currentPage : getBookLastReadPage(b.id);
                         return (
                           <div className="py-1">
                             <div className="flex justify-between items-center text-[9px] font-mono leading-none mb-1">
-                              <span className="text-stone-400 dark:text-stone-500 font-bold">Progress</span>
+                              <span className="text-stone-400 dark:text-stone-550 font-bold">Progress</span>
                               <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{progress}% (P. {lastPage}/{b.pages})</span>
                             </div>
                             <div className="w-full h-1.5 bg-stone-200 dark:bg-stone-800 rounded-full overflow-hidden">

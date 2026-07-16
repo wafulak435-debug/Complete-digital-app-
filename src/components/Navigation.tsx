@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Gamepad2, Search, Sparkles, Mail, Smartphone, Sun, Moon, Globe, Wifi, CreditCard, Megaphone, Monitor } from "lucide-react";
+import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowDown, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Gamepad2, Search, Sparkles, Mail, Smartphone, Sun, Moon, Globe, Wifi, CreditCard, Megaphone, Monitor, GraduationCap, Settings, HardDrive, Trash2, Database, Video } from "lucide-react";
 import { User, Book, SavedDocument, CommunityMessage, AppSettings } from "../types";
 import { getCookie, setCookie } from "../utils/cookies";
 import { saveAppSettingsToFirestore } from "../lib/firestoreUtils";
@@ -47,6 +47,8 @@ interface NavigationProps {
   broadcastAnnouncement?: string | null;
   isBannerClosed?: boolean;
   onRestoreBanner?: () => void;
+  offlineMode?: boolean;
+  onToggleOfflineMode?: () => void;
 }
 
 export default function Navigation({
@@ -66,11 +68,29 @@ export default function Navigation({
   isOnline = true,
   broadcastAnnouncement = null,
   isBannerClosed = false,
-  onRestoreBanner
+  onRestoreBanner,
+  offlineMode = false,
+  onToggleOfflineMode
 }: NavigationProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Collapsible navigational folders to optimize space on laptop and phone screens
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    "📚 LIBRARY & WORKSPACE": true,
+    "🎓 LEADERSHIP & LANGUAGE ACADEMY": true,
+    "🧬 RESEARCH & CREATIVE SYSTEMS": false,
+    "🤝 COMMUNITY & LEISURE": false,
+    "🌐 DEVICE & WEBSITE LAUNCHERS": false,
+  });
+
+  const toggleSection = (cat: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [cat]: !prev[cat]
+    }));
+  };
 
   const isAdmin = !!(currentUser && (
     currentUser.role === 'admin' || 
@@ -99,6 +119,110 @@ export default function Navigation({
   const [selectedPresetIndex, setSelectedPresetIndex] = useState<number | null>(null);
   const [adminCheckedConfirmation, setAdminCheckedConfirmation] = useState(false);
   const [isUpdatingIcon, setIsUpdatingIcon] = useState(false);
+
+  // States for unified Settings Panel (including Offline Cache & Media Management)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"offline" | "branding">("offline");
+  const [offlineCaches, setOfflineCaches] = useState<{bookId: string; size: number; title: string; author: string; category: string}[]>([]);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [storageEstimate, setStorageEstimate] = useState<{usage: number; quota: number} | null>(null);
+  const [annotationCount, setAnnotationCount] = useState(0);
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
+
+  const loadOfflineSettingsData = async () => {
+    setCacheLoading(true);
+    try {
+      const { getAllOfflinePdfs } = await import("../utils/pdfDb");
+      const offlineMap = await getAllOfflinePdfs();
+      const data: any[] = [];
+      offlineMap.forEach((blob, bookId) => {
+        const matchedBook = books?.find(b => b.id === bookId);
+        data.push({
+          bookId,
+          size: blob.size,
+          title: matchedBook ? matchedBook.title : "Unknown Uploaded Book",
+          author: matchedBook ? matchedBook.author : "Unknown Contributor",
+          category: matchedBook ? matchedBook.category : "PDF Document",
+        });
+      });
+      setOfflineCaches(data);
+
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        setStorageEstimate({
+          usage: est.usage || 0,
+          quota: est.quota || 0
+        });
+      }
+
+      if (typeof window !== "undefined" && window.indexedDB) {
+        const req = window.indexedDB.open("WafulaReadsDB", 1);
+        req.onsuccess = (e) => {
+          const dbObj = (e.target as IDBOpenDBRequest).result;
+          if (dbObj.objectStoreNames.contains("offline_annotations")) {
+            const tx = dbObj.transaction("offline_annotations", "readonly");
+            const store = tx.objectStore("offline_annotations");
+            const countReq = store.count();
+            countReq.onsuccess = () => {
+              setAnnotationCount(countReq.result);
+            };
+          }
+        };
+      }
+    } catch (err) {
+      console.error("Failed to load IndexedDB offline settings data:", err);
+    } finally {
+      setCacheLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isSettingsModalOpen) {
+      loadOfflineSettingsData();
+    }
+  }, [isSettingsModalOpen, activeSettingsTab]);
+
+  const handlePruneCacheItem = async (bookId: string) => {
+    if (window.confirm("Are you sure you want to delete this cached book PDF blob from local offline cache storage?")) {
+      const { deletePdfFromOfflineDb } = await import("../utils/pdfDb");
+      await deletePdfFromOfflineDb(bookId);
+      alert("✅ Book blob successfully cleared from local offline cache.");
+      loadOfflineSettingsData();
+    }
+  };
+
+  const handlePruneAllLocalCache = async () => {
+    if (window.confirm("⚠️ WARNING: This will completely wipe all offline cached book PDF documents to recover maximum local storage space. Users will need to re-download/cache books to read offline. Proceed?")) {
+      const { getAllOfflinePdfs, deletePdfFromOfflineDb } = await import("../utils/pdfDb");
+      const offlineMap = await getAllOfflinePdfs();
+      const keys = Array.from(offlineMap.keys());
+      for (const k of keys) {
+        await deletePdfFromOfflineDb(k);
+      }
+      alert("✅ All local offline book blobs successfully purged and IndexedDB storage reclaimed.");
+      loadOfflineSettingsData();
+    }
+  };
+
+  const handleClearAnnotations = async () => {
+    if (window.confirm("⚠️ WARNING: This will delete all your local annotations, highlighted text and reading notes. This action is irreversible. Proceed?")) {
+      if (typeof window !== "undefined" && window.indexedDB) {
+        const req = window.indexedDB.open("WafulaReadsDB", 1);
+        req.onsuccess = (e) => {
+          const dbObj = (e.target as IDBOpenDBRequest).result;
+          if (dbObj.objectStoreNames.contains("offline_annotations")) {
+            const tx = dbObj.transaction("offline_annotations", "readwrite");
+            const store = tx.objectStore("offline_annotations");
+            const clearReq = store.clear();
+            clearReq.onsuccess = () => {
+              alert("✅ All local annotations and notes deleted successfully.");
+              loadOfflineSettingsData();
+            };
+          }
+        };
+      }
+    }
+  };
 
   const handleApplyPresetIcon = async () => {
     const isAdmin = currentUser && (
@@ -270,18 +394,23 @@ export default function Navigation({
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const handleScrollToBottom = () => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+  };
+
   // Polished list of sidebar navigation items synced perfectly to view strings
   const navItems = [
     { id: "dashboard", label: "My Library", icon: <Trophy className="h-4 w-4" /> },
     { id: "store", label: "Digital Store", icon: <BookOpen className="h-4 w-4" /> },
-    { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-rose-500" /> },
+    { id: "sermons-motivation", label: "Sermons & Motivation", icon: <Video className="h-4 w-4" /> },
+    { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-rose-550" /> },
     { id: "school", label: "Leadership School", icon: <Compass className="h-4 w-4" /> },
     { id: "studio", label: "Doc Studio", icon: <FileText className="h-4 w-4" /> },
     { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4" /> },
-    { id: "language-teacher", label: "Language Tutor & Practice", icon: <Sparkles className="h-4 w-4 text-teal-400" /> },
+    { id: "language-teacher", label: "Language Tutor & Practice", icon: <GraduationCap className="h-4 w-4" /> },
     { id: "offline-dictionary", label: "Offline Dictionary", icon: <BookOpen className="h-4 w-4 text-indigo-400" /> },
-    { id: "companion", label: "Interactive Study Chat", icon: <Sparkles className="h-4 w-4 text-blue-400" /> },
-    { id: "ai-media", label: "Media & Design Creative Hub", icon: <Sparkles className="h-4 w-4 text-purple-500" /> },
+    { id: "companion", label: "Interactive Study Chat", icon: <MessageSquare className="h-4 w-4" /> },
+    { id: "ai-media", label: "Media & Design Creative Hub", icon: <Monitor className="h-4 w-4" /> },
     { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-teal-500" /> },
     { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-rose-550 dark:text-rose-400 animate-pulse" /> },
     { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400 animate-pulse" /> },
@@ -300,6 +429,7 @@ export default function Navigation({
       items: [
         { id: "dashboard", label: "My Library Dashboard", icon: <Trophy className="h-4 w-4 text-amber-500" /> },
         { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
+        { id: "sermons-motivation", label: "Sermons & Motivation", icon: <Video className="h-4 w-4 text-amber-500" /> },
         { id: "mpesa-api", label: "Safaricom M-Pesa Console", icon: <CreditCard className="h-4 w-4 text-[#34D399]" /> },
         { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-[#2DD4BF]" /> },
         { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-[#F87171]" /> },
@@ -308,7 +438,7 @@ export default function Navigation({
     {
       category: "🎓 LEADERSHIP & LANGUAGE ACADEMY",
       items: [
-        { id: "language-teacher", label: "Language Tutor & Teacher", icon: <Sparkles className="h-4 w-4 text-[#34D399]" /> },
+        { id: "language-teacher", label: "Language Tutor & Teacher", icon: <GraduationCap className="h-4 w-4 text-[#34D399]" /> },
         { id: "school", label: "Leadership School", icon: <Compass className="h-4 w-4 text-[#60A5FA]" /> },
         { id: "offline-dictionary", label: "Offline Dictionary", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
         { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4 text-[#34D399]" /> },
@@ -317,8 +447,8 @@ export default function Navigation({
     {
       category: "🧬 RESEARCH & CREATIVE SYSTEMS",
       items: [
-        { id: "companion", label: "Study Assistant Chat", icon: <Sparkles className="h-4 w-4 text-amber-400 animate-pulse" /> },
-        { id: "ai-media", label: "Creative Design Hub", icon: <Sparkles className="h-4 w-4 text-[#C084FC]" /> },
+        { id: "companion", label: "Study Assistant Chat", icon: <MessageSquare className="h-4 w-4 text-emerald-400" /> },
+        { id: "ai-media", label: "Creative Design Hub", icon: <Monitor className="h-4 w-4 text-[#C084FC]" /> },
         { id: "studio", label: "Doc Studio Editor", icon: <FileText className="h-4 w-4 text-slate-400" /> },
       ]
     },
@@ -353,7 +483,7 @@ export default function Navigation({
       {/* 1. DESKTOP PERMANENT LEFT SIDEBAR */}
       <aside 
         id="desktop_left_sidebar" 
-        className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-64 bg-[#090A10] text-[#E2E8F0] flex-col h-full border-r border-[#151923] select-none text-left"
+        className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-52 bg-[#090A10] text-[#E2E8F0] flex-col h-full border-r border-[#151923] select-none text-left"
       >
         {/* Brand Header */}
         <div className="p-6 border-b border-[#141A29]">
@@ -370,12 +500,27 @@ export default function Navigation({
               <h1 className="text-base font-extrabold tracking-tight text-white font-display leading-tight">
                 Zion <span className="text-amber-500 font-bold">Digital App</span>
               </h1>
-              <div className="flex items-center space-x-1.5 mt-0.5">
-                <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">Bungoma, Kenya</p>
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse outline-emerald-400" : "bg-amber-500 outline-amber-400"} outline-2`} />
-                <span className="text-[8px] font-mono uppercase font-bold text-slate-400 tracking-wider">
-                  {isOnline ? "Online" : "Offline"}
-                </span>
+              <div className="flex flex-col space-y-1 mt-0.5 text-left">
+                <div className="flex items-center space-x-1.5">
+                  <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">Bungoma, Kenya</p>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse outline-emerald-400" : "bg-amber-500 outline-amber-400"} outline-2`} />
+                  <span className="text-[8px] font-mono uppercase font-bold text-slate-400 tracking-wider">
+                    {isOnline ? "Online" : "Offline"}
+                  </span>
+                </div>
+                {onToggleOfflineMode && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onToggleOfflineMode(); }}
+                    className={`mt-1 flex items-center justify-between px-2 py-1.5 rounded border text-[8px] font-mono font-black tracking-wider transition cursor-pointer select-none leading-none ${
+                      offlineMode
+                        ? "bg-red-950/50 text-red-400 border-red-500/30 hover:bg-red-900/30 animate-pulse"
+                        : "bg-stone-900/40 text-slate-400 border-slate-800 hover:bg-slate-800/40"
+                    }`}
+                  >
+                    <span>{offlineMode ? "🟢 OFFLINE AI ACTIVE" : "⚡ OFFLINE MODE (NO DATA)"}</span>
+                  </button>
+                )}
               </div>
             </button>
           </div>
@@ -383,36 +528,40 @@ export default function Navigation({
 
         {/* Sidebar Navigation Options grouped beautifully into Folders / Sections */}
         <nav className="flex-grow py-4 px-3 overflow-y-auto space-y-4 custom-scrollbar">
-          {groupedNavigation.map((sec, idx) => (
-            <div key={idx} className="pb-3 border-b border-slate-900/45 last:border-0 last:pb-0">
-              {sec.category && (
-                <span className="px-3 py-1 text-[9px] uppercase tracking-wider text-slate-500 font-bold block mb-1.5 font-mono">
-                  {sec.category}
-                </span>
-              )}
-              <div className="space-y-0.5">
-                {sec.items.map((item) => {
-                  const isActive = currentView === item.id;
-                  return (
-                    <button
-                      key={`${item.id}-${item.label}`}
-                      onClick={() => handleItemClick(item.id)}
-                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                        isActive 
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-black" 
-                          : "text-slate-400 hover:text-white hover:bg-slate-800/40"
-                      }`}
-                    >
-                      <span className="flex shrink-0 items-center justify-center">
-                        {item.icon}
-                      </span>
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
+          {groupedNavigation.map((sec, idx) => {
+            return (
+              <div key={idx} className="pb-2 border-b border-slate-900/40 last:border-0 last:pb-0">
+                {sec.category && (
+                  <div className="w-full flex items-center justify-between px-3 py-1.5 text-[9px] uppercase tracking-wider text-slate-500 font-black block mb-1 font-mono select-none">
+                    <span>{sec.category}</span>
+                  </div>
+                )}
+                <div className="space-y-0.5 animate-fade-in">
+                  {sec.items.map((item) => {
+                    const isActive = currentView === item.id;
+                    return (
+                      <button
+                        key={`${item.id}-${item.label}`}
+                        onClick={() => handleItemClick(item.id)}
+                        className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                          isActive 
+                            ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-black" 
+                            : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                        }`}
+                      >
+                        {item.icon && (
+                          <span className="flex shrink-0 items-center justify-center">
+                            {item.icon}
+                          </span>
+                        )}
+                        <span className="text-left whitespace-normal break-words leading-tight py-0.5">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Admin Panel Specific Block */}
           {isAdmin && (
@@ -498,8 +647,63 @@ export default function Navigation({
       {/* 2. RESPONSIVE TOP HEADER BAR */}
       <header 
         id="app_top_header" 
-        className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md lg:pl-64 h-16 flex items-center justify-between px-4 sm:px-6 lg:px-8"
+        className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md lg:pl-52 h-16 flex items-center justify-between px-3 sm:px-6 lg:px-8"
       >
+        {/* Left Area: Adaptive Back Button & Mobile Logo Brand Combined */}
+        <div id="top_header_left_area" className="flex items-center space-x-2 max-w-[55vw] sm:max-w-none shrink-0">
+          {canGoBack ? (
+            <button
+              onClick={onBack}
+              className="flex items-center space-x-1 text-[11px] font-black uppercase tracking-wider text-slate-900 dark:text-white bg-amber-500 hover:bg-amber-600 dark:bg-amber-500/20 dark:hover:bg-amber-500/35 px-2.5 py-1.5 rounded-lg border border-amber-500/40 active:scale-95 transition-all shadow-sm cursor-pointer select-none shrink-0"
+              title="Return to previous screen"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0 font-black" />
+              <span>Back</span>
+            </button>
+          ) : (
+            <button
+              disabled
+              className="hidden sm:flex items-center space-x-1 text-[11px] font-bold uppercase tracking-wider text-slate-300 dark:text-slate-700 bg-slate-50 dark:bg-slate-900/45 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800/60 select-none opacity-45 shrink-0"
+              title="No history"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" />
+              <span>Back</span>
+            </button>
+          )}
+
+          {/* Mobile Logo Brand */}
+          <div className="flex lg:hidden items-center space-x-1.5 truncate">
+            {globalSettings?.customLogoUrl ? (
+              <div className="relative shrink-0 select-none">
+                <img 
+                  src={globalSettings.customLogoUrl} 
+                  alt="Brand Logo" 
+                  className="h-8 w-8 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            ) : (
+              <div className="relative shrink-0 select-none">
+                <img 
+                  src={appLogo} 
+                  alt="Brand Logo" 
+                  className="h-8 w-8 object-cover rounded-lg border border-slate-200 dark:border-slate-850 shadow" 
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            )}
+            <button 
+              type="button"
+              onClick={() => handleItemClick("store")} 
+              className={`text-left truncate ${canGoBack ? "hidden sm:block" : "block"}`}
+            >
+              <h1 className="text-xs font-bold tracking-tight text-neutral-900 dark:text-white leading-tight truncate">
+                Zion <span className="text-amber-500">Digital</span>
+              </h1>
+            </button>
+          </div>
+        </div>
+
         {/* Real-Time Interactive Global Search Bar */}
         <div className="hidden md:flex items-center bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-full w-96 text-slate-500 dark:text-slate-400 focus-within:ring-2 focus-within:ring-red-500/30 transition shadow-xs">
           <Search className="h-4 w-4 shrink-0 text-slate-400 mr-2" />
@@ -532,38 +736,6 @@ export default function Navigation({
           </kbd>
         </div>
 
-        {/* Mobile Logo Brand */}
-        <div className="flex lg:hidden items-center space-x-2">
-          {globalSettings?.customLogoUrl ? (
-            <div className="relative shrink-0 select-none">
-              <img 
-                src={globalSettings.customLogoUrl} 
-                alt="Brand Logo" 
-                className="h-9 w-9 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-          ) : (
-            <div className="relative shrink-0 select-none">
-              <img 
-                src={appLogo} 
-                alt="Brand Logo" 
-                className="h-9 w-9 object-cover rounded-lg border border-slate-200 dark:border-slate-850 shadow" 
-                referrerPolicy="no-referrer"
-              />
-            </div>
-          )}
-          <button 
-            type="button"
-            onClick={() => handleItemClick("store")} 
-            className="text-left"
-          >
-            <h1 className="text-sm font-bold tracking-tight text-neutral-900 dark:text-white leading-tight">
-              Zion <span className="text-amber-500">Digital App</span>
-            </h1>
-          </button>
-        </div>
-
         {/* User context information and indicators */}
         <div className="flex items-center space-x-2 sm:space-x-4">
           
@@ -593,11 +765,22 @@ export default function Navigation({
             <Search className="h-4 w-4" />
           </button>
 
-          {/* Status Indicator */}
-          <div className="hidden sm:flex items-center space-x-2 text-xs font-semibold text-slate-600">
-            <div className={`w-2.5 h-2.5 rounded-full border-2 border-white dark:border-slate-900 ${isOnline ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-            <span className="font-medium">{isOnline ? "Online Live Sync" : "Cached Offline Mode"}</span>
-          </div>
+          {/* Status Indicator / Offline Switch */}
+          {onToggleOfflineMode && (
+            <button
+              type="button"
+              onClick={onToggleOfflineMode}
+              className={`hidden sm:flex items-center space-x-1.5 border px-2.5 py-1.5 rounded-full text-[10.5px] font-bold transition active:scale-95 cursor-pointer ${
+                offlineMode
+                  ? "bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-900/30 animate-pulse"
+                  : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/30"
+              }`}
+              title="Toggle offline execution mode"
+            >
+              <div className={`w-2 h-2 rounded-full ${offlineMode ? "bg-red-500 animate-pulse" : "bg-emerald-500"}`} />
+              <span className="font-semibold">{offlineMode ? "Offline Core (No Data)" : "Online Live Sync"}</span>
+            </button>
+          )}
 
           {/* Download & Install Native App PWA trigger */}
           <button
@@ -620,6 +803,18 @@ export default function Navigation({
             ) : (
               <Moon className="h-4 w-4 text-stone-705 dark:text-slate-200 shrink-0" />
             )}
+          </button>
+
+          {/* Unified Settings & Offline Management Button */}
+          <button
+            onClick={() => {
+              setIsSettingsModalOpen(true);
+              setActiveSettingsTab("offline");
+            }}
+            title="Open settings and offline storage manager"
+            className="flex items-center justify-center h-8.5 w-8.5 rounded-full border border-stone-200 dark:border-stone-800 bg-[#FAFAF9] dark:bg-stone-900 text-stone-600 dark:text-stone-300 hover:bg-stone-105 dark:hover:bg-stone-850 hover:text-stone-900 dark:hover:text-white transition-all cursor-pointer select-none shrink-0"
+          >
+            <Settings className="h-4 w-4 shrink-0" />
           </button>
 
           {/* Streak indicator badge */}
@@ -696,8 +891,8 @@ export default function Navigation({
 
       {/* 3. DYNAMIC SUB-HEADER BACK ACTION helpers */}
       {currentView !== "store" && (
-        <div id="quick_back_navigation_bar" className="w-full bg-slate-100 border-b border-slate-200 py-1.5 lg:pl-64 text-left">
-          <div className="max-w-7xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div id="quick_back_navigation_bar" className="w-full bg-slate-100 border-b border-slate-200 py-1.5 lg:pl-52 text-left">
+          <div className="mr-auto ml-0 max-w-5xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
             <button
               onClick={() => handleItemClick("store")}
               className="flex items-center space-x-1.5 text-xs font-bold text-stone-600 hover:text-orange-700 transition"
@@ -737,34 +932,36 @@ export default function Navigation({
             </div>
 
             <nav className="flex-grow space-y-4 overflow-y-auto pr-2 custom-scrollbar">
-              {groupedNavigation.map((sec, idx) => (
-                <div key={idx} className="pb-3 border-b border-slate-900/40 last:border-0 last:pb-0">
-                  {sec.category && (
-                    <span className="px-3 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold block mb-1.5 label text-left font-mono">
-                      {sec.category}
-                    </span>
-                  )}
-                  <div className="space-y-0.5">
-                    {sec.items.map((item) => {
-                      const isActive = currentView === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => handleItemClick(item.id)}
-                          className={`flex w-full items-center space-x-3 rounded-lg px-3 py-1.5 text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                            isActive 
-                              ? "bg-blue-600 text-white shadow-md shadow-blue-900/40 font-black" 
-                              : "text-slate-400 hover:text-white hover:bg-slate-800/40"
-                          }`}
-                        >
-                          <span className="shrink-0">{item.icon}</span>
-                          <span className="text-left truncate">{item.label}</span>
-                        </button>
-                      );
-                    })}
+              {groupedNavigation.map((sec, idx) => {
+                return (
+                  <div key={idx} className="pb-2.5 border-b border-slate-900/40 last:border-0 last:pb-0">
+                    {sec.category && (
+                      <div className="w-full flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold block mb-1.5 label text-left font-mono select-none">
+                        <span>{sec.category}</span>
+                      </div>
+                    )}
+                    <div className="space-y-0.5 animate-fade-in">
+                      {sec.items.map((item) => {
+                        const isActive = currentView === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => handleItemClick(item.id)}
+                            className={`flex w-full items-center space-x-3 rounded-lg px-3 py-1.5 text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                              isActive 
+                                ? "bg-blue-600 text-white shadow-md shadow-blue-900/40 font-black" 
+                                : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                            }`}
+                          >
+                            {item.icon && <span className="shrink-0">{item.icon}</span>}
+                            <span className="text-left whitespace-normal break-words leading-tight py-0.5">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {isAdmin && (
                 <div className="pt-2 border-t border-slate-900">
@@ -1167,34 +1364,48 @@ export default function Navigation({
         </div>
       )}
 
-      {/* Floating Back To Top button */}
-      {showBackToTop && (
-        <button
-          id="back_to_top_floating_btn"
-          onClick={handleBackToTop}
-          className="scroll-top-btn flex h-11 w-11 items-center justify-center rounded-full bg-orange-700 text-white shadow-xl hover:bg-orange-850 transition transform hover:-translate-y-1 active:translate-y-0 active:scale-95 animate-bounce"
-          title="Scroll back to top"
-        >
-          <ArrowUp className="h-5 w-5" />
-        </button>
-      )}
+      {/* Floating Scroll Controls Dock (Top & Bottom) */}
+      <div 
+        id="quick_scroll_controls_dock" 
+        className="fixed bottom-6 right-6 z-50 flex flex-col gap-2.5 select-none"
+      >
+        {/* Scroll To Top button */}
+        {showBackToTop && (
+          <button
+            onClick={handleBackToTop}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-700 text-white shadow-xl hover:bg-orange-850 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer animate-fade-in"
+            title="Scroll back to top"
+          >
+            <ArrowUp className="h-5 w-5 font-black" />
+          </button>
+        )}
 
-      {/* 5. ZION PLATFORM ICON PRESET PICKER & ADMIN LOCK MODAL */}
-      {isLogoModalOpen && (
-        <div id="zion_preset_logo_modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
-          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-left font-sans">
+        {/* Scroll To Bottom button */}
+        <button
+          onClick={handleScrollToBottom}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 border border-slate-800 text-white shadow-xl hover:bg-slate-800 hover:scale-105 active:scale-95 transition-all duration-150 cursor-pointer"
+          title="Scroll to bottom"
+        >
+          <ArrowDown className="h-5 w-5 font-black" />
+        </button>
+      </div>
+
+      {/* 5. ZION UNIFIED SETTINGS PANEL & OFFLINE MANAGER */}
+      {isSettingsModalOpen && (
+        <div id="zion_unified_settings_modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md font-sans">
+          <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-left">
             
             {/* Header */}
             <div className="p-5 bg-slate-950 border-b border-slate-850 flex items-center justify-between">
               <div>
                 <span className="text-[9px] font-mono select-none px-2 py-0.5 rounded bg-orange-500/10 text-orange-400 font-bold inline-block uppercase tracking-wider mb-1">
-                  System Architecture Protocol
+                  System Settings Manager
                 </span>
-                <h3 className="text-base font-extrabold text-white tracking-tight">Modify Zion System Logo</h3>
+                <h3 className="text-base font-extrabold text-white tracking-tight">Zion Digital Settings</h3>
               </div>
               <button 
                 onClick={() => {
-                  setIsLogoModalOpen(false);
+                  setIsSettingsModalOpen(false);
                   setSelectedPresetIndex(null);
                   setAdminCheckedConfirmation(false);
                 }}
@@ -1204,105 +1415,312 @@ export default function Navigation({
               </button>
             </div>
 
-            {/* Warning Banner */}
-            <div className="bg-amber-950/40 border-b border-amber-900/40 p-4 shrink-0 flex items-start space-x-3 text-amber-350">
-              <span className="text-sm mt-0.5">⚠️</span>
-              <div className="text-[11px] leading-relaxed">
-                <span className="font-bold">Security Directive Enforced:</span> In accordance with the Admin Council protocols, uploading random image file photographs is strictly disabled to prevent performance lag, memory bloat, and offline cache degradation. Logos must be selected from the certified vector graphic presets below.
-              </div>
+            {/* Tabs List */}
+            <div className="flex border-b border-slate-850 bg-slate-950/60 px-4">
+              <button
+                type="button"
+                onClick={() => setActiveSettingsTab("offline")}
+                className={`px-4 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-2 ${
+                  activeSettingsTab === "offline" 
+                    ? "border-amber-500 text-amber-500" 
+                    : "border-transparent text-slate-400 hover:text-white"
+                }`}
+              >
+                <HardDrive className="h-3.5 w-3.5 shrink-0" />
+                <span>Offline Cache & Media</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSettingsTab("branding")}
+                className={`px-4 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-2 ${
+                  activeSettingsTab === "branding" 
+                    ? "border-amber-500 text-amber-500" 
+                    : "border-transparent text-slate-400 hover:text-white"
+                }`}
+              >
+                <Database className="h-3.5 w-3.5 shrink-0" />
+                <span>Branding Presets</span>
+              </button>
             </div>
 
-            {/* Content Body */}
-            <div className="p-6 space-y-4 max-h-[50vh] overflow-y-auto custom-scrollbar">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
-                Select Official Branding Emblem:
-              </label>
-              
-              <div className="grid gap-3 sm:grid-cols-2">
-                {ZION_POST_DRAFT_PRESETS.map((preset, index) => {
-                  const isSelected = selectedPresetIndex === index;
-                  return (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => setSelectedPresetIndex(index)}
-                      className={`p-3.5 rounded-xl border text-left flex items-start space-x-3 transition-all ${
-                        isSelected 
-                          ? "bg-slate-800/80 border-blue-500 shadow-lg shadow-blue-950/50" 
-                          : "bg-slate-950/40 border-slate-850 hover:bg-slate-850"
-                      }`}
-                    >
-                      <img 
-                        src={preset.svgData} 
-                        alt={preset.name} 
-                        className="h-10 w-10 shrink-0 rounded-lg shadow-md bg-slate-900"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="space-y-0.5 overflow-hidden">
-                        <h4 className="text-[11px] font-bold text-white leading-tight truncate">{preset.name}</h4>
-                        <p className="text-[9px] text-slate-400 leading-normal line-clamp-2">{preset.description}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Explicit Admin Confirmation Requirement Section */}
-              <div className="pt-4 mt-4 border-t border-slate-850/60 space-y-3">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
-                  Administrator Certification & Audit Log:
-                </label>
-                
-                <label className="flex items-start space-x-3 bg-slate-950/60 p-4 rounded-xl border border-slate-850 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={adminCheckedConfirmation}
-                    onChange={(e) => setAdminCheckedConfirmation(e.target.checked)}
-                    className="mt-0.5 rounded border-slate-800 text-blue-600 bg-slate-900 focus:ring-0 focus:ring-offset-0 shrink-0 h-4 w-4"
-                  />
-                  <div className="space-y-0.5">
-                    <span className="text-[11px] font-bold text-slate-150 leading-tight block text-left">
-                      I explicitly confirm this system logo modification
-                    </span>
-                    <span className="text-[9px] text-slate-400 block leading-normal text-left">
-                      By ticking this, I confirm that this branding icon update conforms to Zion Digital Council safety standards and approve synchronizing this across all devices in Kenya.
-                    </span>
+            {/* Offline Tab Content */}
+            {activeSettingsTab === "offline" && (
+              <div className="p-6 space-y-4 max-h-[55vh] overflow-y-auto custom-scrollbar text-slate-200">
+                <div className="bg-amber-950/20 border border-amber-900/30 p-3.5 rounded-xl text-amber-300 flex items-start space-x-3 text-[11px] leading-relaxed">
+                  <span className="text-sm mt-0.5">💾</span>
+                  <div>
+                    <span className="font-bold block">Offline-First Synchronization active.</span>
+                    Use this system panel to audit client-side IndexedDB databases. Pruning large cached document files free up storage on your workstation, phone, or laptop.
                   </div>
-                </label>
+                </div>
+
+                {/* Estimate panel */}
+                <div className="grid gap-3.5 sm:grid-cols-2">
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-850/70 space-y-1">
+                    <span className="text-[9px] uppercase font-mono tracking-wider text-slate-400 font-bold block">Estimated Storage Usage</span>
+                    <div className="flex items-baseline space-x-1.5">
+                      <span className="text-2xl font-black text-white">
+                        {storageEstimate 
+                          ? `${(storageEstimate.usage / (1024 * 1024)).toFixed(2)} MB` 
+                          : `${(offlineCaches.reduce((acc, c) => acc + c.size, 0) / (1024 * 1024)).toFixed(2)} MB`}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">used</span>
+                    </div>
+                    {storageEstimate && (
+                      <div className="w-full bg-slate-850 h-1.5 rounded-full overflow-hidden mt-1.5">
+                        <div 
+                          className="bg-amber-500 h-full transition-all duration-300" 
+                          style={{ width: `${Math.min(100, (storageEstimate.usage / storageEstimate.quota) * 100 || 1)}%` }} 
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-850/70 space-y-1">
+                    <span className="text-[9px] uppercase font-mono tracking-wider text-slate-400 font-bold block">Reader Notes & Highlights</span>
+                    <div className="flex items-baseline space-x-1.5">
+                      <span className="text-2xl font-black text-white">{annotationCount}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">active records</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleClearAnnotations}
+                      disabled={annotationCount === 0}
+                      className="text-[10.5px] text-red-400 hover:text-red-300 font-bold underline transition disabled:opacity-50 text-left mt-2 block bg-transparent"
+                    >
+                      Clear Reader Notes
+                    </button>
+                  </div>
+                </div>
+
+                {/* Action Row */}
+                <div className="flex justify-between items-center bg-slate-950/50 p-3 rounded-xl border border-slate-800/60">
+                  <span className="text-[11px] font-bold text-slate-350">IndexedDB Cache Management:</span>
+                  <button
+                    type="button"
+                    onClick={handlePruneAllLocalCache}
+                    disabled={offlineCaches.length === 0}
+                    className="text-[10.5px] bg-red-950/40 hover:bg-red-950/70 text-red-400 hover:text-red-300 border border-red-900/60 font-bold px-3 py-1.5 rounded-lg transition disabled:opacity-40 cursor-pointer"
+                  >
+                    Purge All Cached Files
+                  </button>
+                </div>
+
+                {/* Cached Items list */}
+                <div className="space-y-3">
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider font-mono block">
+                    Cached Documents Inventory ({offlineCaches.length})
+                  </label>
+                  
+                  <div className="flex items-center bg-slate-950/80 border border-slate-850 rounded-xl px-3 py-2 text-slate-400">
+                    <Search className="h-4 w-4 mr-2 shrink-0 text-slate-500" />
+                    <input
+                      type="text"
+                      value={settingsSearchQuery}
+                      onChange={(e) => setSettingsSearchQuery(e.target.value)}
+                      placeholder="Filter cached documents by title..."
+                      className="bg-transparent text-xs outline-none w-full text-white placeholder-slate-600"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    {cacheLoading ? (
+                      <div className="text-center py-6 text-xs text-slate-500 flex items-center justify-center space-x-2">
+                        <span className="inline-block h-3.5 w-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                        <span>Scanning IndexedDB inventory...</span>
+                      </div>
+                    ) : offlineCaches.filter(c => c.title.toLowerCase().includes(settingsSearchQuery.toLowerCase())).length === 0 ? (
+                      <div className="text-center py-8 bg-slate-950/30 border border-slate-850/60 rounded-2xl space-y-1.5">
+                        <span className="text-2xl block">📂</span>
+                        <p className="text-xs font-bold text-slate-400">No cached documents found</p>
+                        <p className="text-[10px] text-slate-500 leading-normal max-w-xs mx-auto">
+                          Documents and media files will automatically cache locally in IndexedDB once opened in the eBook Reader.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-2 max-h-[220px] overflow-y-auto custom-scrollbar">
+                        {offlineCaches.filter(c => c.title.toLowerCase().includes(settingsSearchQuery.toLowerCase())).map((item) => (
+                          <div key={item.bookId} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-850/80 hover:border-slate-800 transition">
+                            <div className="min-w-0 flex-1 pr-3">
+                              <h4 className="text-xs font-bold text-white truncate">{item.title}</h4>
+                              <p className="text-[10px] text-slate-400 font-mono leading-tight mt-0.5">
+                                Author: {item.author} • <span className="text-amber-400 font-semibold">{(item.size / (1024 * 1024)).toFixed(2)} MB</span>
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handlePruneCacheItem(item.bookId)}
+                              title="Clear document cache"
+                              className="p-1.5 rounded-lg hover:bg-red-950/40 text-red-400 hover:text-red-300 transition cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
+            )}
 
-            </div>
+            {/* Branding Tab Content */}
+            {activeSettingsTab === "branding" && (
+              <div className="p-6 space-y-4 max-h-[55vh] overflow-y-auto custom-scrollbar">
+                <div className="bg-amber-950/40 border border-amber-900/40 p-3.5 rounded-xl text-amber-350 text-[11px] leading-relaxed">
+                  <span className="font-bold">Security Directive Enforced:</span> In accordance with the Admin Council protocols, uploading arbitrary image assets is restricted to prevent memory bloat and offline cache degradation. System logos must be selected from the certified vector graphic presets below.
+                </div>
 
-            {/* Footer containing Apply Controls */}
+                <div className="space-y-4">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
+                    Select Official Branding Emblem:
+                  </label>
+                  
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {ZION_POST_DRAFT_PRESETS.map((preset, index) => {
+                      const isSelected = selectedPresetIndex === index;
+                      return (
+                        <button
+                          key={index}
+                          type="button"
+                          onClick={() => setSelectedPresetIndex(index)}
+                          className={`p-3 rounded-xl border text-left flex items-start space-x-3 transition-all cursor-pointer ${
+                            isSelected 
+                              ? "bg-slate-850/80 border-blue-500 shadow-lg shadow-blue-950/50" 
+                              : "bg-slate-950/40 border-slate-850 hover:bg-slate-850/70"
+                          }`}
+                        >
+                          <img 
+                            src={preset.svgData} 
+                            alt={preset.name} 
+                            className="h-10 w-10 shrink-0 rounded-lg shadow-md bg-slate-900"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="space-y-0.5 overflow-hidden">
+                            <h4 className="text-[11px] font-bold text-white leading-tight truncate">{preset.name}</h4>
+                            <p className="text-[9px] text-slate-400 leading-normal line-clamp-2">{preset.description}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-850/60 space-y-3">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">
+                      Administrator Certification:
+                    </label>
+                    
+                    <label className="flex items-start space-x-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-850 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={adminCheckedConfirmation}
+                        onChange={(e) => setAdminCheckedConfirmation(e.target.checked)}
+                        className="mt-0.5 rounded border-slate-800 text-blue-600 bg-slate-900 focus:ring-0 focus:ring-offset-0 shrink-0 h-4 w-4 cursor-pointer"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="text-[11px] font-bold text-slate-150 leading-tight block text-left">
+                          I explicitly authorize this system logo modification
+                        </span>
+                        <span className="text-[9px] text-slate-400 block leading-normal text-left">
+                          Confirming that this branding icon update conforms to Zion Digital Council safety standards and approves synchronizing this across all active devices in Kenya.
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Footer with actions */}
             <div className="p-4 bg-slate-950 border-t border-slate-850/60 flex justify-end space-x-3">
               <button
                 type="button"
                 onClick={() => {
-                  setIsLogoModalOpen(false);
+                  setIsSettingsModalOpen(false);
                   setSelectedPresetIndex(null);
                   setAdminCheckedConfirmation(false);
                 }}
                 className="px-4 py-2 rounded-lg border border-slate-800 hover:bg-slate-900 text-xs font-bold text-slate-400 transition cursor-pointer"
               >
-                Cancel
+                Close Settings
               </button>
-              <button
-                type="button"
-                onClick={handleApplyPresetIcon}
-                disabled={isUpdatingIcon}
-                className={`px-5 py-2 rounded-lg text-xs font-black transition text-white ${
-                  selectedPresetIndex !== null && adminCheckedConfirmation
-                    ? "bg-orange-700 hover:bg-orange-850 shadow-md shadow-orange-950/30 cursor-pointer"
-                    : "bg-slate-800 text-slate-500 cursor-not-allowed"
-                }`}
-              >
-                {isUpdatingIcon ? "Synergy Loading..." : "Apply New Icon Settings"}
-              </button>
+              {activeSettingsTab === "branding" && (
+                <button
+                  type="button"
+                  onClick={handleApplyPresetIcon}
+                  disabled={isUpdatingIcon}
+                  className={`px-5 py-2 rounded-lg text-xs font-black transition text-white ${
+                    selectedPresetIndex !== null && adminCheckedConfirmation
+                      ? "bg-orange-700 hover:bg-orange-850 shadow-md shadow-orange-950/30 cursor-pointer"
+                      : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                  }`}
+                >
+                  {isUpdatingIcon ? "Syncing..." : "Apply Emblem"}
+                </button>
+              )}
             </div>
 
           </div>
         </div>
       )}
+
+      {/* 5. SECURE THUMB-REACHABLE MOBILE BOTTOM NAVIGATION BAR */}
+      <div 
+        id="mobile_bottom_navigation" 
+        className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-[#090A10] border-t border-slate-200 dark:border-slate-800 flex items-center justify-around px-2 z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+      >
+        <button
+          onClick={() => handleItemClick("dashboard")}
+          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
+            currentView === "dashboard" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+          }`}
+        >
+          <Home className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Library</span>
+          {currentView === "dashboard" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          )}
+        </button>
+
+        <button
+          onClick={() => handleItemClick("language-teacher")}
+          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
+            currentView === "language-teacher" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+          }`}
+        >
+          <GraduationCap className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Tutor</span>
+          {currentView === "language-teacher" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          )}
+        </button>
+
+        <button
+          onClick={() => handleItemClick("offline-dictionary")}
+          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
+            currentView === "offline-dictionary" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+          }`}
+        >
+          <BookOpen className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Dictionary</span>
+          {currentView === "offline-dictionary" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          )}
+        </button>
+
+        <button
+          onClick={() => handleItemClick("devotional")}
+          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
+            currentView === "devotional" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+          }`}
+        >
+          <HelpCircle className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Bible</span>
+          {currentView === "devotional" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          )}
+        </button>
+      </div>
     </>
   );
 }

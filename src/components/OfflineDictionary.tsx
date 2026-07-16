@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, Volume2, Plus, Bookmark, Trash2, Shield, Sparkles, BookOpen, BrainCircuit } from "lucide-react";
 
-interface DictionaryWord {
+export interface DictionaryWord {
   word: string;
   pronunciation: string;
   definition: string;
@@ -10,7 +10,7 @@ interface DictionaryWord {
 }
 
 // Extensive pre-loaded offline scholastic dictionary database
-const GENERAL_OFFLINE_WORDS: DictionaryWord[] = [
+export const GENERAL_OFFLINE_WORDS: DictionaryWord[] = [
   {
     word: "Stewardship",
     pronunciation: "/ˈstjuːədʃɪp/",
@@ -191,6 +191,31 @@ export default function OfflineDictionary() {
     const day = new Date().getDate();
     const index = day % GENERAL_OFFLINE_WORDS.length;
     setWordOfTheDay(GENERAL_OFFLINE_WORDS[index]);
+  }, []);
+
+  // Check for pre-filled word requests from the Bible app
+  useEffect(() => {
+    const checkPrefill = () => {
+      const prefill = localStorage.getItem("WAFULA_DIC_PREFILL");
+      if (prefill) {
+        setSearchQuery(prefill);
+        setSelectedCategory("All");
+        setActiveTab("search");
+        localStorage.removeItem("WAFULA_DIC_PREFILL");
+      }
+    };
+    
+    // Check on mount/update
+    checkPrefill();
+
+    // Listen to window focus or navigation custom events
+    const handleNavigation = () => {
+      checkPrefill();
+    };
+    window.addEventListener("WAFULA_DIC_PREFILL_UPDATE", handleNavigation);
+    return () => {
+      window.removeEventListener("WAFULA_DIC_PREFILL_UPDATE", handleNavigation);
+    };
   }, []);
 
   // Debounced real-time exact Oxford Dictionary API matcher
@@ -531,7 +556,7 @@ export default function OfflineDictionary() {
   const categories = ["All", "Leadership", "Academic", "Theology", "Swahili", "Technical", "User Custom"];
 
   return (
-    <div id="offline_dictionary_dashboard" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 space-y-6">
+    <div id="offline_dictionary_dashboard" className="ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 py-6 md:py-8 space-y-5">
       {/* Upper banner section */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-stone-200 pb-5">
         <div>

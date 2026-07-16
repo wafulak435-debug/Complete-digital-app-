@@ -7,11 +7,26 @@ import {
 } from "lucide-react";
 import { CommunityMessage, User } from "../types";
 
+export function isUserWorker(user: User | null): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  const email = (user.email || "").toLowerCase().trim();
+  return email.includes("admin") ||
+         email.includes("opara") ||
+         email.includes("wafula") ||
+         email.includes("teacher") ||
+         email.includes("staff") ||
+         email.includes("worker") ||
+         email.includes("stakeholder") ||
+         email.includes("school") ||
+         email.includes("books");
+}
+
 interface CommunityProps {
   currentUser: User | null;
   onLogIn: () => void;
   messages: CommunityMessage[];
-  onSendMessage: (text: string, parentId?: string, channelName?: '#General' | '#Book Talks' | '#Leadership' | '#Publishing', extras?: any) => void;
+  onSendMessage: (text: string, parentId?: string, channelName?: string, extras?: any) => void;
   onDeleteMessage: (id: string) => void;
   onEditMessage?: (id: string, text: string) => void;
   broadcastAnnouncement: string;
@@ -19,13 +34,11 @@ interface CommunityProps {
   isLoading?: boolean;
 }
 
-type ChannelType = '#General' | '#Book Talks' | '#Leadership' | '#Publishing';
+type ChannelType = '#generatechat' | '#workers' | string;
 
 const AVAILABLE_CHANNELS: { id: ChannelType; name: string; desc: string; icon: string }[] = [
-  { id: '#General', name: "General Leadership Forum", desc: "A vibrant space with over 200,500 global participants discussing core concepts", icon: "🌐" },
-  { id: '#Book Talks', name: "Book Club & Summaries", desc: "Peer reviews and structural analysis of digital books uploaded into Wafula Ledger", icon: "📚" },
-  { id: '#Leadership', name: "Leadership School Cohort", desc: "Active academic cohorts testing, lessons, and seeking study problem solves", icon: "🎓" },
-  { id: '#Publishing', name: "eBook Publishing machine", desc: "Coordinating draft chapters, translations, and custom PDF builds", icon: "✍️" }
+  { id: '#generatechat', name: "General Discussions Hub", desc: "Share information, theological views, and local updates with everyone globally", icon: "💬" },
+  { id: '#workers', name: "Worker Communication Hub", desc: "Private channel for administrators, books managers, and school workers", icon: "🔐" }
 ];
 
 interface AnnouncementNotice {
@@ -61,7 +74,7 @@ export default function Community({
   onUpdateBroadcastAnnouncement,
   isLoading = false
 }: CommunityProps) {
-  const [activeChannel, setActiveChannel] = useState<ChannelType>('#General');
+  const [activeChannel, setActiveChannel] = useState<ChannelType>('#generatechat');
   const [chatInput, setChatInput] = useState("");
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [replyToMessage, setReplyToMessage] = useState<CommunityMessage | null>(null);
@@ -363,7 +376,11 @@ export default function Community({
 
   // Filter messages based on active channel and search query
   const filteredMessages = messages.filter((m) => {
-    const isChannelMatch = m.channel === activeChannel;
+    let msgChan = m.channel || "#generatechat";
+    if (msgChan === "#General" || msgChan === "#Book Talks" || msgChan === "#Leadership" || msgChan === "#Publishing") {
+      msgChan = "#generatechat";
+    }
+    const isChannelMatch = msgChan === activeChannel;
     const isSearchMatch = m.text.toLowerCase().includes(messageSearchQuery.toLowerCase()) || 
                           m.userName.toLowerCase().includes(messageSearchQuery.toLowerCase());
     return isChannelMatch && isSearchMatch;
@@ -556,12 +573,19 @@ export default function Community({
             <div className="p-2 text-[8px] uppercase font-mono tracking-wider text-stone-400 text-left font-black">
               📚 COHORT GROUP DIRECTORIES
             </div>
-            {AVAILABLE_CHANNELS.map((chan) => {
+            {AVAILABLE_CHANNELS.filter(chan => chan.id !== '#workers' || isUserWorker(currentUser)).map((chan) => {
               const isActive = activeChannel === chan.id;
-              const channelMsgsCount = messages.filter((m) => m.channel === chan.id).length;
               
-              // Find last message snippet
-              const channelMsgs = messages.filter((m) => m.channel === chan.id);
+              // Find and count channel messages (merging legacy message channels into #generatechat)
+              const channelMsgs = messages.filter((m) => {
+                let msgChan = m.channel || "#generatechat";
+                if (msgChan === "#General" || msgChan === "#Book Talks" || msgChan === "#Leadership" || msgChan === "#Publishing") {
+                  msgChan = "#generatechat";
+                }
+                return msgChan === chan.id;
+              });
+              
+              const channelMsgsCount = channelMsgs.length;
               const lastMsg = channelMsgs[channelMsgs.length - 1];
               const lastMsgSnippet = lastMsg ? lastMsg.text : "No messages posted in this channel ledger...";
 

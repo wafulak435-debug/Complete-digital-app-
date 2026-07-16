@@ -263,7 +263,7 @@ export default function CertificateVerificationView({
             {/* School Seal Instructions Verification */}
             <div className="bg-amber-950/20 border border-amber-600/10 p-4 rounded-xl text-center space-y-2">
               <p className="font-serif text-[10px] italic text-amber-200">
-                "Zion digital leadership and computer school attestation seal guarantees academic excellence, verified self-assessments, and original publication papers indexed on decentralized local cache nodes."
+                "Zion digital leadership and Bible school attestation seal guarantees academic excellence, verified self-assessments, and original publication papers indexed on decentralized local cache nodes."
               </p>
               <div className="flex justify-center space-x-6 pt-1">
                 <div className="flex items-center space-x-1 font-mono text-[8.5px] text-stone-500">

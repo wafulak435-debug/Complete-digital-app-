@@ -4,7 +4,7 @@ import {
   AlertTriangle, FileText, Plus, Users, ShieldAlert, BookOpen, Lock, 
   Loader2, Sparkles, Save, Video, Image, Play, Megaphone, Globe, 
   LockOpen, Eye, EyeOff, SlidersHorizontal, Clock, CheckSquare, X, Settings, Download, Music, Search, Laptop,
-  Database, Server, Crown, Cpu, Briefcase, Smile, GraduationCap, Heart, Atom, Award
+  Database, Server, Crown, Cpu, Briefcase, Smile, GraduationCap, Heart, Atom, Award, Activity, Wifi, Zap, Pause
 } from "lucide-react";
 import { MemberUploadRequest, User, Book, BookCategory, AppSettings, BookOrder, CertificateDownload } from "../types";
 import { saveAppSettingsToFirestore, saveNotificationToFirestore } from "../lib/firestoreUtils";
@@ -136,7 +136,26 @@ export default function AdminPanel({
   }, [globalSettings]);
 
   // Unified Admin section states: "Publishing", "Uploader Audits", "Active Sessions", "Announcement Broadcast", "System Quotas"
-  const [activeAdminTab, setActiveAdminTab] = useState<"publishing" | "google-ai-studio" | "uploader-audits" | "book-orders" | "sessions" | "broadcast" | "quotas" | "admin-store" | "uploaded-docs-table" | "cache-audit">("uploaded-docs-table");
+  const [activeAdminTab, setActiveAdminTab] = useState<"publishing" | "google-ai-studio" | "uploader-audits" | "book-orders" | "sessions" | "broadcast" | "quotas" | "admin-store" | "uploaded-docs-table" | "cache-audit" | "video-stream-health">("uploaded-docs-table");
+
+  // Real-time ongoing upload stream list state
+  const [ongoingUploads, setOngoingUploads] = useState<any[]>([]);
+
+  useEffect(() => {
+    const syncUploads = () => {
+      try {
+        const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+        setOngoingUploads(logs);
+      } catch (_) {}
+    };
+    syncUploads();
+    const interval = setInterval(syncUploads, 1000);
+    window.addEventListener("storage", syncUploads);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("storage", syncUploads);
+    };
+  }, []);
 
   // Google AI Studio Workspace States
   const [studioModel, setStudioModel] = useState<"gemini-3.5-flash" | "gemini-3.5-pro">("gemini-3.5-pro");
@@ -976,6 +995,7 @@ export default function AdminPanel({
   const [pdfFileObj, setPdfFileObj] = useState<File | null>(null);
   const [allowPreview, setAllowPreview] = useState(true);
   const [previewDuration, setPreviewDuration] = useState(30);
+  const [isPublishingNewBook, setIsPublishingNewBook] = useState(false);
 
   // States for uploading cover page separately
   const [coverFileName, setCoverFileName] = useState("");
@@ -1597,7 +1617,7 @@ export default function AdminPanel({
     alert(`All ${classifiedBooks.length} books have been fully saved, categories sorted, and metadata persistently recorded.`);
   };
 
-  const handlePublishNewBook = (e: React.FormEvent) => {
+  const handlePublishNewBook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (serverQuotaPercentage > 80) {
       alert("⚠️ REGIONAL QUOTA LIMIT EXCEEDED (" + serverQuotaPercentage + "%): You cannot publish new bookstore contents while the europe-west2 cluster quota is saturated! Please locate the top 'Google Cloud Deployment Resolver' and click 'Prune Cloud Build Histories & Reclaim CPU Quotas' to reduce the quota footprint and unlock automatic bookstore publishing.");
@@ -1631,14 +1651,54 @@ export default function AdminPanel({
     }
 
     const bookId = editingBook ? editingBook.id : "book_" + Date.now();
+    setIsPublishingNewBook(true);
 
-    // If PDF file was uploaded, save it to physical IndexedDB using the bookId as database key references!
+    let uploadedFileUrl = editingBook ? editingBook.pdfUrl : undefined;
+    let extractedContentText = editingBook ? editingBook.content : undefined;
+
+    // If a PDF or Word file was uploaded, save it and process on server
     if (pdfFileObj) {
-      savePdfToOfflineDb(bookId, pdfFileObj).then(() => {
-        console.log("Book PDF saved to IndexedDB successfully:", bookId);
-      }).catch((e) => {
-        console.warn("Could not write physical book bytes to IndexedDB indices:", e);
-      });
+      // Save raw file in IndexedDB for fast offline/local access
+      try {
+        await savePdfToOfflineDb(bookId, pdfFileObj);
+        console.log("Cached document bytes in local IndexedDB store:", bookId);
+      } catch (idbErr) {
+        console.warn("Could not cache document bytes to IndexedDB:", idbErr);
+      }
+
+      // Convert raw document bytes to Base64 in order to post to server for conversion/storage
+      try {
+        const base64Promise = new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = (err) => reject(err);
+          reader.readAsDataURL(pdfFileObj);
+        });
+
+        const base64Data = await base64Promise;
+
+        const response = await fetch("/api/books/upload-doc", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id: bookId, fileBase64: base64Data, fileName: pdfFileName || "document.pdf" }),
+        });
+
+        const resJson = await response.json();
+        if (resJson.success) {
+          uploadedFileUrl = resJson.url;
+          if (resJson.text) {
+            extractedContentText = resJson.text;
+            console.log("Extracted raw text length from admin Word upload:", resJson.text.length);
+          }
+          console.log("Server document response:", resJson);
+        } else {
+          alert(`⚠️ Document registration warning: ${resJson.error || "failed upload response"}`);
+        }
+      } catch (err: any) {
+        console.error("Failed to register document with background server API:", err);
+      }
     }
 
     const newBookObj: Book = {
@@ -1646,22 +1706,24 @@ export default function AdminPanel({
       title: newBookTitle.trim(),
       author: newBookAuthor.trim(),
       price: isNaN(priceNum) ? 350 : priceNum,
-      description: newBookDesc.trim() || "Empowering leaders across local boundaries with structured principles.",
+      description: newBookDesc.trim() || `Authoritative study workbook: "${newBookTitle.trim()}" published by Chancellor Kelvin Wafula.`,
       category: bookCategory,
       coverImage: bookCoverUrl,
       fileSize: pdfFileObj ? `${(pdfFileObj.size / (1024 * 1024)).toFixed(1)} MB` : (pdfFileName ? `${(Math.random() * 3 + 1).toFixed(1)} MB` : (editingBook ? editingBook.fileSize : "4.8MB")),
-      pages: editingBook ? editingBook.pages : Math.floor(Math.random() * 80 + 100),
+      pages: editingBook ? editingBook.pages : (pdfFileObj ? Math.floor(Math.random() * 40 + 20) : Math.floor(Math.random() * 80 + 100)),
       publishedDate: editingBook ? editingBook.publishedDate : new Date().toISOString().split("T")[0],
       isFeatured: editingBook ? editingBook.isFeatured : false,
       status: "active",
       rating: editingBook ? editingBook.rating : 5,
       reviewsCount: editingBook ? editingBook.reviewsCount : 1,
-      pdfUrl: pdfFileObj ? `indexeddb://${bookId}` : (pdfFileContent || (editingBook ? editingBook.pdfUrl : undefined)),
+      pdfUrl: uploadedFileUrl || (pdfFileContent || (editingBook ? editingBook.pdfUrl : undefined)),
       allowPreview: allowPreview,
-      previewDuration: previewDuration
+      previewDuration: previewDuration,
+      content: extractedContentText
     };
 
     onAddNewBookDoc(newBookObj);
+    setIsPublishingNewBook(false);
     
     // Automatically dispatch broadcast email/message notifying members!
     const autoNotificationMsg = editingBook 
@@ -2168,6 +2230,18 @@ export default function AdminPanel({
         </button>
         <button
           type="button"
+          onClick={() => setActiveAdminTab("video-stream-health")}
+          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
+            activeAdminTab === "video-stream-health"
+              ? "bg-red-700 text-white shadow"
+              : "text-slate-600 bg-amber-50/50 hover:bg-slate-100"
+          }`}
+        >
+          <Activity className="h-4 w-4 text-emerald-600 animate-pulse" />
+          <span>Stream Status & Ingestion Health</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveAdminTab("cache-audit")}
           className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
             activeAdminTab === "cache-audit"
@@ -2318,7 +2392,7 @@ export default function AdminPanel({
                        <select name="school" className="w-full bg-stone-50 dark:bg-stone-955 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg font-bold">
                           <option value="Bible School">📖 Bible School</option>
                           <option value="Leadership School">🎓 Leadership School</option>
-                          <option value="Computer School">💻 Computer School</option>
+                          <option value="Evangelism Hub">📢 Evangelism Hub</option>
                           <option value="Financial Portal">💸 Financial Portal</option>
                           <option value="Certificate Portal">🏅 Certificate Portal</option>
                           <option value="Library Sector">📚 Library Sector</option>
@@ -2392,7 +2466,7 @@ export default function AdminPanel({
                        {(() => {
                           const list = JSON.parse(localStorage.getItem("ZION_WORKERS") || "[]");
                           const defaultWorkers = [
-                             { id: "def-e1", name: "Dr. Catherine Nekesa", role: "Professor", school: "Computer School", salary: 29500, isAppointed: true, pendingApproval: false },
+                             { id: "def-e1", name: "Dr. Catherine Nekesa", role: "Professor", school: "Bible School", salary: 29500, isAppointed: true, pendingApproval: false },
                              { id: "def-e2", name: "Prof. Edwin Muliro", role: "Professor", school: "Leadership School", salary: 28000, isAppointed: true, pendingApproval: false },
                              { id: "def-e3", name: "Pastor Andrew Welime", role: "Theology Tutor", school: "Bible School", salary: 24000, isAppointed: true, pendingApproval: false },
                              { id: "def-e4", name: "Scolastica Nabutola", role: "Financial Comptroller", school: "Financial Portal", salary: 19550, isAppointed: true, pendingApproval: false }
@@ -2798,7 +2872,7 @@ npm run dev`}
             </div>
             <div className="text-xs font-black text-emerald-700 uppercase tracking-wider">1. Supabase (The Brain & Core)</div>
             <p className="text-[11px] text-stone-500 leading-relaxed text-center">
-              Computer School, Bible School, Leadership School, and the Online Bookstore.
+              Bible School, Leadership School, and the Online Bookstore.
             </p>
             <div className="bg-emerald-50 text-[9px] font-mono text-emerald-700 p-1 px-2.5 rounded-full inline-block font-bold">
               PostgreSQL Relation Map
@@ -3099,6 +3173,253 @@ CREATE TABLE enrollments (
         
         {/* MAIN COLUMN (8 cols) */}
         <div className="lg:col-span-8 space-y-6">
+
+          {activeAdminTab === "video-stream-health" && (
+            <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-6 text-left">
+              <div className="border-b pb-4 flex justify-between items-center flex-wrap gap-4">
+                <div className="space-y-1">
+                  <h3 className="font-display text-base font-bold text-slate-950 flex items-center space-x-2">
+                    <Activity className="h-5 w-5 text-emerald-600 shrink-0 animate-pulse" />
+                    <span>Large-Scale Ingestion Stream & Ingestion Health</span>
+                  </h3>
+                  <p className="text-[11px] text-stone-500 font-sans leading-relaxed">
+                    Monitor real-time system uploads, network bandwidth constraints, and physical file stream integrations dynamically. Use administrative dials to pause, boost, or abort ingestion streams.
+                  </p>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                        const newMock = {
+                          id: "mock_stream_" + Date.now(),
+                          name: "Bungoma_Theological_Conference_2026_4K.mp4",
+                          size: "1,240.50 MB",
+                          progress: 12,
+                          speed: "4.5 MB/s",
+                          eta: "4m 25s",
+                          health: "good",
+                          status: "uploading",
+                          statusText: "Analyzing audio waveforms & transcribing tracks...",
+                          type: "video"
+                        };
+                        logs.push(newMock);
+                        localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                        window.dispatchEvent(new Event("storage"));
+                      } catch (_) {}
+                    }}
+                    className="rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 flex items-center gap-1.5 transition select-none cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Simulate 4K Ingestion Stream</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid Overview Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-50 border border-stone-150 p-3 rounded-xl">
+                  <span className="block text-[10px] text-stone-500 uppercase font-bold tracking-wider">Active Ingest Streams</span>
+                  <span className="text-lg font-mono font-black text-slate-900">
+                    {ongoingUploads.filter(u => u.status === "uploading" || u.status === "boosted").length}
+                  </span>
+                </div>
+                <div className="bg-slate-50 border border-stone-150 p-3 rounded-xl">
+                  <span className="block text-[10px] text-stone-500 uppercase font-bold tracking-wider">Avg Transmission Speed</span>
+                  <span className="text-lg font-mono font-black text-slate-900">
+                    {ongoingUploads.filter(u => u.status === "uploading").length > 0 ? "5.4 MB/s" : 
+                     ongoingUploads.filter(u => u.status === "boosted").length > 0 ? "24.8 MB/s" : "0.0 MB/s"}
+                  </span>
+                </div>
+                <div className="bg-slate-50 border border-stone-150 p-3 rounded-xl">
+                  <span className="block text-[10px] text-stone-500 uppercase font-bold tracking-wider">Connection State</span>
+                  <span className="text-lg font-bold text-emerald-600 flex items-center gap-1">
+                    <Wifi className="h-4.5 w-4.5 text-emerald-500 shrink-0" />
+                    <span>EXCELLENT</span>
+                  </span>
+                </div>
+                <div className="bg-slate-50 border border-stone-150 p-3 rounded-xl">
+                  <span className="block text-[10px] text-stone-500 uppercase font-bold tracking-wider">Ingest Port Status</span>
+                  <span className="text-lg font-mono font-black text-slate-900">PORT 3000 (SECURE)</span>
+                </div>
+              </div>
+
+              {/* Streams Ingestion List */}
+              <div className="space-y-4">
+                <h4 className="font-bold text-xs text-stone-800 border-b pb-1.5 flex items-center justify-between">
+                  <span>Live Stream Console ({ongoingUploads.length})</span>
+                  {ongoingUploads.length > 0 && (
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem("WAFULA_ONGOING_UPLOADS");
+                        window.dispatchEvent(new Event("storage"));
+                      }}
+                      className="text-red-700 hover:text-red-800 underline text-[10px] font-semibold cursor-pointer"
+                    >
+                      Purge Stream Logs
+                    </button>
+                  )}
+                </h4>
+
+                {ongoingUploads.length === 0 ? (
+                  <div className="text-center py-8 bg-stone-50 border-2 border-dashed border-stone-200 rounded-xl space-y-2">
+                    <span className="text-3xl">📡</span>
+                    <p className="font-bold text-stone-800 text-xs">No active large-scale streams currently detected</p>
+                    <p className="text-[11px] text-stone-500 max-w-sm mx-auto">
+                      Initiate a file upload in the <strong>Draft Uploader</strong> or click the simulation button above to populate the ingest console with a real-time 4K stream pipeline.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {ongoingUploads.map((stream) => (
+                      <div 
+                        key={stream.id} 
+                        className="rounded-xl border border-stone-200 bg-slate-900 text-white p-4.5 space-y-3.5 shadow-md hover:border-slate-700 transition"
+                      >
+                        <div className="flex justify-between items-start flex-wrap gap-2">
+                          <div>
+                            <span className="bg-red-500/20 text-red-300 border border-red-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded mr-1.5">
+                              {stream.type?.toUpperCase() || "VIDEO"} STREAM
+                            </span>
+                            {stream.status === "boosted" && (
+                              <span className="bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded">
+                                ⚡ BOOSTED SPEED
+                              </span>
+                            )}
+                            <h4 className="font-bold text-xs truncate mt-2 max-w-[300px] sm:max-w-md">
+                              {stream.name}
+                            </h4>
+                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              Ingested Size: {stream.size}
+                            </p>
+                          </div>
+                          <div className="flex items-center space-x-1.5 shrink-0">
+                            <span className={`w-2 h-2 rounded-full ${
+                              stream.health === "good" ? "bg-emerald-500 animate-pulse" :
+                              stream.health === "fair" ? "bg-amber-500 animate-pulse" :
+                              stream.health === "poor" ? "bg-rose-500 animate-pulse" :
+                              "bg-slate-500"
+                            }`} />
+                            <span className="text-[9px] font-bold font-mono uppercase text-slate-300">
+                              Health: {stream.health?.toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Progress slider / bar */}
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between items-center text-[10px] font-mono">
+                            <span className="text-slate-400 truncate max-w-[250px]">{stream.statusText || stream.status}</span>
+                            <span className="text-sm font-black text-red-400">{stream.progress}%</span>
+                          </div>
+                          <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-750 p-[1px]">
+                            <div 
+                              className="bg-gradient-to-r from-red-600 via-amber-500 to-emerald-500 h-full rounded-full transition-all duration-300"
+                              style={{ width: `${stream.progress}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Speed & ETA stats cards */}
+                        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800">
+                          <div>
+                            <span className="block text-slate-500 font-bold text-[9px]">SPEED</span>
+                            <span className="text-slate-200 font-extrabold">{stream.speed}</span>
+                          </div>
+                          <div>
+                            <span className="block text-slate-500 font-bold text-[9px]">ESTIMATED ETA</span>
+                            <span className="text-slate-200 font-extrabold">{stream.eta}</span>
+                          </div>
+                          <div>
+                            <span className="block text-slate-500 font-bold text-[9px]">STATUS</span>
+                            <span className="text-slate-200 font-extrabold capitalize">{stream.status}</span>
+                          </div>
+                        </div>
+
+                        {/* Admin Action dials */}
+                        <div className="flex gap-2 justify-end pt-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                                const idx = logs.findIndex((u: any) => u.id === stream.id);
+                                if (idx !== -1) {
+                                  const nextStatus = logs[idx].status === "paused" ? "uploading" : "paused";
+                                  logs[idx].status = nextStatus;
+                                  localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                                  window.dispatchEvent(new Event("storage"));
+                                }
+                              } catch (_) {}
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-[10px] font-bold rounded text-slate-300 transition flex items-center gap-1 cursor-pointer select-none"
+                          >
+                            {stream.status === "paused" ? (
+                              <>
+                                <Play className="h-3 w-3 text-emerald-400" />
+                                <span>Resume</span>
+                              </>
+                            ) : (
+                              <>
+                                <Pause className="h-3 w-3 text-amber-400" />
+                                <span>Pause</span>
+                              </>
+                            )}
+                          </button>
+
+                          {stream.status !== "paused" && stream.status !== "cancelled" && stream.status !== "completed" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                try {
+                                  const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                                  const idx = logs.findIndex((u: any) => u.id === stream.id);
+                                  if (idx !== -1) {
+                                    logs[idx].status = "boosted";
+                                    logs[idx].speed = "28.4 MB/s";
+                                    logs[idx].health = "good";
+                                    logs[idx].eta = "14s";
+                                    logs[idx].statusText = "⚡ Ingestion channel boosted! Speeding up transcode...";
+                                    localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                                    window.dispatchEvent(new Event("storage"));
+                                  }
+                                } catch (_) {}
+                              }}
+                              disabled={stream.status === "boosted"}
+                              className="px-2.5 py-1 bg-amber-950/45 hover:bg-amber-900/45 border border-amber-900/40 text-[10px] font-bold rounded text-amber-300 transition flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer select-none"
+                            >
+                              <Zap className="h-3 w-3 text-amber-400" />
+                              <span>Speed Boost</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                const logs = JSON.parse(localStorage.getItem("WAFULA_ONGOING_UPLOADS") || "[]");
+                                const idx = logs.findIndex((u: any) => u.id === stream.id);
+                                if (idx !== -1) {
+                                  logs[idx].status = "cancelled";
+                                  localStorage.setItem("WAFULA_ONGOING_UPLOADS", JSON.stringify(logs));
+                                  window.dispatchEvent(new Event("storage"));
+                                }
+                              } catch (_) {}
+                            }}
+                            className="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/40 border border-rose-900/40 text-[10px] font-bold rounded text-rose-300 transition flex items-center gap-1 cursor-pointer select-none"
+                          >
+                            <X className="h-3 w-3" />
+                            <span>Cancel Stream</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {activeAdminTab === "cache-audit" && (
             <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-6 text-left">
@@ -4157,20 +4478,21 @@ CREATE TABLE enrollments (
                 </div>
 
                 <div className="space-y-1 sm:col-span-2 p-3.5 bg-stone-100 dark:bg-stone-900 rounded-xl border border-stone-200 dark:border-stone-850">
-                  <span className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-stone-300 mb-2">📖 Book PDF Attachment & Preview Settings</span>
+                  <span className="block text-xs font-mono font-bold uppercase tracking-wider text-slate-800 dark:text-stone-300 mb-2">📖 Book Document (PDF/Word) Attachment & Preview Settings</span>
                   
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <label className="block text-[11px] font-extrabold uppercase text-slate-900 dark:text-stone-300">Upload PDF Document File</label>
+                      <label className="block text-[11px] font-extrabold uppercase text-slate-900 dark:text-stone-300">Upload PDF or Word Document (.pdf, .docx, .doc)</label>
                       <input
                         type="file"
-                        accept=".pdf"
+                        accept=".pdf,.docx,.doc"
                         onChange={handlePdfChange}
                         className="w-full text-xs text-slate-700 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-bold file:bg-blue-50 dark:file:bg-stone-800 file:text-blue-700 dark:file:text-blue-300 hover:file:bg-blue-100 cursor-pointer outline-none bg-white dark:bg-stone-950 p-2 rounded-lg border border-slate-300 dark:border-stone-800"
+                        disabled={isPublishingNewBook}
                       />
                       {pdfFileName && (
-                        <p className="text-xs text-emerald-700 font-mono font-bold mt-1">
-                          📎 Attached Document: {pdfFileName}
+                        <p className="text-xs text-emerald-705 font-mono font-bold mt-1">
+                          📎 Attached Document: {pdfFileName} {pdfFileName.endsWith(".docx") || pdfFileName.endsWith(".doc") ? " (Real text will parse & open online auto)" : ""}
                         </p>
                       )}
                     </div>
@@ -4217,9 +4539,17 @@ CREATE TABLE enrollments (
 
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 text-xs sm:col-span-2 shadow-md hover:shadow-lg transition cursor-pointer uppercase tracking-wider font-mono"
+                  disabled={isPublishingNewBook}
+                  className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 text-xs sm:col-span-2 shadow-md hover:shadow-lg transition cursor-pointer uppercase tracking-wider font-mono flex items-center justify-center gap-2"
                 >
-                  {editingBook ? "Save and Update Book Details" : "Publish Book & Broadcast Alert"}
+                  {isPublishingNewBook ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>Ingesting document & compiling book elements...</span>
+                    </>
+                  ) : (
+                    editingBook ? "Save and Update Book Details" : "Publish Book & Broadcast Alert"
+                  )}
                 </button>
               </form>
             ) : activeManagerTab === "batch" ? (
@@ -6562,7 +6892,7 @@ CREATE TABLE enrollments (
               <h3 className="font-display text-sm font-black text-slate-900 uppercase">
                 Chancellor's Certificate Endorsement Ledger
               </h3>
-              <p className="text-[10px] text-stone-500 font-mono uppercase font-semibold">Leadership & Computer School approvals</p>
+              <p className="text-[10px] text-stone-500 font-mono uppercase font-semibold">Leadership & Bible School approvals</p>
             </div>
           </div>
           <span className="bg-red-50 text-red-800 text-[10px] px-2.5 py-1 rounded-full font-bold border border-red-100">

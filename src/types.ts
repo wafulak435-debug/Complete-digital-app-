@@ -60,11 +60,14 @@ export interface Comment {
   text: string;
   date: string;
   parentId?: string; // for nested replies
+  isModerated?: boolean; // if flagged/moderated by admin
+  moderatedReason?: string; // optional reason why it was moderated
+  originalText?: string; // original text for admin tracking
 }
 
 export interface CommunityMessage {
   id: string;
-  channel: '#General' | '#Book Talks' | '#Leadership' | '#Publishing';
+  channel: '#generatechat' | '#workers' | '#General' | '#Book Talks' | '#Leadership' | '#Publishing' | string;
   userId: string;
   userName: string;
   userAvatar?: string;
@@ -227,4 +230,18 @@ export interface CertificateDownload {
   ledgerHash: string;
   date: string;
   downloadedAt: string;
+}
+
+export interface SermonVideo {
+  id: string;
+  title: string;
+  speaker: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  description: string;
+  category: 'Sermon' | 'Motivation' | 'Evangelism';
+  duration: string;
+  date: string;
+  likesCount?: number;
+  viewsCount?: number;
 }

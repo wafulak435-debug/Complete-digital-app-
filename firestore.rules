@@ -131,5 +131,16 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
+
+    // Search and chat histories
+    match /searchHistories/{historyId} {
+      allow read, write: if true;
+    }
+
+    // Sermon and Motivation Videos
+    match /sermonVideos/{videoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
   }
 }

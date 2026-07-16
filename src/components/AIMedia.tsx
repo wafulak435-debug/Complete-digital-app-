@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Play, Plus, RefreshCw, Eye, Save, Smile, Layers, Film, FileText, BookOpen } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Play, Plus, RefreshCw, Eye, Save, Smile, Layers, Film, FileText, BookOpen, MessageSquare, Trash2, Shield, CornerDownRight } from "lucide-react";
 import { User, SavedDocument } from "../types";
 import { VeoVideoEngine, PetAdventureEngine, VectorArtMaker } from "./AICreativeWidgets";
+import ChurchVideoStudio from "./ChurchVideoStudio";
 
 interface AIMediaProps {
   currentUser: User | null;
@@ -11,7 +12,108 @@ interface AIMediaProps {
 }
 
 export default function AIMedia({ currentUser, onAddNewDocument, books = [], savedDocuments = [] }: AIMediaProps) {
-  const [activeTab, setActiveTab] = useState<"image" | "video" | "veo-video" | "pet-adventure" | "vector-art">("image");
+  const [activeTab, setActiveTab] = useState<"image" | "video" | "veo-video" | "pet-adventure" | "vector-art" | "church-video">("church-video");
+
+  // Media Comments States
+  const [mediaComments, setMediaComments] = useState<any[]>([]);
+  const [mediaCommentText, setMediaCommentText] = useState("");
+  const [mediaReplyTarget, setMediaReplyTarget] = useState<string | null>(null);
+  const [mediaReplyText, setMediaReplyText] = useState("");
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("WAFULA_MEDIA_COMMENTS");
+    if (saved) {
+      try {
+        setMediaComments(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse media comments:", e);
+      }
+    } else {
+      const presets = [
+        {
+          id: "m_com_1",
+          targetId: "media_general",
+          userId: "wafulak435@gmail.com",
+          userName: "Director Wafula",
+          text: "Welcome to the Creative AIMedia Discussion board! Submit notes or share recommendations here.",
+          date: new Date().toISOString().split("T")[0]
+        }
+      ];
+      setMediaComments(presets);
+      localStorage.setItem("WAFULA_MEDIA_COMMENTS", JSON.stringify(presets));
+    }
+  }, []);
+
+  const handlePostMediaComment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) {
+      alert("Please sign in or authenticate to post comments!");
+      return;
+    }
+    if (!mediaCommentText.trim()) return;
+
+    const newComment = {
+      id: "m_com_" + Date.now(),
+      targetId: "media_general",
+      userId: currentUser.email,
+      userName: currentUser.name || currentUser.email.split("@")[0],
+      text: mediaCommentText.trim(),
+      date: new Date().toISOString().split("T")[0]
+    };
+
+    const next = [newComment, ...mediaComments];
+    setMediaComments(next);
+    localStorage.setItem("WAFULA_MEDIA_COMMENTS", JSON.stringify(next));
+    setMediaCommentText("");
+  };
+
+  const handlePostMediaReply = (parentId: string) => {
+    if (!currentUser) {
+      alert("Please sign in or authenticate to reply to comments!");
+      return;
+    }
+    if (!mediaReplyText.trim()) return;
+
+    const newReply = {
+      id: "m_com_rep_" + Date.now(),
+      targetId: "media_general",
+      userId: currentUser.email,
+      userName: currentUser.name || currentUser.email.split("@")[0],
+      text: mediaReplyText.trim(),
+      parentId,
+      date: new Date().toISOString().split("T")[0]
+    };
+
+    const next = [...mediaComments, newReply];
+    setMediaComments(next);
+    localStorage.setItem("WAFULA_MEDIA_COMMENTS", JSON.stringify(next));
+    setMediaReplyText("");
+    setMediaReplyTarget(null);
+  };
+
+  const handleDeleteMediaComment = (commentId: string) => {
+    const next = mediaComments.filter(c => c.id !== commentId && c.parentId !== commentId);
+    setMediaComments(next);
+    localStorage.setItem("WAFULA_MEDIA_COMMENTS", JSON.stringify(next));
+  };
+
+  const handleModerateMediaComment = (commentId: string) => {
+    const next = mediaComments.map(c => {
+      if (c.id === commentId) {
+        const currentlyModerated = !c.isModerated;
+        return {
+          ...c,
+          isModerated: currentlyModerated,
+          originalText: currentlyModerated ? (c.originalText || c.text) : undefined,
+          text: currentlyModerated ? "[This comment has been hidden by an administrator due to moderation guidelines.]" : (c.originalText || c.text),
+        };
+      }
+      return c;
+    });
+    setMediaComments(next);
+    localStorage.setItem("WAFULA_MEDIA_COMMENTS", JSON.stringify(next));
+  };
 
   // Image states
   const [imagePrompt, setImagePrompt] = useState("");
@@ -230,6 +332,17 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
       {/* Tabs list */}
       <div className="flex border-b border-stone-200 space-x-6 overflow-x-auto pr-2 scrollbar-thin">
         <button
+          onClick={() => setActiveTab("church-video")}
+          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
+            activeTab === "church-video"
+              ? "text-rose-600 border-rose-600"
+              : "text-stone-450 border-transparent hover:text-stone-800"
+          }`}
+        >
+          <Film className="h-4.5 w-4.5 text-rose-500 animate-pulse" />
+          <span className="font-extrabold text-stone-900">Gospel & Church Video Studio</span>
+        </button>
+        <button
           onClick={() => setActiveTab("image")}
           className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
             activeTab === "image"
@@ -286,6 +399,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
         </button>
       </div>
 
+      {activeTab === "church-video" && <div className="mt-6 animate-in fade-in duration-200"><ChurchVideoStudio /></div>}
       {activeTab === "veo-video" && <div className="mt-6"><VeoVideoEngine /></div>}
       {activeTab === "pet-adventure" && <div className="mt-6"><PetAdventureEngine /></div>}
       {activeTab === "vector-art" && <div className="mt-6"><VectorArtMaker /></div>}
@@ -733,6 +847,234 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
         </div>
       </div>
       )}
+
+      {/* MEDIA AND CREATIVE DISCUSSION BOARD */}
+      <div id="media_comments_board" className="mt-8 bg-white rounded-2xl border border-stone-200 p-6 shadow-sm space-y-6">
+        <div className="border-b pb-4 space-y-1">
+          <div className="flex items-center space-x-2">
+            <MessageSquare className="h-5 w-5 text-indigo-600 animate-pulse" />
+            <h3 className="text-lg font-bold text-stone-900 font-display">
+              Artistic Studio Discussion Board
+            </h3>
+          </div>
+          <p className="text-xs text-stone-500">
+            Discuss prompt engineering, share generated visual designs, and coordinate creative projects with active members.
+          </p>
+        </div>
+
+        {/* Comment Form */}
+        {currentUser ? (
+          <form onSubmit={handlePostMediaComment} className="flex gap-2">
+            <input
+              type="text"
+              required
+              value={mediaCommentText}
+              onChange={(e) => setMediaCommentText(e.target.value)}
+              placeholder="Share a prompt guideline, request feedback, or start a topic..."
+              className="flex-1 rounded-xl border border-stone-200 bg-neutral-50 px-4 py-2.5 text-xs outline-none focus:bg-white focus:border-indigo-600"
+            />
+            <button
+              type="submit"
+              className="rounded-xl bg-indigo-600 text-white font-bold px-5 py-2.5 text-xs hover:bg-slate-900 transition active:scale-95 cursor-pointer"
+            >
+              Post Comment
+            </button>
+          </form>
+        ) : (
+          <div className="rounded-xl bg-amber-50/50 border border-amber-200/60 p-3.5 text-center text-xs text-stone-650 flex items-center justify-center gap-1.5 font-bold">
+            <span>⚠️</span>
+            <span>You must be authenticated to post new comments or reply on this board.</span>
+          </div>
+        )}
+
+        {/* Comments Listing */}
+        <div className="space-y-4 max-h-[450px] overflow-y-auto pr-2 scrollbar-thin">
+          {mediaComments.filter(c => !c.parentId).length === 0 ? (
+            <p className="text-stone-400 italic text-xs text-center py-6">
+              No active discussions yet. Share your creative insights first!
+            </p>
+          ) : (
+            mediaComments
+              .filter(c => !c.parentId)
+              .map((c) => {
+                const childReplies = mediaComments.filter(rep => rep.parentId === c.id);
+                const isAdmin = currentUser?.role === "admin";
+
+                return (
+                  <div key={c.id} className="rounded-xl bg-stone-50/40 border border-stone-150 p-4 space-y-3 relative text-left">
+                    <div className="flex justify-between items-center text-xs">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-stone-800">{c.userName}</span>
+                        {c.isModerated && (
+                          <span className="bg-amber-105 text-amber-805 text-[9px] px-2 py-0.5 rounded-full font-bold">
+                            ⚠️ Moderated
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-stone-400 font-mono">{c.date}</span>
+                    </div>
+
+                    {/* Content view */}
+                    {c.isModerated && !isAdmin ? (
+                      <p className="text-stone-400 italic text-[11px] bg-stone-100 p-2.5 rounded-lg border border-dashed border-stone-200">
+                        {c.text}
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {c.isModerated && isAdmin && (
+                          <span className="text-[10px] text-amber-970 text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded block font-mono">
+                            Admin viewpoint (Original comment):
+                          </span>
+                        )}
+                        <p className="text-stone-705 text-xs leading-relaxed font-sans">
+                          "{c.isModerated && isAdmin ? c.originalText : c.text}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Actions and replies */}
+                    <div className="flex items-center gap-3 pt-1 text-[10px]">
+                      {currentUser && !c.isModerated && (
+                        <button
+                          type="button"
+                          onClick={() => setMediaReplyTarget(mediaReplyTarget === c.id ? null : c.id)}
+                          className="text-indigo-650 hover:underline font-bold"
+                        >
+                          Reply to conversation
+                        </button>
+                      )}
+
+                      {/* Admin Oversight buttons */}
+                      {isAdmin && (
+                        <>
+                          {currentUser && !c.isModerated && <span className="text-stone-300">|</span>}
+                          <button
+                            type="button"
+                            onClick={() => handleModerateMediaComment(c.id)}
+                            className="text-amber-705 font-bold hover:underline"
+                          >
+                            🛡️ {c.isModerated ? "Restore / Unmoderate" : "Moderate Content"}
+                          </button>
+                          <span className="text-stone-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm("Delete this media discussion thread and all its replies?")) {
+                                handleDeleteMediaComment(c.id);
+                              }
+                            }}
+                            className="text-red-650 font-bold hover:underline"
+                          >
+                            🗑️ Delete Thread
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Nested replies list */}
+                    {childReplies.length > 0 && (
+                      <div className="border-l-2 border-stone-250 pl-4 space-y-2.5 mt-2 bg-stone-100/30 p-2.5 rounded-r-lg">
+                        {childReplies.map((rep) => {
+                          const isRepModerated = rep.isModerated;
+                          return (
+                            <div key={rep.id} className="text-[11px] space-y-1 border-b border-dashed border-stone-100 last:border-b-0 pb-2 last:pb-0">
+                              <div className="flex justify-between items-center text-[10px] text-stone-550">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <CornerDownRight className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+                                  <span className="font-bold text-stone-700">{rep.userName}</span>
+                                  {isRepModerated && (
+                                    <span className="bg-amber-100 text-amber-800 text-[8px] px-1.5 py-0.2 rounded font-mono font-bold">
+                                      Moderated
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono">{rep.date}</span>
+                              </div>
+
+                              {isRepModerated && !isAdmin ? (
+                                <p className="text-stone-400 italic text-[11px] bg-stone-105 p-1.5 rounded ml-5">
+                                  {rep.text}
+                                </p>
+                              ) : (
+                                <div className="space-y-0.5 ml-5">
+                                  {isRepModerated && isAdmin && (
+                                    <span className="text-[9px] text-amber-770 text-amber-700 bg-amber-50 px-1 py-0.2 rounded block font-mono">
+                                      Admin viewpoint (Original reply):
+                                    </span>
+                                  )}
+                                  <p className="text-stone-605">
+                                    "{isRepModerated && isAdmin ? rep.originalText : rep.text}"
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Reply Admin Controls */}
+                              {isAdmin && (
+                                <div className="flex gap-2 text-[9px] font-bold text-stone-400 pt-0.5 ml-5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleModerateMediaComment(rep.id)}
+                                    className="text-amber-705 hover:underline"
+                                  >
+                                    {isRepModerated ? "Unmoderate Reply" : "Moderate Reply"}
+                                  </button>
+                                  <span className="text-stone-300">|</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (confirm("Delete this reply?")) {
+                                        handleDeleteMediaComment(rep.id);
+                                      }
+                                    }}
+                                    className="text-red-650 hover:underline"
+                                  >
+                                    Delete Reply
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Inline reply writer */}
+                    {mediaReplyTarget === c.id && (
+                      <div className="flex gap-2 pt-2 text-xs pl-3">
+                        <CornerDownRight className="h-4 w-4 text-stone-400 mt-2.5 shrink-0" />
+                        <input
+                          type="text"
+                          required
+                          value={mediaReplyText}
+                          onChange={(e) => setMediaReplyText(e.target.value)}
+                          placeholder={`Reply to ${c.userName}...`}
+                          className="flex-1 rounded border p-1 text-xs outline-none bg-white focus:border-indigo-650"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handlePostMediaReply(c.id)}
+                          className="rounded bg-indigo-600 px-3 py-1 text-white text-[10px] font-bold active:scale-95 cursor-pointer"
+                        >
+                          Post Reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMediaReplyTarget(null);
+                            setMediaReplyText("");
+                          }}
+                          className="text-stone-400 text-[10px] hover:underline"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+          )}
+        </div>
+      </div>
     </div>
   );
 }

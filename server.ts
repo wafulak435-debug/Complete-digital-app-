@@ -42,6 +42,131 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", mode: process.env.NODE_ENV || "development" });
 });
 
+// Directory to hold uploaded PDFs
+const PDF_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(PDF_DIR)) {
+  fs.mkdirSync(PDF_DIR, { recursive: true });
+}
+
+// Upload endpoint for custom books
+app.post("/api/books/pdf", (req, res) => {
+  try {
+    const { id, pdfBase64 } = req.body;
+    if (!id || !pdfBase64) {
+      return res.status(400).json({ success: false, error: "Missing book id or PDF data" });
+    }
+    
+    let pureBase64 = pdfBase64;
+    if (pdfBase64.startsWith("data:")) {
+      const parts = pdfBase64.split(";base64,");
+      if (parts[1]) pureBase64 = parts[1];
+    }
+    
+    const buffer = Buffer.from(pureBase64, "base64");
+    const filePath = path.join(PDF_DIR, `${id}.pdf`);
+    fs.writeFileSync(filePath, buffer);
+    console.log(`Saved PDF on server for book: ${id}`);
+    
+    return res.json({ success: true, url: `/api/books/pdf/${id}` });
+  } catch (error: any) {
+    console.error("Failed to save book PDF on server:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Serve book PDFs endpoint
+app.get("/api/books/pdf/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(PDF_DIR, `${id}.pdf`);
+    
+    if (fs.existsSync(filePath)) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${id}.pdf"`);
+      return res.sendFile(filePath);
+    } else {
+      return res.status(404).json({ success: false, error: "PDF document not found on server" });
+    }
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// New Endpoint to serve uploaded Word Documents
+app.get("/api/books/docx/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = path.join(PDF_DIR, `${id}.docx`);
+    if (fs.existsSync(filePath)) {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", `inline; filename="${id}.docx"`);
+      return res.sendFile(filePath);
+    } else {
+      return res.status(404).json({ success: false, error: "Word document not found on server" });
+    }
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// New Unified upload endpoint for Word or PDF Documents
+app.post("/api/books/upload-doc", async (req, res) => {
+  try {
+    const { id, fileBase64, fileName } = req.body;
+    if (!id || !fileBase64 || !fileName) {
+      return res.status(400).json({ success: false, error: "Missing required fields: id, fileBase64, or fileName" });
+    }
+
+    let pureBase64 = fileBase64;
+    if (fileBase64.startsWith("data:")) {
+      const parts = fileBase64.split(";base64,");
+      if (parts[1]) pureBase64 = parts[1];
+    }
+
+    const buffer = Buffer.from(pureBase64, "base64");
+    const ext = path.extname(fileName).toLowerCase();
+
+    if (!fs.existsSync(PDF_DIR)) {
+      fs.mkdirSync(PDF_DIR, { recursive: true });
+    }
+
+    // Save the original document file
+    const originalFilePath = path.join(PDF_DIR, `${id}${ext}`);
+    fs.writeFileSync(originalFilePath, buffer);
+    console.log(`Saved original document (${ext}) to ${originalFilePath}`);
+
+    let extractedText = "";
+    let fileType = "pdf";
+
+    if (ext === ".docx") {
+      fileType = "word";
+      try {
+        const mammothResult = await mammoth.extractRawText({ buffer });
+        extractedText = mammothResult.value || "";
+        console.log(`Successfully extracted ${extractedText.length} characters of raw text from Word document ${fileName}`);
+      } catch (err: any) {
+        console.error("Mammoth DOCX text extraction failed:", err);
+      }
+    } else if (ext === ".pdf") {
+      fileType = "pdf";
+      // Save duplicate with .pdf extension to be compatible with normal serving
+      const pdfFilePath = path.join(PDF_DIR, `${id}.pdf`);
+      fs.writeFileSync(pdfFilePath, buffer);
+    }
+
+    return res.json({
+      success: true,
+      url: ext === ".pdf" ? `/api/books/pdf/${id}` : `/api/books/docx/${id}`,
+      text: extractedText,
+      fileType: fileType,
+      fileName: fileName
+    });
+  } catch (error: any) {
+    console.error("Unified Document Upload API failed:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Expose actual workspace source files to Admin Panel for local standalone replication
 app.get("/api/admin/workspace-files", (req, res) => {
   try {
@@ -163,7 +288,7 @@ app.post("/api/ai/assistant", async (req, res) => {
       systemInstruction += " You are an expert STEM, Coding, and Mathematics Scholar. Present perfect, formal, step-by-step mathematical solutions and explanations without emojis or playful annotations. Avoid raw markdown hash headings.";
     } else if (category === "Project Plan") {
       systemInstruction += " You are an expert business and enterprise coordinator. Generate detailed, highly professional, formal project blueprints, timelines, and milestones. Avoid raw markdown hash headings.";
-    } else if (category === "Book Publisher") {
+    } else if (category === "Book Publisher" || category === "Document Publisher") {
       systemInstruction += " You are a digital book publishing machine. Generate highly structured, comprehensive, formal, and extensively informative book chapters in a scholarly tone. Avoid raw markdown hash headings.";
     } else if (category === "AI Note Generator") {
       systemInstruction += " You are an expert AI Note Generator. You MUST strictly structure all generated content into a logical, flawless hierarchical format of 'TOPIC: [Topic Name]\nSUB-TOPIC: [Sub-topic Name]\nDETAILED NOTES: [Exhaustive notes content]'. For each sub-topic, provide rich, scholarly detail. You are strictly forbidden from writing markdown '#' headers. Use BOLD CAPITALIZED text lines for headings, separated by spaces.";
@@ -186,32 +311,51 @@ app.post("/api/ai/assistant", async (req, res) => {
     // Append standard user prompt text
     userParts.push({ text: prompt || (voiceInput ? `Interpret and transcribe/solve this query: ${voiceInput}` : "Hello! Introduce yourself.") });
 
-    // Handle multiple image uploads if provided
+    // Handle multiple image uploads if provided (Images, PDFs, DOCX, TXT)
     const { images } = req.body;
+    let extraDocumentContext = "";
+
     if (images && Array.isArray(images)) {
-      images.forEach((imgBase64: string) => {
+      for (const imgBase64 of images) {
         if (imgBase64.startsWith("data:")) {
           const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
           if (match) {
-            userParts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2]
+            const mimeType = match[1];
+            const base64Data = match[2];
+
+            if (mimeType.includes("wordprocessingml") || mimeType.includes("docx")) {
+              try {
+                const docBuffer = Buffer.from(base64Data, "base64");
+                const mammothResult = await mammoth.extractRawText({ buffer: docBuffer });
+                const extractedText = mammothResult.value || "";
+                extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM ATTACHED WORD DOCX]:\n${extractedText}\n`;
+              } catch (docxErr: any) {
+                console.error("Assistant mammoth word parsing failed:", docxErr);
+                extraDocumentContext += `\n\n[WARNING: Attached Word document could not be fully parsed. Fallback raw code logs included]\n`;
               }
-            });
+            } else if (mimeType.includes("text/plain") || mimeType.includes("txt")) {
+              try {
+                const decodedText = Buffer.from(base64Data, "base64").toString("utf8");
+                extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM ATTACHED TEXT FILE]:\n${decodedText}\n`;
+              } catch (txtErr: any) {
+                console.error("Assistant plain text decoding failed:", txtErr);
+              }
+            } else {
+              // PDF, PNG, JPEG, SVG etc. can be natively sent to Gemini 3.5 Flash inside inlineData parts!
+              userParts.push({
+                inlineData: {
+                  mimeType,
+                  data: base64Data
+                }
+              });
+            }
           }
         }
-      });
-    } else if (image && image.startsWith("data:")) {
-      const semiMatch = image.match(/data:([^;]+);base64,(.*)/);
-      if (semiMatch) {
-         userParts.push({
-           inlineData: {
-             mimeType: semiMatch[1],
-             data: semiMatch[2]
-           }
-         });
       }
+    }
+
+    if (extraDocumentContext) {
+      userParts.push({ text: `\n\n[Attached Reference Documents Context]${extraDocumentContext}\n\nPlease analyze, revise, design, or summarize the attached documents precisely according to my prompts without changing any theological, legal, or strategic meanings unless I explicitly instruct you to make changes.` });
     }
 
     // Append the primary user prompt text + all uploaded files in user turn
@@ -259,6 +403,12 @@ app.post("/api/ai/assistant", async (req, res) => {
         reply = `### [OFFLINE MODE] Bungoma STEM Offline Solve:\n\n**Query:** "${prompt}"\n\n1. **Formula Hook**: Let $f(x) = \\int_{-\\infty}^{\\infty} e^{-x^2} dx$.\n2. **Breakdown**: $I = \\sqrt{\\pi}$. Let's divide by local parameters.\n3. **Bungoma Constant**: Perfect alignment completed.\n\n*Connecting to local DB to prevent data loss. Everything is stored instantly!*`;
       } else if (category === "AI Note Generator") {
         reply = `TOPIC: ${prompt || "GENERAL STRATEGIC LEADERSHIP"}\n\nSUB-TOPIC: Theoretical Foundation\n\nDETAILED NOTES: Effective scholarly study guidelines specify high-performance implementation checklists. This note was generated under Zion Digital's offline capability buffer. Once connected directly to the Gemini API online nodes, comprehensive analytical notes will load dynamically.\n\nSUB-TOPIC: Methodological Framework\n\nDETAILED NOTES: Analytical reviews and executive checklists for advanced digital enterprise architectures. Keep studying your offline curriculum resources safely!`;
+      } else if (category === "Project Plan") {
+        reply = `### [OFFLINE MODE] Enterprise & Strategic Project Blueprint:\n\n**Strategic Plan:** "${prompt || "Zion Digital Expansion Blueprint"}"\n\n**PROJECT INITIATIVE SUMMARY:**\n- **Project Focus**: High-capacity real-time synchronization architecture between mobile terminals and global laptops.\n- **Project Scope**: Database mapping, secure offline replication layers, and high-contrast user interfaces.\n\n| Phase | Goal / Objective Milestone | Completion Checklist Status |\n| ----- | -------------------------- | --------------------------- |\n| Phase 1 | Schema mapping & Cloud sync | COMPLETE (Indexed locally) |\n| Phase 2 | Wide UI & Double-docking | SUCCESS (Live navigation) |\n| Phase 3 | Offline backup validation | INTEGRATED (Buffered files) |\n\n*Review previous plans locally and export safely with unified clipboard formatting.*`;
+      } else if (category === "Book Publisher") {
+         reply = `### [OFFLINE MODE] Digital Book Publication Engine:\n\n**Book Chapter Context:** "${prompt || "Modern Strategic Theology in Cyber-Physical Environments"}"\n\n**CHAPTER 1: PRINCIPLES OF SYNCHRONOUS COV COOPERATIVE EDUCATION**\n\nWe define synchronous data bridges as resilient conduits maintaining scholarly cohesion between mobile files and static storage nodes. Under this framework, all uploads are converted instantly into universal JSON-encoded payloads and published elegantly on local and cloud servers.\n\n**CHAPTER 2: DESIGN PARAMETERS FOR HIGH-RELIABILITY WEB PLATFORMS**\n\nOptimal visual pacing requires clean Inter sans interfaces paired with high-contrast amber buttons, deep orange transitions, and dark background overrides to protect user attention and prevent sensory exhaustion during prolonged reading. Use the Send to Publisher button to draft this content immediately into the multi-page template editor!`;
+      } else if (category === "Creative Studio") {
+         reply = `### [OFFLINE MODE] Creative Studio Asset Design Visualizer:\n\n**Artistic Prompt Concept:** "${prompt || "Zion School of Computer Design in Bungoma"}"\n\n**VISUAL ELEMENT BLUEPRINT:**\n- **Aesthetic Pairings**: Illuminated golden vector graphics, rich deep royal blue crest shields, and soft sunset accents.\n- **Composition**: High-contrast geometric layout representing local computer networks, Bible verses, and community leaders.\n- **HD Spec**: 1K Pixel-perfect canvas with high-dynamic range rendering, tailored for mobile lockscreens, banners, and vector assets.`;
       } else {
         reply = `### [OFFLINE MODE] Wafula Digital AI Companion:\n\n"**${prompt}**"\n\nWelcome back! You are currently using WafulaSeller off-the-grid engine. All your message files, search histories, and linked items are safely backed up in Browser LocalStorage. Once connected, your records remain beautifully in sync across screens. Let me know how I can guide your learning in leadership and business!`;
       }
@@ -288,13 +438,14 @@ app.post("/api/school/generate-class", async (req, res) => {
     let classData = null;
 
     if (process.env.GEMINI_API_KEY) {
-      const parsedType = schoolType === "computer" 
-        ? "Computer Infrastructure & Programming" 
-        : schoolType === "bible"
-        ? "Theology, Homiletics & Biblical Hermeneutics"
-        : "Ethical Leadership & Strategy Model";
+      try {
+        const parsedType = schoolType === "computer" 
+          ? "Computer Infrastructure & Programming" 
+          : schoolType === "bible"
+          ? "Theology, Homiletics & Biblical Hermeneutics"
+          : "Ethical Leadership & Strategy Model";
 
-      const systemInstruction = `You are a Senior Academic Scholar, Tech Lead, and Principal Examiner at ${schoolName}. 
+        const systemInstruction = `You are a Senior Academic Scholar, Tech Lead, and Principal Examiner at ${schoolName}. 
 You must generate incredibly profound, highly structured, cohesive, and exhaustive course lectures.
 Utilize live, accurate web search information via Google Search to back up all factual details.
 Your lecture notes MUST be exceptionally well-organized and written in an easy-to-understand, pedagogical, and crisp academic style, using clear headers, definitions, and code syntax or bullet divisions if technical or biblical scriptures if religious.
@@ -303,52 +454,56 @@ Make sure the information is correct and helps raise elite qualified leaders, fi
 Then create exactly 5 high-caliber, challenging multi-choice exam questions assessing the student's learning, matching the JSON schema.
 Each question's correct option must be marked in correctIndex (0-based) and the "explanation" field must detail why that answer is logically, factually, and syntactically correct, and why other options fail.`;
 
-      const prompt = `Generate a complete high-fidelity academic syllabus class for the topic: "${topic}" which belongs to the category: "${parsedType}". Include illustrative visual prompts and exactly 5 exam questions.`;
+        const prompt = `Generate a complete high-fidelity academic syllabus class for the topic: "${topic}" which belongs to the category: "${parsedType}". Include illustrative visual prompts and exactly 5 exam questions.`;
 
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }],
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              topic: { type: Type.STRING },
-              slogan: { type: Type.STRING },
-              intro: { type: Type.STRING },
-              points: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Deep, extended paragraphs (minimum 5, at least 150-200 words each) outlining key study milestones or chapters."
-              },
-              illustrationPrompt: { type: Type.STRING, description: "Highly descriptive photorealistic picture generation prompt for Imagen to represent this topic beautifully." },
-              selfAssessment: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    question: { type: Type.STRING },
-                    options: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING }
-                    },
-                    correctIndex: { type: Type.INTEGER },
-                    explanation: { type: Type.STRING }
-                  },
-                  required: ["question", "options", "correctIndex", "explanation"]
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            tools: [{ googleSearch: {} }],
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                topic: { type: Type.STRING },
+                slogan: { type: Type.STRING },
+                intro: { type: Type.STRING },
+                points: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: "Deep, extended paragraphs (minimum 5, at least 150-200 words each) outlining key study milestones or chapters."
                 },
-                description: "Array of exactly 5 multiple choice questions."
-              }
-            },
-            required: ["topic", "slogan", "intro", "points", "illustrationPrompt", "selfAssessment"]
+                illustrationPrompt: { type: Type.STRING, description: "Highly descriptive photorealistic picture generation prompt for Imagen to represent this topic beautifully." },
+                selfAssessment: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      question: { type: Type.STRING },
+                      options: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING }
+                      },
+                      correctIndex: { type: Type.INTEGER },
+                      explanation: { type: Type.STRING }
+                    },
+                    required: ["question", "options", "correctIndex", "explanation"]
+                  },
+                  description: "Array of exactly 5 multiple choice questions."
+                }
+              },
+              required: ["topic", "slogan", "intro", "points", "illustrationPrompt", "selfAssessment"]
+            }
           }
-        }
-      });
+        });
 
-      if (response.text) {
-        classData = JSON.parse(response.text.trim());
+        if (response.text) {
+          classData = JSON.parse(response.text.trim());
+        }
+      } catch (err: any) {
+        console.warn("⚠️ Online generate-class failed (e.g. rate limit/quota). Falling back to Offline Scholar AI: ", err.message || err);
+        classData = null;
       }
     }
 
@@ -448,7 +603,8 @@ app.post("/api/school/generate-quiz", async (req, res) => {
     let questionsList = null;
 
     if (process.env.GEMINI_API_KEY) {
-      const systemInstruction = `You are a Senior Academic Examiner and Principal Evaluator at Zion Digital Academy.
+      try {
+        const systemInstruction = `You are a Senior Academic Examiner and Principal Evaluator at Zion Digital Academy.
 You must construct a rigorous, professional, and comprehensive ${qCount}-question multiple-choice examination based strictly on the provided lesson text.
 The course notes are extremely detailed, and the questions should test deep concept comprehension, theoretical applications, or logic.
 Each question MUST have exactly 4 logical options.
@@ -456,50 +612,54 @@ Establish a clear correctIndex (0-3 representing the index of the correct option
 Provide an exhaustive explanation detailing why that choice is scientifically, managerially, or theologically correct, and why other options are incorrect.
 Do NOT use markdown headers or any emojis. Use an objective, scholar-level tone.`;
 
-      const prompt = `Based on the following lecture lesson notes, generate a high-caliber multiple choice exam consisting of exactly ${qCount} questions.
+        const prompt = `Based on the following lecture lesson notes, generate a high-caliber multiple choice exam consisting of exactly ${qCount} questions.
 Notes Topic / Subtopic: "${subtopic || 'General Topic'}"
 Lesson Notes Content to extract from:
 ${notes}
 
 Create exactly ${qCount} distinct questions conforming to the specified JSON schema structure.`;
 
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              questions: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    question: { type: Type.STRING },
-                    options: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING }
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                questions: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      question: { type: Type.STRING },
+                      options: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING }
+                      },
+                      correctIndex: { type: Type.INTEGER },
+                      explanation: { type: Type.STRING }
                     },
-                    correctIndex: { type: Type.INTEGER },
-                    explanation: { type: Type.STRING }
+                    required: ["question", "options", "correctIndex", "explanation"]
                   },
-                  required: ["question", "options", "correctIndex", "explanation"]
-                },
-                description: `Array of exactly ${qCount} challenging exam questions based on the lesson notes.`
-              }
-            },
-            required: ["questions"]
+                  description: `Array of exactly ${qCount} challenging exam questions based on the lesson notes.`
+                }
+              },
+              required: ["questions"]
+            }
+          }
+        });
+
+        if (response.text) {
+          const parsed = JSON.parse(response.text.trim());
+          if (parsed && Array.isArray(parsed.questions)) {
+            questionsList = parsed.questions;
           }
         }
-      });
-
-      if (response.text) {
-        const parsed = JSON.parse(response.text.trim());
-        if (parsed && Array.isArray(parsed.questions)) {
-          questionsList = parsed.questions;
-        }
+      } catch (err: any) {
+        console.warn("⚠️ Online generate-quiz failed (e.g. quota/rate limits). Falling back to Offline Exam Generator:", err.message || err);
+        questionsList = null;
       }
     }
 
@@ -641,28 +801,33 @@ app.post("/api/school/generate-notes", async (req, res) => {
     let detailedNotes = null;
 
     if (process.env.GEMINI_API_KEY) {
-      const parsedType = schoolType === "computer" ? "Computer Infrastructure, Programming & Algorithms" : "Ethical Leadership, Strategic Planning & Governance";
-      const systemInstruction = `You are a Lead Academic Scholar, Professor, and Distinguished Tech Evangelist at ${schoolName}.
+      try {
+        const parsedType = schoolType === "computer" ? "Computer Infrastructure, Programming & Algorithms" : "Ethical Leadership, Strategic Planning & Governance";
+        const systemInstruction = `You are a Lead Academic Scholar, Professor, and Distinguished Tech Evangelist at ${schoolName}.
 Your objective is to generate an exceptionally detailed, extensive, and massive academic textbook/study-notes collection of exactly 10 distinct topics/chapters.
 Each of the 10 topics MUST contain exactly 5 designated subtopics (total of 50 comprehensive subtopics).
 For each topic, provide incredibly comprehensive and reading-intensive study-guide text containing exhaustive details, theoretical foundations, code snippets (for IT/computer courses), detailed strategic management frameworks (for leadership courses), regional applications (e.g., Bungoma, Kenya, East Africa), and complex unit analyses, formatted using clean Markdown.
 Ensure you write at an extreme depth equivalent to 4 dense textbook pages of exhaustive study material per topic, provoking high-level scholarly learning with zero fluff. Every topic and subtopic must be fully realized with extensive, detailed prose, do not truncate or use placeholders.`;
 
-      const prompt = `Generate a monumental, extremely long-form, and complete textbook course syllabus consisting of exactly 10 comprehensive topics under the study area "${topic}" (Curriculum division: "${parsedType}").
+        const prompt = `Generate a monumental, extremely long-form, and complete textbook course syllabus consisting of exactly 10 comprehensive topics under the study area "${topic}" (Curriculum division: "${parsedType}").
 For each of the 10 topics, declare exactly 5 deep subtopics and provide incredibly detailed textbook study-notes content comprising equivalent to 4 reading pages of exhaustive, highly comprehensive prose for that topic.
 This must be formatted in beautiful Markdown (using #, ##, ###, bullet points, numbered lists, and code blocks where applicable) so that the user receives an incredibly complete and intensive education module.`;
 
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          tools: [{ googleSearch: {} }]
-        }
-      });
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }]
+          }
+        });
 
-      if (response.text) {
-        detailedNotes = response.text;
+        if (response.text) {
+          detailedNotes = response.text;
+        }
+      } catch (err: any) {
+        console.warn("⚠️ Online generate-notes failed. Falling back to Offline Note Compiler:", err.message || err);
+        detailedNotes = null;
       }
     }
 
@@ -716,12 +881,13 @@ app.post("/api/school/generate-section-notes", async (req, res) => {
     let detailedNotes = null;
 
     if (process.env.GEMINI_API_KEY) {
-      const systemInstruction = `You are an elite academic professor and subject-matter expert at ${schoolName}.
+      try {
+        const systemInstruction = `You are an elite academic professor and subject-matter expert at ${schoolName}.
 Your objective is to draft exceptionally detailed, highly comprehensive, exhaustive, and reading-intensive study-guide notes (about 300 to 500 words) specifically for the chapter "${sectionTitle}" (under the broader lesson topic: "${topic}").
 Your prose must be rigorous, clear, professional, academic, and deep. It must provide rich historical context, core technical or theological foundations, specific examples grounded in Kenya and East Africa (e.g., Bungoma, Nairobi), actionable strategic recommendations/checklists, and highly structured summaries.
 Do not truncate or write lazy skeletons. Deliver dense, high-fidelity academic excellence in beautifully styled Markdown (using headings, bullet points, and code files or theological verses where relevant).`;
 
-      const prompt = `Write exhaustive, dense textbook-level academic study notes for this specific section:
+        const prompt = `Write exhaustive, dense textbook-level academic study notes for this specific section:
 - broader lesson topic: ${topic}
 - section index: Section ${sectionIndex}
 - section title: ${sectionTitle}
@@ -729,17 +895,21 @@ Do not truncate or write lazy skeletons. Deliver dense, high-fidelity academic e
 
 Draft around 300-500 words of rich, comprehensive academic prose formatted with structured Markdown. Include detailed analysis sub-sections, real-world regional context cases (Kenya/Bungoma), and strategic takeaways.`;
 
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          tools: [{ googleSearch: {} }]
-        }
-      });
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }]
+          }
+        });
 
-      if (response.text) {
-        detailedNotes = response.text;
+        if (response.text) {
+          detailedNotes = response.text;
+        }
+      } catch (err: any) {
+        console.warn("⚠️ Online generate-section-notes failed. Falling back to Offline Syllabus Writer:", err.message || err);
+        detailedNotes = null;
       }
     }
 
@@ -784,27 +954,32 @@ app.post("/api/school/generate-curriculum", async (req, res) => {
     let detailedContent = null;
 
     if (process.env.GEMINI_API_KEY) {
-      const systemInstruction = `You are a Senior Curriculum Director, Academic Dean, and Distinguished Professor at Zion Digital Leadership & Computer School.
+      try {
+        const systemInstruction = `You are a Senior Curriculum Director, Academic Dean, and Distinguished Professor at Zion Digital Leadership & Computer School.
 Your task is to generate exactly 10 comprehensive, high-integrity academic topics for the subject: "${subject}".
 Each of the 10 topics MUST contain exactly 5 designated subtopics (numbered, total of 50 subtopics).
 For each topic, provide an exceptionally reading-intensive, comprehensive textbook-grade study guide (at least 500-800 words per topic) representing approximately 4 dense printed pages of extensive notes across the entire document.
 Include detailed explanations, theoretical foundations, case examples (utilizing local context of Bungoma or East African development patterns where relevant), and bullet point divisions.
 Strictly write using beautiful, crisp academic prose. Do not truncate, use ellipses, or placeholder text. Format titles/headings on separate lines using clear Markdown.`;
 
-      const prompt = `Formulate a comprehensive, monumental academic curriculum of exactly 10 topics with 5 subtopics each for the selected subject: "${subject}".
+        const prompt = `Formulate a comprehensive, monumental academic curriculum of exactly 10 topics with 5 subtopics each for the selected subject: "${subject}".
 The output must represent 4-page detailed digital notes, ensuring profound, formal, and intensive educational notes of unmatched scholarly precision.`;
 
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          systemInstruction,
-          tools: [{ googleSearch: {} }] // supports live search verification
-        }
-      });
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: prompt,
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }] // supports live search verification
+          }
+        });
 
-      if (response.text) {
-        detailedContent = response.text;
+        if (response.text) {
+          detailedContent = response.text;
+        }
+      } catch (err: any) {
+        console.warn("⚠️ Online generate-curriculum failed. Falling back to offline syllabus writer:", err.message || err);
+        detailedContent = null;
       }
     }
 
@@ -933,101 +1108,109 @@ app.post("/api/ai/extract", async (req, res) => {
 
     console.log(`📊 Processing extraction in server. FileName: ${fileName || "N/A"}, MimeType: ${mimeType}`);
 
+    let runOfflineFallback = !process.env.GEMINI_API_KEY;
+
     if (process.env.GEMINI_API_KEY) {
-      // 1. Image OCR Processing
-      if (mimeType.startsWith("image/")) {
-        const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: { mimeType, data: rawBase64 }
-            },
-            {
-              text: "Extract all visible text from this image. If it contains mathematical equations, handwritten notes, tables, structural documents, or signage, transcribe them perfectly. Present it beautifully using clean Markdown."
-            }
-          ],
-          config: {
-            systemInstruction: "You are an expert OCR and doc transcriber based in Bungoma. Transcribe all text accurately without leaving anything out. Do not write markdown # headers in your output. Use CAPITALIZED BOLD instead."
-          }
-        });
-        textResult = response.text || "No text could be extracted from image.";
-      } 
-      // 2. Video Parsing & Transcription
-      else if (mimeType.startsWith("video/")) {
-        const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: { mimeType, data: rawBase64 }
-            },
-            {
-              text: "Explain, transcribe, and extract text from this video. Analyze the frames to find textual content (slides, signs, whiteboards, notes shown) and transcribe spoken speech, dialogues, or presentations. Compile this synthesized information into a comprehensive, beautiful academic or strategic markdown report. Ensure headings use CAPITALIZED BOLD instead of markdown # headers."
-            }
-          ],
-          config: {
-            systemInstruction: "You are an elite video transcriber and strategic analyst. Convert video content into detailed, structured, high-grade study grids and reports."
-          }
-        });
-        textResult = response.text || "No transcription or text could be extracted from the video.";
-      } 
-      // 3. PDF Parsing
-      else if (mimeType === "application/pdf" || fileName?.endsWith(".pdf")) {
-        const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: { mimeType: "application/pdf", data: rawBase64 }
-            },
-            {
-              text: "Extract, read, and summarize all relevant texts and structures from this PDF manuscript in comprehensive academic or business prose. Format chapter headings using bold capitalize lines, avoiding standard markdown '#' headers."
-            }
-          ],
-          config: {
-            systemInstruction: "You are an elite academic manuscript scanner and parser. Transform the content of the PDF into beautifully readable markdown text segments."
-          }
-        });
-        textResult = response.text || "No text could be parsed from the PDF document.";
-      }
-      // 4. DOCX Word Document Parsing
-      else if (mimeType.includes("docx") || mimeType.includes("wordprocessingml") || fileName?.endsWith(".docx")) {
-        try {
-          const fileBuffer = Buffer.from(rawBase64, "base64");
-          const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
-          const docxText = mammothResult.value || "";
-          
+      try {
+        // 1. Image OCR Processing
+        if (mimeType.startsWith("image/")) {
           const response = await aiClient.models.generateContent({
             model: "gemini-3.5-flash",
-            contents: `Please refine, format, and structure the following raw extracted text from a Microsoft Word Document. Turn it into a beautifully polished, comprehensive, and cohesive report or educational outline suitable for print:
-            
-            ${docxText}
-            
-            Format headings using CAPITALIZED BOLD lines instead of markdown '#' hash symbols.`
+            contents: [
+              {
+                inlineData: { mimeType, data: rawBase64 }
+              },
+              {
+                text: "Extract all visible text from this image. If it contains mathematical equations, handwritten notes, tables, structural documents, or signage, transcribe them perfectly. Present it beautifully using clean Markdown."
+              }
+            ],
+            config: {
+              systemInstruction: "You are an expert OCR and doc transcriber based in Bungoma. Transcribe all text accurately without leaving anything out. Do not write markdown # headers in your output. Use CAPITALIZED BOLD instead."
+            }
           });
-          textResult = response.text || docxText || "No content extracted from DOCX.";
-        } catch (docxErr: any) {
-          console.error("Mammoth parsing failed:", docxErr);
-          throw new Error("Word Document parsing failed: " + docxErr.message);
+          textResult = response.text || "No text could be extracted from image.";
+        } 
+        // 2. Video Parsing & Transcription
+        else if (mimeType.startsWith("video/")) {
+          const response = await aiClient.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: [
+              {
+                inlineData: { mimeType, data: rawBase64 }
+              },
+              {
+                text: "Explain, transcribe, and extract text from this video. Analyze the frames to find textual content (slides, signs, whiteboards, notes shown) and transcribe spoken speech, dialogues, or presentations. Compile this synthesized information into a comprehensive, beautiful academic or strategic markdown report. Ensure headings use CAPITALIZED BOLD instead of markdown # headers."
+              }
+            ],
+            config: {
+              systemInstruction: "You are an elite video transcriber and strategic analyst. Convert video content into detailed, structured, high-grade study grids and reports."
+            }
+          });
+          textResult = response.text || "No transcription or text could be extracted from the video.";
+        } 
+        // 3. PDF Parsing
+        else if (mimeType === "application/pdf" || fileName?.endsWith(".pdf")) {
+          const response = await aiClient.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: [
+              {
+                inlineData: { mimeType: "application/pdf", data: rawBase64 }
+              },
+              {
+                text: "Extract, read, and summarize all relevant texts and structures from this PDF manuscript in comprehensive academic or business prose. Format chapter headings using bold capitalize lines, avoiding standard markdown '#' headers."
+              }
+            ],
+            config: {
+              systemInstruction: "You are an elite academic manuscript scanner and parser. Transform the content of the PDF into beautifully readable markdown text segments."
+            }
+          });
+          textResult = response.text || "No text could be parsed from the PDF document.";
         }
-      }
-      // 5. Plain Text files or fallback
-      else if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
-        const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
-        const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `Polish, correct spelling, reformat, and restructure the following plain text document into an elegant academic layout:
-          
-          ${decodedText}
-          
-          Ensure all section headers are written as BOLD CAPITALIZED text lines, not raw '#' markdown hashes.`
-        });
-        textResult = response.text || decodedText;
-      }
-      // Fallback
-      else {
-        textResult = `### Processing Complete
+        // 4. DOCX Word Document Parsing
+        else if (mimeType.includes("docx") || mimeType.includes("wordprocessingml") || fileName?.endsWith(".docx")) {
+          try {
+            const fileBuffer = Buffer.from(rawBase64, "base64");
+            const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
+            const docxText = mammothResult.value || "";
+            
+            const response = await aiClient.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: `Please refine, format, and structure the following raw extracted text from a Microsoft Word Document. Turn it into a beautifully polished, comprehensive, and cohesive report or educational outline suitable for print:
+              
+              ${docxText}
+              
+              Format headings using CAPITALIZED BOLD lines instead of markdown '#' hash symbols.`
+            });
+            textResult = response.text || docxText || "No content extracted from DOCX.";
+          } catch (docxErr: any) {
+            console.error("Mammoth parsing failed:", docxErr);
+            throw new Error("Word Document parsing failed: " + docxErr.message);
+          }
+        }
+        // 5. Plain Text files or fallback
+        else if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
+          const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
+          const response = await aiClient.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: `Polish, correct spelling, reformat, and restructure the following plain text document into an elegant academic layout:
+            
+            ${decodedText}
+            
+            Ensure all section headers are written as BOLD CAPITALIZED text lines, not raw '#' markdown hashes.`
+          });
+          textResult = response.text || decodedText;
+        }
+        else {
+          textResult = `### Processing Complete
 Successfully unpacked file: ${fileName || "document"} (Mime-type: ${mimeType}). Content has been logged directly inside your dashboard.`;
+        }
+      } catch (err: any) {
+        console.warn("⚠️ Online extraction failed/quota error. Falling back to offline transcribing simulator: ", err.message || err);
+        runOfflineFallback = true;
       }
-    } else {
+    }
+
+    if (runOfflineFallback) {
       // Offline fallback simulations
       if (mimeType.startsWith("video/")) {
         textResult = `### [OFFLINE TRANSCRIBE] ${title} (Video Output)
@@ -1620,6 +1803,93 @@ app.all("/api/ai/video-download", async (req, res) => {
   } catch (error: any) {
     console.error("Video Download error:", error);
     res.status(500).json({ success: false, error: error.message || "Failed to download video file." });
+  }
+});
+
+// AI Lecture & Syllabus Exam Compiler
+app.post("/api/ai/compile-lecture-questions", async (req, res) => {
+  const { topic, content } = req.body;
+  if (!topic || !content) {
+    return res.status(400).json({ success: false, error: "Topic and notes content are required to process." });
+  }
+
+  try {
+    const aiClient = getGenAI();
+    let questionsList = [];
+
+    if (process.env.GEMINI_API_KEY) {
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: `Based on the following course text, please generate exactly 3 highly relevant multiple-choice questions for students.
+Each question MUST have exactly 4 choices/options, a zero-indexed 'correctIndex' indicating the correct choice, and a brief 'explanation' for the correct index.
+
+COURSE TEXT:
+"${content}"
+
+Return the JSON output matching this strict schema:
+[
+  {
+    "question": "question text",
+    "options": ["option 0", "option 1", "option 2", "option 3"],
+    "correctIndex": 0,
+    "explanation": "short explanation"
+  }
+]
+IMPORTANT: Return ONLY raw valid JSON matching this structure. Do NOT wrap inside backticks or markdown, do not write preamble text.`,
+      });
+
+      const text = response.text || "";
+      const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      try {
+        questionsList = JSON.parse(cleaned);
+      } catch (e) {
+        console.warn("Failed standard JSON parsing of questions, trying fallback parser:", e);
+      }
+    }
+
+    // Fallback if key missing or parsing failed
+    if (!Array.isArray(questionsList) || questionsList.length === 0) {
+      questionsList = [
+        {
+          question: `Regarding "${topic}", which core aspect represents its strategic foundation?`,
+          options: [
+            "Structured administrative systems & capacity building",
+            "Random unaligned testing iterations",
+            "Secondary offline document database caching logs",
+            "Manual compliance overrides with zero logging"
+          ],
+          correctIndex: 0,
+          explanation: `Academic materials for ${topic} emphasize structured strategic systems design to maximize community literacy.`
+        },
+        {
+          question: `Which metric is primary when evaluating results for "${topic}" course notes?`,
+          options: [
+            "Consistent unaltered presentation of lessons and notes",
+            "Temporary mock values with frequent changes",
+            "Removal of technical terminology",
+            "Bypassing student assessment steps"
+          ],
+          correctIndex: 0,
+          explanation: "Preserving unaltered document resources is mandatory to uphold scholarly integrity standards."
+        },
+        {
+          question: `How does our automated grading system handle assessment verification?`,
+          options: [
+            "Coordinates instant digital grading and outputs transcript results",
+            "Forces the student to wait for physical reviews before seeing any score",
+            "Deletes previous progress records automatically",
+            "Changes original notes to fit student answers"
+          ],
+          correctIndex: 0,
+          explanation: "Academic transcripts are displayed in real-time right after the quiz submission concludes."
+        }
+      ];
+    }
+
+    res.json({ success: true, questions: questionsList });
+  } catch (err: any) {
+    console.error("Compile lecture questions failed:", err);
+    res.status(500).json({ success: false, error: err.message || "Failed to compile lecture questions with AI." });
   }
 });
 

@@ -35,7 +35,9 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
   const [rotateZ, setRotateZ] = useState<number>(0);
   const [perspective, setPerspective] = useState<number>(1000);
   const [bookThickness, setBookThickness] = useState<number>(45); // Thick paperback look
-  const [bookScale, setBookScale] = useState<number>(1.0);
+  const [bookScale, setBookScale] = useState<number>(() => {
+    return typeof window !== 'undefined' && window.innerWidth < 768 ? 0.62 : 1.0;
+  });
   const [isOpen, setIsOpen] = useState<boolean>(false); // Open book/split pages fold anim
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [autoRotateSpeed, setAutoRotateSpeed] = useState<number>(1); // Speed index
@@ -313,7 +315,7 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
       <div className="grid gap-6 lg:grid-cols-12">
         
         {/* LEFT COLUMN: ACTIVE CONTROL & TEXTURE SETUP PANEL */}
-        <div className="lg:col-span-5 flex flex-col space-y-5">
+        <div className="lg:col-span-5 flex flex-col space-y-5 order-last lg:order-none">
           
           {/* 3D Catalog Selector */}
           <div className="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm space-y-3.5">
@@ -605,7 +607,7 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
         </div>
 
         {/* RIGHT COLUMN: THE DYNAMIC 3D CANVAS LAB & LIGHT SETTINGS */}
-        <div className="lg:col-span-12 xl:col-span-7 flex flex-col space-y-4">
+        <div className="lg:col-span-12 xl:col-span-7 flex flex-col space-y-4 order-first lg:order-none">
           
           {/* Light presets selector */}
           <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm flex flex-col md:flex-row gap-4 md:items-center justify-between">
@@ -668,7 +670,7 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
           {/* THE 3D INTERACTIVE ROOM VIEWPORT */}
           <div 
             id="the_3d_render_viewport"
-            className={`rounded-3xl border border-stone-250 min-h-[460px] relative overflow-hidden transition-all duration-700 flex flex-col justify-center items-center shadow-lg cursor-grab active:cursor-grabbing ${currentLighting.roomBg}`}
+            className={`rounded-3xl border border-stone-250 h-[255px] sm:h-[320px] md:h-[400px] lg:h-[460px] relative overflow-hidden transition-all duration-700 flex flex-col justify-center items-center shadow-lg cursor-grab active:cursor-grabbing ${currentLighting.roomBg}`}
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUpOrLeave}

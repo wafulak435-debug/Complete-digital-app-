@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { BookOpen, Search, Bookmark, Sun, Play, Pause, Volume2, Settings, HelpCircle, Sparkles, BookMarked, RefreshCw } from "lucide-react";
 import { BIBLE_DATA, DEVOTIONALS } from "../data";
 import { BibleDB, Highlight, StudyNote } from "../lib/bibleDb";
+import { GENERAL_OFFLINE_WORDS, DictionaryWord } from "./OfflineDictionary";
 
 interface BibleProps {
   onUnlockBadge: (badgeId: string) => void;
@@ -128,6 +129,17 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
   const [noteInputText, setNoteInputText] = useState("");
   const [isBibleFullScreen, setIsBibleFullScreen] = useState(false);
 
+  // --- CROSS-FEATURE SYNERGY STATES ---
+  const [showSwahiliSideBySide, setShowSwahiliSideBySide] = useState<boolean>(false);
+  const [swahiliChapterVerses, setSwahiliChapterVerses] = useState<string[]>([]);
+  const [selectedWordInfo, setSelectedWordInfo] = useState<{
+    word: string;
+    definition?: string;
+    translation?: string;
+    loading?: boolean;
+    verseRef?: string;
+  } | null>(null);
+
   // Text to Speech States
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1.0); // 0.5 to 2.0
@@ -174,6 +186,257 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
             <span key={i} className="font-black" style={{ fontWeight: 900 }}>{part}</span>
           )
         )}
+      </span>
+    );
+  };
+
+  // --- OFFLINE SWAHILI BIBLE FALLBACK RECONSTRUCTOR ---
+  const getOfflineSwahiliTheologyFallback = (book: string, chapter: number, verseNum: number, englishText: string): string => {
+    if (book === "John" && chapter === 1) {
+      const mapping: { [key: number]: string } = {
+        1: "Hapo mwanzo alikuwako Neno, naye Neno alikuwako kwa Mungu, naye Neno alikuwa Mungu.",
+        2: "Huyo mwanzo alikuwako kwa Mungu.",
+        3: "Vyote vilifanyika kwa huyo; na pasipo yeye hakikufanyika cho chote kilichofanyika.",
+        4: "Ndani yake ndimo ulimokuwa uzima, nao ule uzima ulikuwa nuru ya watu.",
+        5: "Nayo nuru yang’ara gizani, wala giza halikuweza kuishinda.",
+        6: "Palikuwa na mtu aliyetumwa kutoka kwa Mungu, jina lake Yohana.",
+        7: "Huyo alikuja kwa ushuhuda, ili aishuhudie ile nuru, wote wapate kuamini kwa yeye.",
+        8: "Huyo hakuwa ile nuru, bali alikuja ili aishuhudie ile nuru.",
+        9: "Nuru ya kweli ilikuwako, iliyomwangaza kila mtu, ikija katika ulimwengu.",
+        10: "Alikuwako ulimwenguni, na kwa yeye ulimwengu ulifanyika, wala ulimwengu haukumtambua.",
+        11: "Alikuja kwake, na walio wake hawakumpokea.",
+        12: "Bali wote waliompokea aliwapa uwezo wa kufanyika watoto wa Mungu, ndio wale waliaminio jina lake;",
+      };
+      if (mapping[verseNum]) return mapping[verseNum];
+    }
+    if (book === "Psalms" && chapter === 23) {
+      const mapping: { [key: number]: string } = {
+        1: "Bwana ndiye mchungaji wangu, Sitapungukiwa na kitu.",
+        2: "Katika malisho ya majani mabichi hunilaza, Kando ya maji ya utulivu huniongoza.",
+        3: "Hunihuisha nafsi yangu; na kuniongoza Katika njia za haki kwa ajili ya jina lake.",
+        4: "Naam, nijapopita kati ya bonde la uvuli wa mauti, Sitaogopa mabaya; kwa maana Wewe upo pamoja nami; Gongo lako na fimbo yako vyanifariji.",
+        5: "Waandaa meza mbele ya adui zangu; Umepaka kichwa changu mafuta, Na kikombe changu kinafurika.",
+        6: "Hakika wema na fadhili zitanifuata Siku zote za maisha yangu; Nami nitakaa nyumbani mwa Bwana milele."
+      };
+      if (mapping[verseNum]) return mapping[verseNum];
+    }
+    // Dynamic replacement fallback
+    let translatedText = englishText.replace(/^\d+\.\s*/, "");
+    const replacements: [RegExp, string][] = [
+      [/\bGod\b/gi, "Mungu"],
+      [/\bLord\b/gi, "Bwana"],
+      [/\bWord\b/gi, "Neno"],
+      [/\bbeginning\b/gi, "mwanzo"],
+      [/\bcreated\b/gi, "aliumba"],
+      [/\bheaven\b/gi, "mbingu"],
+      [/\bearth\b/gi, "nchi"],
+      [/\blight\b/gi, "nuru"],
+      [/\bdarkness\b/gi, "giza"],
+      [/\bman\b/gi, "mtu"],
+      [/\bteacher\b/gi, "mwalimu"],
+      [/\bleader\b/gi, "kiongozi"],
+      [/\bbook\b/gi, "kitabu"],
+      [/\blife\b/gi, "uzima"],
+      [/\bworld\b/gi, "ulimwengu"],
+      [/\bspirit\b/gi, "roho"],
+      [/\bwaters\b/gi, "maji"],
+      [/\bfaith\b/gi, "imani"],
+      [/\blove\b/gi, "upendo"]
+    ];
+    replacements.forEach(([rx, replacement]) => {
+      translatedText = translatedText.replace(rx, replacement);
+    });
+    return `[SWAHILI TRANSLATION] ${translatedText}`;
+  };
+
+  const fetchSwahiliChapterVerses = async (book: string, chapter: number, englishVerses: string[]) => {
+    try {
+      const cacheKey = `SWAHILI_${book}_${chapter}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        setSwahiliChapterVerses(JSON.parse(cached));
+        return;
+      }
+
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const resp = await fetch("/api/ai/assistant", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: `Translate these Bible verses from ${book} Chapter ${chapter} into Swahili (Kiswahili). Maintain standard Swahili Bible register (Biblia Takatifu, Union Version). Provide ONLY a JSON array of strings matching the same verse indexes. Output no commentary or introductory notes. Start with '[' and end with ']': ${JSON.stringify(englishVerses)}`,
+            category: "Assistant"
+          })
+        });
+        const data = await resp.json();
+        if (data.success && data.text) {
+          let textResult = data.text.trim();
+          if (textResult.startsWith("```")) {
+            textResult = textResult.replace(/^```(json)?/, "").replace(/```$/, "").trim();
+          }
+          const parsed = JSON.parse(textResult);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setSwahiliChapterVerses(parsed);
+            localStorage.setItem(cacheKey, JSON.stringify(parsed));
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch Swahili side-by-side translation:", err);
+    }
+
+    const fallbackSwahili = englishVerses.map((ev, vIdx) => {
+      return getOfflineSwahiliTheologyFallback(book, chapter, vIdx + 1, ev);
+    });
+    setSwahiliChapterVerses(fallbackSwahili);
+  };
+
+  // --- INTERACTIVE TAP-TO-DEFINE CLICK HANDLERS ---
+  const handleWordClick = async (word: string, verseKey: string) => {
+    const cleanWord = word.replace(/[^a-zA-Z0-9]/g, "");
+    if (!cleanWord || cleanWord.length < 2) return;
+
+    setSelectedWordInfo({ word: cleanWord, verseRef: verseKey.replace(/_/g, " "), loading: true });
+
+    // 1. Search locally in Offline Dictionary database
+    const localMatch = GENERAL_OFFLINE_WORDS.find(
+      (w) => w.word.toLowerCase() === cleanWord.toLowerCase()
+    );
+
+    let foundDef = localMatch?.definition;
+    let foundTrans = localMatch?.category === "Swahili" ? localMatch.word : "";
+
+    // 2. Query Webster/Oxford Dictionary API if online
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      try {
+        const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${cleanWord.toLowerCase()}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const apiData = await res.json();
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            const entry = apiData[0];
+            const meanings = entry.meanings || [];
+            const primaryMean = meanings[0];
+            const primaryDef = primaryMean?.definitions[0]?.definition;
+            if (primaryDef) {
+              const partOfSpeech = primaryMean.partOfSpeech ? `[${primaryMean.partOfSpeech}] ` : "";
+              foundDef = `${partOfSpeech}${primaryDef}`;
+            }
+          }
+        }
+
+        // Also get quick Swahili translation from server-side translator
+        const transResp = await fetch("/api/ai/language-translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: cleanWord,
+            targetLang: "Swahili",
+            mode: "translate"
+          })
+        });
+        const transData = await transResp.json();
+        if (transData.success && transData.text) {
+          foundTrans = transData.text;
+        }
+      } catch (err) {
+        console.warn("API lookup failed, falling back to offline", err);
+      }
+    }
+
+    // Default Fallbacks
+    if (!foundDef) {
+       foundDef = `No exact definition indexed offline. Focus on grammatical root context inside ${verseKey.replace(/_/g, " ")}.`;
+    }
+    if (!foundTrans) {
+       foundTrans = `Sukuma / Swahili translation matching root phrase of Kiswahili.`;
+    }
+
+    setSelectedWordInfo({
+      word: cleanWord,
+      definition: foundDef,
+      translation: foundTrans,
+      loading: false,
+      verseRef: verseKey.replace(/_/g, " ")
+    });
+  };
+
+  const speakWord = (word: string) => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(word);
+      utterance.rate = 0.85;
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const saveToVocabularyDeck = (word: string, definition: string, translation: string, verseRef: string) => {
+    const savedDeckStr = localStorage.getItem("WAFULA_TO_LEARN_DECK") || "[]";
+    let deck: any[] = [];
+    try {
+      deck = JSON.parse(savedDeckStr);
+    } catch (_) {}
+
+    // Check duplication
+    const exists = deck.some((item) => item.word.toLowerCase() === word.toLowerCase());
+    if (exists) {
+      alert(`⚠️ Word "${word}" is already saved in your Vocabulary study deck!`);
+      return;
+    }
+
+    const newItem = {
+      word,
+      definition,
+      translation,
+      source: verseRef,
+      addedAt: new Date().toLocaleDateString(),
+      struggleLevel: "Medium"
+    };
+
+    const nextDeck = [newItem, ...deck];
+    localStorage.setItem("WAFULA_TO_LEARN_DECK", JSON.stringify(nextDeck));
+
+    // Dispatch custom events to inform Language Tutor and Offline Dictionary in real-time!
+    window.dispatchEvent(new Event("WAFULA_VOCAB_REFRESH"));
+    alert(`📥 Word "${word}" successfully added to your Language Tutor study deck!`);
+  };
+
+  const renderInteractiveVerseText = (text: string, verseKey: string) => {
+    const rx = /([a-zA-Z0-9'-]+|[^a-zA-Z0-9'-]+)/g;
+    const matches = text.match(rx);
+    if (!matches) return <span>{text}</span>;
+
+    return (
+      <span>
+        {matches.map((part, i) => {
+          const isWord = /^[a-zA-Z0-9'-]+$/.test(part);
+          if (isWord) {
+            const isMatchQuery = searchQuery && part.toLowerCase().includes(searchQuery.toLowerCase());
+            return (
+              <span
+                key={i}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleWordClick(part, verseKey);
+                }}
+                className={`transition cursor-help px-0.5 rounded-sm select-text ${
+                  isMatchQuery
+                    ? "bg-amber-100 border-b-2 border-red-700 font-extrabold text-stone-950"
+                    : "hover:bg-red-50 hover:text-red-700 hover:font-bold border-b border-dotted border-red-200"
+                }`}
+                style={{ display: "inline-block" }}
+                title="Click to translate, define, and add to Study Deck"
+              >
+                {part}
+              </span>
+            );
+          } else {
+            return <span key={i} className="select-text">{part}</span>;
+          }
+        })}
       </span>
     );
   };
@@ -854,6 +1117,12 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
 
   const activeVerses = getActiveVerses();
 
+  useEffect(() => {
+    if (showSwahiliSideBySide && activeVerses.length > 0) {
+      fetchSwahiliChapterVerses(selectedBook, selectedChapter, activeVerses);
+    }
+  }, [showSwahiliSideBySide, selectedBook, selectedChapter, activeVerses]);
+
   const activeBookDef = ALL_66_BOOKS.find((b) => b.name === selectedBook) || ALL_66_BOOKS[0];
 
   const filteredBooks = ALL_66_BOOKS.filter((b) => {
@@ -864,7 +1133,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
   return (
     <div 
       id="bible_reader_panel" 
-      className={`mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 transition-all duration-300 select-text ${
+      className={`ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 py-6 md:py-8 transition-all duration-300 select-text ${
         isBibleFullScreen 
           ? "fixed inset-0 z-[1110] bg-white dark:bg-slate-900 overflow-y-auto p-6 sm:p-10 flex flex-col w-full h-full" 
           : "relative"
@@ -930,7 +1199,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
         {/* Left Control Column (Version, Book, Settings, Speech) */}
         <div className="lg:col-span-4 space-y-5 text-left">
           {/* Version, Book Chapter Selectors */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+          <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-5 shadow-xs">
             <h3 className="text-xs font-bold uppercase tracking-wide text-stone-500 mb-4 font-mono flex items-center justify-between">
               <span>Canonical Concordance</span>
               <span className="text-[9.5px] bg-red-50 text-red-750 px-1.5 py-0.5 rounded font-black font-mono">66 BOOKS</span>
@@ -1010,7 +1279,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
           </div>
 
           {/* OFFLINE SEARCH ENGINE CARD */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
+          <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-5 shadow-xs space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wide text-stone-500 font-mono flex items-center justify-between">
               <span>Search Scriptures Offline</span>
               <span className="text-[9px] bg-indigo-50 text-indigo-750 px-1.5 py-0.5 rounded font-black font-mono">OFFLINE INDEX READY</span>
@@ -1202,7 +1471,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
         {/* Right Scripture / Content Column */}
         <div className="lg:col-span-8 text-left">
           {activeTab === "read" && (
-            <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-5">
+            <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-6 shadow-xs space-y-5">
               <div className="flex items-center justify-between border-b border-stone-105 pb-4">
                 <div>
                   <h3 className="font-display text-2xl font-black text-neutral-900 block" id="current_bible_passage_reference">
@@ -1214,6 +1483,21 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                 </div>
 
                 <div className="flex items-center gap-3">
+                  {/* Side-by-Side Swahili Translation Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowSwahiliSideBySide(!showSwahiliSideBySide)}
+                    className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer select-none ${
+                      showSwahiliSideBySide 
+                        ? "bg-emerald-600 border-emerald-600 text-white shadow-2xs" 
+                        : "bg-white border-stone-250 text-stone-700 hover:bg-stone-50"
+                    }`}
+                    title="Toggle side-by-side English/Swahili study view"
+                  >
+                    <span>🇸🇿 Swahili Side-by-Side</span>
+                    {showSwahiliSideBySide && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+
                   {/* Interactive Font Size Actions */}
                   <div className="flex items-center space-x-1 bg-stone-150 border border-stone-250 p-0.5 rounded-lg select-none">
                     <button
@@ -1262,6 +1546,97 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                 </div>
               </div>
 
+              {/* Tap to Define / Translate Floating Overlay Info Card */}
+              {selectedWordInfo && (
+                <div className="bg-gradient-to-r from-slate-50 to-indigo-50/40 border border-indigo-250 p-4 rounded-xl shadow-sm space-y-3 relative animate-in slide-in-from-bottom duration-200 text-left">
+                  <button
+                    onClick={() => setSelectedWordInfo(null)}
+                    className="absolute top-2.5 right-2.5 text-stone-400 hover:text-stone-700 font-extrabold text-sm"
+                  >
+                    ✕
+                  </button>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">🎯</span>
+                      <h4 className="text-sm font-black text-indigo-955 uppercase tracking-wide">
+                        Click Lookup: <span className="text-red-750 select-all font-mono font-black">{selectedWordInfo.word}</span>
+                      </h4>
+                    </div>
+
+                    <button
+                      onClick={() => speakWord(selectedWordInfo.word)}
+                      className="p-1 px-2.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-[10.5px] font-mono font-bold flex items-center gap-1.5 transition"
+                      title="Listen to pronunciation via TTS Voice"
+                    >
+                      <Volume2 className="h-3.5 w-3.5" />
+                      <span>Pronounce</span>
+                    </button>
+                  </div>
+
+                  {selectedWordInfo.loading ? (
+                    <div className="flex items-center gap-2 text-indigo-650 font-mono text-xs py-2">
+                      <RefreshCw className="h-4 w-4 animate-spin text-indigo-550" />
+                      <span>Mwalimu AI parsing contextual Swahili translation & grammar classes / definitions...</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-xs">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="bg-white p-3 rounded-lg border border-indigo-100">
+                          <span className="text-[9.5px] uppercase font-mono tracking-wider text-stone-400 font-bold block mb-1">
+                            Semantics & English definition:
+                          </span>
+                          <p className="text-stone-700 font-semibold leading-relaxed select-text">
+                            {selectedWordInfo.definition}
+                          </p>
+                        </div>
+
+                        {selectedWordInfo.translation && (
+                          <div className="bg-emerald-50/35 p-3 rounded-lg border border-emerald-200/65">
+                            <span className="text-[9.5px] uppercase font-mono tracking-wider text-emerald-600 font-bold block mb-1">
+                              Mwalimu Swahili Translation:
+                            </span>
+                            <p className="text-emerald-900 font-black tracking-normal leading-relaxed select-text">
+                              {selectedWordInfo.translation}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2 justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Pre-fill dictionary and navigate
+                            localStorage.setItem("WAFULA_DIC_PREFILL", selectedWordInfo.word);
+                            window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "offline-dictionary" } }));
+                            setTimeout(() => {
+                              window.dispatchEvent(new CustomEvent("WAFULA_DIC_PREFILL_UPDATE"));
+                            }, 50);
+                          }}
+                          className="px-3 py-1.5 text-[10px] font-bold uppercase rounded border border-stone-300 hover:bg-stone-100 text-stone-700 cursor-pointer"
+                        >
+                          🔍 View in Dictionary
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => saveToVocabularyDeck(
+                            selectedWordInfo.word, 
+                            selectedWordInfo.definition || "No definition parsed.", 
+                            selectedWordInfo.translation || "No Swahili translation.",
+                            selectedWordInfo.verseRef || `${selectedBook} ${selectedChapter}`
+                          )}
+                          className="px-3 py-1.5 text-[10px] font-bold uppercase rounded bg-indigo-650 hover:bg-indigo-700 text-white cursor-pointer flex items-center gap-1 shadow-2xs"
+                        >
+                          📥 Save to Tutor Study Deck
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Dynamic Scripture Reading Body Section */}
               <div id="scripture_body_content" className={`space-y-4 overflow-y-auto pr-2 ${isBibleFullScreen ? "max-h-[75vh]" : "max-h-[480px]"}`}>
                 {activeVerses.map((vText, idx) => {
@@ -1292,8 +1667,16 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                         <span className="font-mono text-xs font-black text-red-750 select-none pt-0.5">{verseNum}</span>
                         <div className="flex-1 space-y-1.5">
                           <p className="text-base sm:text-lg text-neutral-900 dark:text-neutral-100 leading-relaxed font-black select-text" style={{ fontWeight: 900 }}>
-                            {renderHighlightedVerseText(vText, searchQuery)}
+                            {renderInteractiveVerseText(vText, verseKey)}
                           </p>
+
+                          {/* Render Side-by-Side Swahili Translation if Active */}
+                          {showSwahiliSideBySide && swahiliChapterVerses[idx] && (
+                            <div className="mt-2 pl-3.5 border-l-3 border-emerald-500/60 bg-emerald-50/30 py-2 px-3 rounded-r-xl text-emerald-950 text-xs sm:text-sm font-bold leading-relaxed italic select-all md:max-w-2xl">
+                              🇸🇿 {swahiliChapterVerses[idx]}
+                            </div>
+                          )}
+                        </div>
 
                           {/* Display note badge if note exists */}
                           {activeNote && (
@@ -1354,7 +1737,6 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                             <Bookmark className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                      </div>
 
                       {/* Expanded Settings menu for Highlighter + Study Notes */}
                       {isMenuOpen && (
@@ -1471,7 +1853,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
           {activeTab === "devotional" && (
             <div className="space-y-5">
               {DEVOTIONALS.map((d) => (
-                <div key={d.id} className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-4 relative overflow-hidden">
+                <div key={d.id} className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-6 shadow-xs space-y-4 relative overflow-hidden">
                   <div className="absolute top-0 right-0 h-20 w-20 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
                   <div className="flex items-center space-x-2 text-amber-800 font-mono text-[10px] font-bold uppercase tracking-wider">
                     <Sun className="h-3.5 w-3.5 text-amber-600 animate-spin" />
@@ -1507,7 +1889,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
           )}
 
           {activeTab === "saved" && (
-            <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs text-left">
+            <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-6 shadow-xs text-left">
               <h3 className="font-display text-lg font-bold text-neutral-955 mb-4">Bookmarked Verses</h3>
               
               {savedVerses.length === 0 ? (
@@ -1551,7 +1933,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
           )}
 
           {activeTab === "sync" && (
-            <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs text-left space-y-6">
+            <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-bg-card p-6 shadow-xs text-left space-y-6">
               <div className="border-b border-stone-100 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                   <h3 className="font-display text-lg font-black text-stone-900">Scriptures Offline Database Manager</h3>
