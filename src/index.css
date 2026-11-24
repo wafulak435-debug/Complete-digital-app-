@@ -16,6 +16,7 @@
   --color-border-main: var(--border-main);
   --color-accent: var(--accent-main);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
 }
 
 :root {
@@ -161,7 +162,7 @@
   }
 }
 
-/* Printed Diploma Optimization */
+/* Printed Diploma & Bookkeeping Voucher Optimization */
 @media print {
   .no-print {
     display: none !important;
@@ -169,5 +170,30 @@
   body {
     background-color: #ffffff;
     color: #000000;
+  }
+  body.bulk-print-active > *:not(#finance-bulk-print-modal) {
+    display: none !important;
+  }
+  body.bulk-print-active #finance-bulk-print-modal {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+  }
+  body.bulk-print-active #finance-bulk-print-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 12mm !important;
+  }
+  body.bulk-print-active #finance-bulk-print-sheet tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

@@ -14,6 +14,8 @@ import { generateAccreditedCertificatePdf } from "../utils/pdfGenerator";
 import { QRCodeGenerator } from "../utils/qrCode";
 import AIChat from "./AIChat";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import SchoolAcademics, { MyResults, type ClassT, type TermT } from "./SchoolAcademics";
+import { api } from "./schoolUi";
 import zionLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 
 
@@ -48,8 +50,16 @@ export default function LeadershipSchool({
   const [admissionCountry, setAdmissionCountry] = useState("Kenya");
   const [isSubmittingAdmission, setIsSubmittingAdmission] = useState(false);
 
-  // 5 Portals Navigation state (Student, Teacher, Financial, Certificate, Library)
-  const [activePortal, setActivePortal] = useState<"student" | "teacher" | "financial" | "certificate" | "library">("student");
+  // Portals Navigation state (Student, Teacher, Academics, Financial, Certificate, Library)
+  const [activePortal, setActivePortal] = useState<"student" | "teacher" | "academics" | "financial" | "certificate" | "library" | "aichat">("student");
+  const [academicCtx, setAcademicCtx] = useState<{
+    institutions: { id: string; name: string }[];
+    classes: ClassT[];
+    terms: (TermT & { institutionId?: string })[];
+    students: { id: string; admNo: string; name: string; classId?: string; status: string; institutionId?: string }[];
+    childIds: string[];
+  }>({ institutions: [], classes: [], terms: [], students: [], childIds: [] });
+  const [academicMsg, setAcademicMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   // Load Portal Heads assigned by Admin
   const [headStudent, setHeadStudent] = useState(() => localStorage.getItem("ZION_PORTAL_HEAD_STUDENT") || "Dr. Catherine Nekesa");
@@ -72,6 +82,50 @@ export default function LeadershipSchool({
   const isAuthorizedTeacher = isUserTeacher || isUserAdmin;
   const isUserAdminOrSeniorTeacher =
     isUserAdmin || ["faculty", "professor"].includes(userRoleLower);
+
+  const loadAcademicContext = React.useCallback(async () => {
+    try {
+      const d = await api<{
+        institutions: { id: string; name: string }[];
+        classes: ClassT[];
+        terms: (TermT & { institutionId?: string })[];
+        students: { id: string; admNo: string; name: string; classId?: string; status: string; institutionId?: string }[];
+        childIds: string[];
+      }>("/my/context");
+      setAcademicCtx({
+        institutions: d.institutions || [],
+        classes: d.classes || [],
+        terms: d.terms || [],
+        students: d.students || [],
+        childIds: d.childIds || [],
+      });
+    } catch {
+      // Ignore if unauthenticated before login
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activePortal === "academics" && currentUser) {
+      loadAcademicContext();
+    }
+  }, [activePortal, currentUser, loadAcademicContext]);
+
+  const runAcademicAction = React.useCallback(
+    async (fn: () => Promise<unknown>, okMsg?: string): Promise<boolean> => {
+      try {
+        await fn();
+        if (okMsg) setAcademicMsg({ type: "ok", text: okMsg });
+        return true;
+      } catch (err) {
+        setAcademicMsg({
+          type: "err",
+          text: err instanceof Error ? err.message : "Academic action failed.",
+        });
+        return false;
+      }
+    },
+    []
+  );
 
   // Teacher Syllabus Workshop Editor states (confidential keys kept separate from public AssessmentQuestion)
   const [teacherSelectedMode, setTeacherSelectedMode] = useState<"create" | "update">("create");
@@ -1553,6 +1607,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       <div className="flex border-b border-stone-200 dark:border-stone-850 mb-8 pb-3.5 space-x-3 overflow-x-auto scrollbar-none text-left">
         {[
           { id: "student", label: "👤 Student Classroom Desk", desc: `Overseer: ${headStudent}` },
+          { id: "academics", label: "🏫 Academics (8-4-4 / CBC)", desc: "Marks, attendance & report cards" },
           ...(isAuthorizedTeacher ? [
             { id: "teacher", label: "🧑‍🏫 Teacher Admin Desk", desc: `Overseer: ${headTeacher}` }
           ] : []),
@@ -1585,6 +1640,55 @@ Prepare for your master certifications by reviewing the definitions of absolute 
           </button>
         ))}
       </div>
+
+      {activePortal === "academics" && (
+        <div className="space-y-5 text-left">
+          {academicMsg && (
+            <div
+              className={`rounded-xl border px-4 py-3 text-xs font-medium flex items-center justify-between gap-2 no-print ${
+                academicMsg.type === "ok"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-800"
+                  : "border-rose-300 bg-rose-50 text-rose-900 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-800"
+              }`}
+            >
+              <span>{academicMsg.text}</span>
+              <button
+                type="button"
+                onClick={() => setAcademicMsg(null)}
+                className="font-semibold underline cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {isAuthorizedTeacher ? (
+            <SchoolAcademics
+              instId={academicCtx.institutions[0]?.id || "zion_academy"}
+              instName={academicCtx.institutions[0]?.name || "Zion Digital Leadership & Bible Academy"}
+              canManage={isUserAdmin}
+              students={academicCtx.students}
+              run={runAcademicAction}
+              onStudentsChanged={loadAcademicContext}
+            />
+          ) : academicCtx.students.some((s) => s.classId) ? (
+            <MyResults
+              students={academicCtx.students}
+              childIds={academicCtx.childIds}
+              terms={academicCtx.terms}
+              classes={academicCtx.classes}
+              institutions={academicCtx.institutions}
+            />
+          ) : (
+            <div className="rounded-2xl border border-border-main bg-bg-surface p-8 text-center text-xs text-text-secondary space-y-2">
+              <p className="font-semibold text-sm text-text-primary">No Academic Report Card Linked Yet</p>
+              <p>
+                Once your school administrator places your student record ({currentUser?.email || "your account"}) into an 8-4-4 or CBC class, your term report cards and attendance summary will appear here.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {activePortal === "student" && (
         <div className="grid gap-6 lg:grid-cols-12">

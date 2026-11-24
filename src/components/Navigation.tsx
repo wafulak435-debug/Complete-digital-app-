@@ -493,33 +493,33 @@ export default function Navigation({
                 className="h-9 w-9 rounded-full object-cover border border-[#E7E1D8] dark:border-[#332C26] shadow-xs"
               />
             </div>
-            <button 
-              onClick={() => handleItemClick("store")} 
-              className="text-left hover:opacity-90 flex-grow cursor-pointer"
-            >
-              <h1 className="text-base font-bold tracking-tight text-[#1F1B18] dark:text-[#F5F1EB] font-serif leading-tight">
-                Zion <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#6E655E] dark:text-[#B6ABA0] font-semibold">DIGITAL</span>
-              </h1>
-              <div className="flex flex-col space-y-1 mt-0.5 text-left">
-                <div className="flex items-center space-x-1.5">
-                  <p className="text-[9px] text-[#6E655E] dark:text-[#B6ABA0] uppercase tracking-widest font-mono">Bungoma, Kenya</p>
-                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-600" : "bg-amber-600"}`} />
-                </div>
-                {onToggleOfflineMode && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onToggleOfflineMode(); }}
-                    className={`mt-1 flex items-center justify-between px-2 py-1 rounded border text-[8.5px] font-mono font-bold tracking-wider transition cursor-pointer select-none leading-none ${
-                      offlineMode
-                        ? "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800"
-                        : "bg-white dark:bg-[#1E1A17] text-[#6E655E] dark:text-[#B6ABA0] border-[#E7E1D8] dark:border-[#332C26] hover:border-[#A8421B]"
-                    }`}
-                  >
-                    <span>{offlineMode ? "Offline Study Active" : "Sync Mode"}</span>
-                  </button>
-                )}
-              </div>
-            </button>
+             <div 
+               onClick={() => handleItemClick("store")} 
+               className="text-left hover:opacity-90 flex-grow cursor-pointer"
+             >
+               <h1 className="text-base font-bold tracking-tight text-[#1F1B18] dark:text-[#F5F1EB] font-serif leading-tight">
+                 Zion <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#6E655E] dark:text-[#B6ABA0] font-semibold">DIGITAL</span>
+               </h1>
+               <div className="flex flex-col space-y-1 mt-0.5 text-left">
+                 <div className="flex items-center space-x-1.5">
+                   <p className="text-[9px] text-[#6E655E] dark:text-[#B6ABA0] uppercase tracking-widest font-mono">Bungoma, Kenya</p>
+                   <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-600" : "bg-amber-600"}`} />
+                 </div>
+                 {onToggleOfflineMode && (
+                   <button
+                     type="button"
+                     onClick={(e) => { e.stopPropagation(); onToggleOfflineMode(); }}
+                     className={`mt-1 flex items-center justify-between px-2 py-1 rounded border text-[8.5px] font-mono font-bold tracking-wider transition cursor-pointer select-none leading-none ${
+                       offlineMode
+                         ? "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                         : "bg-white dark:bg-[#1E1A17] text-[#6E655E] dark:text-[#B6ABA0] border-[#E7E1D8] dark:border-[#332C26] hover:border-[#A8421B]"
+                     }`}
+                   >
+                     <span>{offlineMode ? "Offline Study Active" : "Sync Mode"}</span>
+                   </button>
+                 )}
+               </div>
+             </div>
           </div>
         </div>
 
@@ -1613,63 +1613,6 @@ export default function Navigation({
         </div>
       )}
 
-      {/* 5. SECURE THUMB-REACHABLE MOBILE BOTTOM NAVIGATION BAR */}
-      <div 
-        id="mobile_bottom_navigation" 
-        className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#FAF8F4] dark:bg-[#141210] border-t border-[#E7E1D8] dark:border-[#332C26] flex items-center justify-around px-2 z-40 shadow-[0_-4px_12px_rgba(31,27,24,0.06)]"
-      >
-        <button
-          onClick={() => handleItemClick("store")}
-          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "store" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
-          }`}
-        >
-          <Home className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Home</span>
-          {currentView === "store" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
-          )}
-        </button>
-
-        <button
-          onClick={() => handleItemClick("school")}
-          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "school" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
-          }`}
-        >
-          <Compass className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">School</span>
-          {currentView === "school" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
-          )}
-        </button>
-
-        <button
-          onClick={() => handleItemClick("community")}
-          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "community" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
-          }`}
-        >
-          <MessageSquare className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Community</span>
-          {currentView === "community" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
-          )}
-        </button>
-
-        <button
-          onClick={() => handleItemClick("devotional")}
-          className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "devotional" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
-          }`}
-        >
-          <BookOpen className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Bible</span>
-          {currentView === "devotional" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
-          )}
-        </button>
-      </div>
     </>
   );
 }

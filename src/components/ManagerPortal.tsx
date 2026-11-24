@@ -10,6 +10,7 @@ import {
   type ShowcaseTargetView,
 } from "../lib/showcase";
 import type { User, SubAdminCapabilityMap } from "../types";
+import FinanceDashboard from "./FinanceDashboard";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -109,7 +110,7 @@ export default function ManagerPortal({
   onOpenAdminPanel,
   booksCount = 0,
 }: ManagerPortalProps) {
-  const [activeTab, setActiveTab] = useState<"enrollments" | "payments" | "mpesa_finance" | "exams" | "certificates">("enrollments");
+  const [activeTab, setActiveTab] = useState<"finance_dashboard" | "enrollments" | "payments" | "mpesa_finance" | "exams" | "certificates">("finance_dashboard");
   const [mpesaOverview, setMpesaOverview] = useState<any>(null);
   const [mpesaFilter, setMpesaFilter] = useState<"all" | "completed" | "pending" | "failed">("all");
   const [accessStatus, setAccessStatus] = useState<"checking" | "granted" | "denied">("checking");
@@ -217,7 +218,7 @@ export default function ManagerPortal({
     };
   }, [currentUser?.email, currentUser?.role]);
 
-  const scrollToOperations = (tab: "enrollments" | "payments" | "mpesa_finance" | "exams" | "certificates") => {
+  const scrollToOperations = (tab: "finance_dashboard" | "enrollments" | "payments" | "mpesa_finance" | "exams" | "certificates") => {
     setActiveTab(tab);
     const el = document.getElementById("manager-operations-workspace");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -556,9 +557,9 @@ export default function ManagerPortal({
           },
           {
             title: "Analytics",
-            desc: "Sales performance and insights",
+            desc: "Daily revenue trends, orders & M-Pesa/eCitizen insights",
             icon: TrendingUp,
-            action: () => scrollToOperations("payments"),
+            action: () => scrollToOperations("finance_dashboard"),
           },
         ],
       },
@@ -811,6 +812,7 @@ export default function ManagerPortal({
           </div>
           <div className="flex flex-wrap gap-2">
             {[
+              { id: "finance_dashboard", label: "Finance Dashboard", icon: TrendingUp },
               { id: "enrollments", label: `Enrollments (${enrollments.length})`, icon: GraduationCap },
               { id: "payments", label: `Orders & Fees (${orders.length + feePayments.length})`, icon: CreditCard },
               { id: "mpesa_finance", label: "M-PESA Daraja Finance", icon: Smartphone },
@@ -834,6 +836,20 @@ export default function ManagerPortal({
             })}
           </div>
         </div>
+
+        {activeTab === "finance_dashboard" && (
+          <FinanceDashboard
+            orders={orders}
+            feePayments={feePayments}
+            mpesaOverview={mpesaOverview}
+            isDarkMode={isDarkMode}
+            isLoading={isLoading}
+            onRefresh={loadAllOperationalData}
+            onOrderStatus={handleOrderStatus}
+            onFeeConfirm={handleFeeConfirm}
+            onOpenMpesaLedger={() => setActiveTab("mpesa_finance")}
+          />
+        )}
 
         {activeTab === "enrollments" && (
           <div className={`rounded-2xl border p-5 space-y-4 ${surface}`}>

@@ -35,6 +35,7 @@ import {
 } from "./server/security";
 import { supabaseSessionRefreshMiddleware } from "./server/supabaseSsr";
 import { mpesaRouter } from "./server/mpesa";
+import { academicsRouter } from "./server/academicsRouter";
 
 dotenv.config();
 
@@ -177,6 +178,11 @@ function buildPublicUserResponse(uid: string, email: string, name: string) {
 // M-PESA DARAJA PRODUCTION PAYMENT GATEWAY
 // ============================================================================
 app.use("/api/mpesa", mpesaRouter);
+
+// ============================================================================
+// SCHOOL ACADEMICS (8-4-4 & CBC SETUP, MARKS, ATTENDANCE, REPORT CARDS)
+// ============================================================================
+app.use("/api/school", academicsRouter);
 
 // ============================================================================
 // HEALTH & AUTHENTICATION / SESSION ENDPOINTS

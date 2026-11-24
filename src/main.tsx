@@ -40,15 +40,19 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Register background offline Service Worker
+// Register background offline Service Worker safely
 if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js")
-      .then((registration) => {
-        console.log("🔒 Wafula reads offline service worker registered successfully:", registration.scope);
-      })
-      .catch((error) => {
-        console.error("❌ Service worker registration failed:", error);
-      });
+    // Skip if served behind a redirect proxy or iframe sandbox where sw.js might get redirected
+    if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+      navigator.serviceWorker.register("/sw.js")
+        .then((registration) => {
+          console.log("🔒 Wafula reads offline service worker registered successfully:", registration.scope);
+        })
+        .catch((error) => {
+          // Suppress redirect or MIME errors gracefully in cloud preview iframe environments
+          console.log("ℹ️ Service worker bypassed (preview environment redirect check):", error?.message || error);
+        });
+    }
   });
 }
