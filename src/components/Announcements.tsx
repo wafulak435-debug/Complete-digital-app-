@@ -34,11 +34,7 @@ export default function Announcements({
   const [pinAsBanner, setPinAsBanner] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  const isAdmin = !!(currentUser && (
-    currentUser.role === 'admin' || 
-    currentUser.email?.toLowerCase()?.trim() === 'wafulak435@gmail.com' || 
-    currentUser.email?.toLowerCase()?.trim() === 'wafula435@gmail.com'
-  ));
+  const isAdmin = !!(currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role));
 
   // Sync announcements from Firestore in real-time
   useEffect(() => {

@@ -1,0 +1,8 @@
+# Supabase Edge Functions configuration for @supabase/server auth modes
+
+[functions.call-gemini]
+verify_jwt = true
+
+[functions.paystack-webhook]
+# Paystack sends HMAC-SHA512 signed webhook payloads without a Supabase user JWT
+verify_jwt = false

@@ -10,9 +10,11 @@ import { MemberUploadRequest, User, Book, BookCategory, AppSettings, BookOrder, 
 import { saveAppSettingsToFirestore, saveNotificationToFirestore } from "../lib/firestoreUtils";
 import { savePdfToOfflineDb, getPdfFromOfflineDb, deletePdfFromOfflineDb, getAllOfflinePdfs } from "../utils/pdfDb";
 import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
-import { collection, onSnapshot, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, doc, deleteDoc, setDoc } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { generateAccreditedCertificatePdf } from "../utils/pdfGenerator";
+import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import { BOOKS_DEFAULT_COVER } from "../lib/showcase";
 
 interface AdminPanelProps {
   currentUser: User | null;
@@ -42,6 +44,13 @@ interface MinorAdmin {
     allowBroadcast: boolean;
     allowApproval: boolean;
     allowVault: boolean;
+    allowModeration?: boolean;
+    allowManageBooks?: boolean;
+    allowApproveEnrollments?: boolean;
+    allowConfirmPayments?: boolean;
+    allowReleaseExams?: boolean;
+    allowIssueCertificates?: boolean;
+    allowSettings?: boolean;
   };
 }
 
@@ -64,24 +73,27 @@ export default function AdminPanel({
   onApproveBookOrder = () => {},
   onRejectBookOrder = () => {}
 }: AdminPanelProps) {
-  // Strict Security Check: completely block public/unauthorized users
-  if (!currentUser || currentUser.role !== "admin") {
+  // Strict Role-Based Access Check
+  const isAuthorizedAdminRole = Boolean(
+    currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role)
+  );
+  if (!isAuthorizedAdminRole) {
     return (
-      <div className="p-8 text-center max-w-md mx-auto my-12 bg-rose-50 border border-rose-200 rounded-3xl space-y-4 shadow-sm" id="admin-access-denied">
-        <ShieldAlert className="h-12 w-12 text-rose-650 mx-auto animate-bounce" />
-        <h2 className="font-display text-lg font-black text-rose-950 uppercase tracking-tight">Access Denied</h2>
-        <p className="text-xs text-rose-700 leading-normal font-medium">
-          The Admin Console and files are secure and restricted exclusively to authenticated network administrators.
+      <div className="p-8 text-center max-w-md mx-auto my-12 bg-[#FAF8F4] border border-[#E7E1D8] rounded-3xl space-y-4 shadow-sm" id="admin-access-denied">
+        <ShieldAlert className="h-12 w-12 text-[#A8421B] mx-auto" />
+        <h2 className="font-display text-lg font-bold text-[#1F1B18] uppercase tracking-tight">Access Denied</h2>
+        <p className="text-xs text-[#6E655E] leading-normal font-medium">
+          The Admin Console and files are restricted exclusively to authenticated network administrators.
         </p>
       </div>
     );
   }
 
-  const isMainAdmin = (() => {
-    const email = currentUser?.email?.toLowerCase()?.trim();
-    return email === "wafulak435@gmail.com" || 
-           email === "wafula435@gmail.com";
-  })();
+  const isMainAdmin = Boolean(
+    currentUser?.isMainAdmin ||
+    currentUser?.role === "main_admin" ||
+    currentUser?.role === "admin"
+  );
   
   const handleDownloadFile = (u: MemberUploadRequest) => {
     let mimeType = "text/plain";
@@ -135,11 +147,30 @@ export default function AdminPanel({
     }
   }, [globalSettings]);
 
-  // Unified Admin section states: "Publishing", "Uploader Audits", "Active Sessions", "Announcement Broadcast", "System Quotas"
-  const [activeAdminTab, setActiveAdminTab] = useState<"publishing" | "google-ai-studio" | "uploader-audits" | "book-orders" | "sessions" | "broadcast" | "quotas" | "admin-store" | "uploaded-docs-table" | "cache-audit" | "video-stream-health">("uploaded-docs-table");
+  // Unified Admin section states
+  const [activeAdminTab, setActiveAdminTab] = useState<"publishing" | "google-ai-studio" | "uploader-audits" | "book-orders" | "sessions" | "broadcast" | "quotas" | "admin-store" | "uploaded-docs-table" | "cache-audit" | "video-stream-health" | "video-deletions" | "security-audit">("publishing");
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+  const [tutorEmailInput, setTutorEmailInput] = useState("");
+  const [tutorNameInput, setTutorNameInput] = useState("");
+  const [suspendEmailInput, setSuspendEmailInput] = useState("");
+  const [suspendReasonInput, setSuspendReasonInput] = useState("Policy violation");
 
   // Real-time ongoing upload stream list state
   const [ongoingUploads, setOngoingUploads] = useState<any[]>([]);
+  const [pendingVideoDeletions, setPendingVideoDeletions] = useState<any[]>([]);
+
+  useEffect(() => {
+    const loadPendingDeletions = () => {
+      try {
+        const list = JSON.parse(localStorage.getItem("WAFULA_PENDING_VIDEO_DELETIONS") || "[]");
+        setPendingVideoDeletions(list);
+      } catch (_) {}
+    };
+    loadPendingDeletions();
+    const interval = setInterval(loadPendingDeletions, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const syncUploads = () => {
@@ -259,39 +290,29 @@ export default function AdminPanel({
       let runResponseText = "";
       if (studioFileBase64) {
         // Compile the raw document draft (.docx, .pdf) using Gemini model
-        const docRes = await fetch("/api/ai/publish-document", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileBase64: studioFileBase64,
-            documentType: studioFileName.toLowerCase().endsWith(".docx") ? "docx" : "pdf",
-            requestedTitle: studioTitle.trim() || "AI Studio Masterpiece",
-            targetCategory: studioCategory,
-            authorName: studioAuthor.trim() || "Kelvin Opara Wafula"
-          })
+        const docData = await invokeGeminiAction("publish-document", "/api/ai/publish-document", {
+          fileBase64: studioFileBase64,
+          documentType: studioFileName.toLowerCase().endsWith(".docx") ? "docx" : "pdf",
+          requestedTitle: studioTitle.trim() || "AI Studio Masterpiece",
+          targetCategory: studioCategory,
+          authorName: studioAuthor.trim() || "Kelvin Opara Wafula"
         });
-        const docData = await docRes.json();
         if (!docData.success) {
           throw new Error(docData.error || "Failed compiling raw document draft.");
         }
         runResponseText = docData.content || `SUCCESSFULLY COMPILED ACTIVE APPLET VOLUME: ${studioTitle}`;
       } else {
         // Compile using prompt-driven generation
-        const pRes = await fetch("/api/ai/publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: studioTitle.trim(),
-            category: studioCategory,
-            author: studioAuthor.trim(),
-            description: `A dynamic theological masterpiece compiled of high structural integrity via Google AI Studio's ${studioModel} with unlimited resource parameters.`,
-            prompt: `[System Instruction: ${studioSystemInstruction}]\n\nUser request: ${studioPrompt}`,
-            price: Number(studioPrice) || 200
-          })
+        const pData = await invokeGeminiAction("publish", "/api/ai/publish", {
+          title: studioTitle.trim(),
+          category: studioCategory,
+          author: studioAuthor.trim(),
+          description: `A dynamic theological masterpiece compiled of high structural integrity via Google AI Studio's ${studioModel} with unlimited resource parameters.`,
+          prompt: `[System Instruction: ${studioSystemInstruction}]\n\nUser request: ${studioPrompt}`,
+          price: Number(studioPrice) || 200
         });
-        const pData = await pRes.json();
         if (!pData.success) {
-          throw new Error(pData.message || "Failed compiling prompted eBook.");
+          throw new Error(pData.message || pData.error || "Failed compiling prompted eBook.");
         }
         runResponseText = pData.content || `SUCCESSFULLY COMPILED ACTIVE APPLET VOLUME: ${studioTitle}`;
       }
@@ -300,16 +321,7 @@ export default function AdminPanel({
       
       // Auto-construct Book Object and Sync directly to supply to ALL USERS immediately!
       const newBookId = "ai_studio_" + Date.now();
-      let coverImg = "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?auto=format&fit=crop&w=600&q=80";
-      if (studioCategory === "Leadership") {
-        coverImg = "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80";
-      } else if (studioCategory === "Technology") {
-        coverImg = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=600&q=80";
-      } else if (studioCategory === "Business") {
-        coverImg = "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=600&q=80";
-      } else if (studioCategory === "Education") {
-        coverImg = "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=600&q=80";
-      }
+      const coverImg = BOOKS_DEFAULT_COVER;
       
       const newBook: Book = {
         id: newBookId,
@@ -341,45 +353,78 @@ export default function AdminPanel({
     }
   };
 
-  // Minor Admins registry database (Stateful local storage simulation)
-  const [minorAdmins, setMinorAdmins] = useState<MinorAdmin[]>([
-    {
-      id: "ma-1",
-      name: "Bungoma Local Moderator",
-      email: "local.mod@wafula.com",
-      permissions: { allowBroadcast: true, allowApproval: true, allowVault: false }
-    },
-    {
-      id: "ma-2",
-      name: "Minor Clerk",
-      email: "mod.clerk@wafula.com",
-      permissions: { allowBroadcast: false, allowApproval: false, allowVault: false }
-    }
-  ]);
+  // Minor Admins / Sub-Admins registry synchronized with /api/admin/sub-admins
+  const [minorAdmins, setMinorAdmins] = useState<MinorAdmin[]>([]);
 
-  // Form inputs for new Minor Admin
+  useEffect(() => {
+    if (!isMainAdmin) return;
+    secureApiFetch("/api/admin/sub-admins")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.subAdmins)) {
+          setMinorAdmins(
+            data.subAdmins.map((sa: any) => ({
+              id: sa.id || sa.email,
+              name: sa.name || sa.email,
+              email: sa.email,
+              permissions: {
+                allowBroadcast: Boolean(sa.permissions?.allowBroadcast),
+                allowApproval: Boolean(sa.permissions?.allowApproval),
+                allowVault: Boolean(sa.permissions?.allowVault),
+                allowModeration: Boolean(sa.permissions?.allowModeration),
+                allowManageBooks: Boolean(sa.permissions?.allowManageBooks),
+                allowApproveEnrollments: Boolean(sa.permissions?.allowApproveEnrollments),
+                allowConfirmPayments: Boolean(sa.permissions?.allowConfirmPayments),
+                allowReleaseExams: Boolean(sa.permissions?.allowReleaseExams),
+                allowIssueCertificates: Boolean(sa.permissions?.allowIssueCertificates),
+                allowSettings: Boolean(sa.permissions?.allowSettings),
+              },
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, [isMainAdmin]);
+
+  const loadAuditLogs = async () => {
+    setIsLoadingAudit(true);
+    try {
+      const res = await secureApiFetch("/api/admin/audit-logs");
+      const data = await res.json().catch(() => ({}));
+      if (data?.success && Array.isArray(data.logs)) {
+        setAuditLogs(data.logs);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeAdminTab === "security-audit" && isMainAdmin) {
+      loadAuditLogs();
+    }
+  }, [activeAdminTab, isMainAdmin]);
+
+  // Form inputs for new Sub-Admin
   const [newModName, setNewModName] = useState("");
   const [newModEmail, setNewModEmail] = useState("");
   const [permBroadcast, setPermBroadcast] = useState(false);
   const [permApproval, setPermApproval] = useState(false);
   const [permVault, setPermVault] = useState(false);
 
-  // Determine active permissions for logged-in user
-  let canBroadcast = isMainAdmin;
-  let canApprove = isMainAdmin;
-  let canVault = isMainAdmin;
+  // Deny-by-default permissions for sub-admins unless explicitly authorized
+  let canBroadcast = isMainAdmin || Boolean(currentUser?.permissions?.allowBroadcast);
+  let canApprove = isMainAdmin || Boolean(currentUser?.permissions?.allowApproval);
+  let canVault = isMainAdmin || Boolean(currentUser?.permissions?.allowVault);
 
   if (!isMainAdmin && currentUser?.email) {
     const matchingMinor = minorAdmins.find((m) => m.email.toLowerCase() === currentUser.email.toLowerCase());
     if (matchingMinor) {
-      canBroadcast = matchingMinor.permissions.allowBroadcast;
-      canApprove = matchingMinor.permissions.allowApproval;
-      canVault = matchingMinor.permissions.allowVault;
-    } else {
-      // Default minor admin login role fallback if not in list
-      canBroadcast = true;
-      canApprove = false;
-      canVault = false;
+      canBroadcast = Boolean(matchingMinor.permissions.allowBroadcast);
+      canApprove = Boolean(matchingMinor.permissions.allowApproval);
+      canVault = Boolean(matchingMinor.permissions.allowVault);
     }
   }
 
@@ -473,6 +518,145 @@ export default function AdminPanel({
   const [certDlSearchName, setCertDlSearchName] = useState("");
   const [certDlStartDate, setCertDlStartDate] = useState("");
   const [certDlEndDate, setCertDlEndDate] = useState("");
+
+  // Certificate Editing & Custom Issuance States
+  const [editingCert, setEditingCert] = useState<CertificateDownload | null>(null);
+  const [showIssueCertModal, setShowIssueCertModal] = useState(false);
+  const [newCertForm, setNewCertForm] = useState({
+    name: "",
+    email: "",
+    schoolName: "Zion School of Leadership & Public Values",
+    courseTopic: "Module 1: Administrative Statesmanship",
+    score: 90,
+    date: new Date().toISOString().split("T")[0]
+  });
+
+  // Global Certificate Template Config
+  const [certInstName, setCertInstName] = useState(() => localStorage.getItem("ZION_CERTIFICATE_INSTITUTION_NAME") || "ZION DIGITAL LEADERSHIP & BIBLE SCHOOL");
+  const [certHeadName, setCertHeadName] = useState(() => localStorage.getItem("ZION_PORTAL_HEAD_CERTIFICATE") || "Rev. Andrew Welime");
+  const [certChancName, setCertChancName] = useState(() => localStorage.getItem("ZION_CERTIFICATE_CHANCELLOR_NAME") || "Kelvin O. Wafula");
+  const [certMotto, setCertMotto] = useState(() => localStorage.getItem("ZION_CERTIFICATE_MOTTO") || "ESTABLISHED IN COVENANT EXCELLENCE & SACRED STEWARDSHIP");
+  const [showCertConfigPanel, setShowCertConfigPanel] = useState(false);
+
+  const handleSaveCertGlobalConfig = () => {
+    if (!isMainAdmin) {
+      alert("Access Restricted: Global certificate template configuration requires Main Admin privileges.");
+      return;
+    }
+    localStorage.setItem("ZION_CERTIFICATE_INSTITUTION_NAME", certInstName);
+    localStorage.setItem("ZION_PORTAL_HEAD_CERTIFICATE", certHeadName);
+    localStorage.setItem("ZION_CERTIFICATE_CHANCELLOR_NAME", certChancName);
+    localStorage.setItem("ZION_CERTIFICATE_MOTTO", certMotto);
+    localStorage.setItem("WAFULA_CERT_FEE", certificateFeeDraft.toString());
+    localStorage.setItem("ZION_SCHOOL_CERTIFICATE_FEE", certificateFeeDraft.toString());
+    alert("✅ Certificate Template & Signatory Configuration saved successfully!");
+  };
+
+  const handleSaveStudentCertEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isMainAdmin) {
+      alert("Access Restricted: Editing student certificate details requires Main Admin privileges.");
+      return;
+    }
+    if (!editingCert) return;
+
+    const updated = certDownloads.map(c => c.id === editingCert.id ? editingCert : c);
+    setCertDownloads(updated);
+    localStorage.setItem("WAFULA_CERT_DOWNLOADS_LEDGER", JSON.stringify(updated));
+
+    try {
+      const docRef = doc(db, "certificate_downloads", editingCert.id);
+      setDoc(docRef, editingCert, { merge: true });
+    } catch (err) {
+      console.warn("Firestore cert edit update error:", err);
+    }
+
+    alert(`✅ Certificate details for "${editingCert.name}" updated in academic ledger!`);
+    setEditingCert(null);
+  };
+
+  const handleDeleteCertRecord = (id: string, name: string) => {
+    if (!isMainAdmin) {
+      alert("Access Restricted: Deleting certificate records requires Main Admin privileges.");
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to permanently delete certificate record for ${name}?`)) return;
+
+    const updated = certDownloads.filter(c => c.id !== id);
+    setCertDownloads(updated);
+    localStorage.setItem("WAFULA_CERT_DOWNLOADS_LEDGER", JSON.stringify(updated));
+
+    try {
+      deleteDoc(doc(db, "certificate_downloads", id));
+    } catch (err) {
+      console.warn("Firestore cert record delete error:", err);
+    }
+
+    alert(`✅ Certificate record for ${name} removed.`);
+  };
+
+  const handleIssueCustomCertificate = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isMainAdmin) {
+      alert("Access Restricted: Issuing custom certificates requires Main Admin privileges.");
+      return;
+    }
+    if (!newCertForm.name || !newCertForm.email) {
+      alert("Please provide both student name and email address.");
+      return;
+    }
+
+    const id = "dl_custom_" + Date.now();
+    const ledgerHash = (newCertForm.name.slice(0, 3).toUpperCase() || "ZIO") + "-" + Math.floor(100000 + Math.random() * 900000);
+    const newRecord: CertificateDownload = {
+      id,
+      name: newCertForm.name,
+      email: newCertForm.email,
+      schoolName: newCertForm.schoolName,
+      courseTopic: newCertForm.courseTopic,
+      score: newCertForm.score,
+      ledgerHash,
+      date: newCertForm.date || new Date().toISOString().split("T")[0],
+      downloadedAt: new Date().toISOString()
+    };
+
+    const updated = [newRecord, ...certDownloads];
+    setCertDownloads(updated);
+    localStorage.setItem("WAFULA_CERT_DOWNLOADS_LEDGER", JSON.stringify(updated));
+
+    try {
+      setDoc(doc(db, "certificate_downloads", id), newRecord);
+    } catch (err) {
+      console.warn("Firestore custom cert issue error:", err);
+    }
+
+    setShowIssueCertModal(false);
+    alert(`🎓 Custom certificate issued for "${newRecord.name}"! Generating PDF document...`);
+
+    generateAccreditedCertificatePdf({
+      studentName: newRecord.name,
+      studentEmail: newRecord.email,
+      schoolName: newRecord.schoolName,
+      courseTopic: newRecord.courseTopic,
+      score: newRecord.score,
+      ledgerHash: newRecord.ledgerHash,
+      date: newRecord.date,
+      verificationUrl: `${window.location.origin}/?view=verify&certId=${newRecord.id}`,
+      institutionName: certInstName,
+      headDeanName: certHeadName,
+      chancellorName: certChancName,
+      mottoText: certMotto
+    });
+
+    setNewCertForm({
+      name: "",
+      email: "",
+      schoolName: "Zion School of Leadership & Public Values",
+      courseTopic: "Module 1: Administrative Statesmanship",
+      score: 90,
+      date: new Date().toISOString().split("T")[0]
+    });
+  };
 
   // Seed data for certificate downloads tracking (Zion Graduates)
   const SEED_DOWNLOADS: CertificateDownload[] = [
@@ -660,12 +844,12 @@ export default function AdminPanel({
       },
       {
         id: "sess_seed_3",
-        name: "Wafula Principal",
-        email: "wafulak435@gmail.com",
+        name: "Academy Principal",
+        email: "principal@ziondigital.ac.ke",
         role: "admin",
         lastActive: new Date(Date.now() - 600000).toLocaleString(),
         status: "Online",
-        method: "Auto-Login Restore",
+        method: "Verified Session",
         device: "Desktop Computer"
       },
       {
@@ -827,7 +1011,7 @@ export default function AdminPanel({
 
   useEffect(() => {
     setIsLoadingCodeFiles(true);
-    fetch("/api/admin/workspace-files")
+    secureApiFetch("/api/admin/workspace-files")
       .then((res) => res.json())
       .then((data) => {
         if (data.success && data.files) {
@@ -1301,18 +1485,13 @@ export default function AdminPanel({
     }
     setIsClassifyingSingle(true);
     try {
-      const response = await fetch("/api/ai/batch-classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          books: [{
-            title: newBookTitle.trim(),
-            author: newBookAuthor.trim(),
-            description: newBookDesc.trim() || "(No description entered)"
-          }]
-        })
+      const data = await invokeGeminiAction("batch-classify", "/api/ai/batch-classify", {
+        books: [{
+          title: newBookTitle.trim(),
+          author: newBookAuthor.trim(),
+          description: newBookDesc.trim() || "(No description entered)"
+        }]
       });
-      const data = await response.json();
       if (data.success && data.books && data.books.length > 0) {
         const classified = data.books[0];
         if (classified.category) {
@@ -1580,13 +1759,9 @@ export default function AdminPanel({
     setClassifiedBooks([]);
 
     try {
-      const response = await fetch("/api/ai/batch-classify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ books: batchQueue })
+      const data = await invokeGeminiAction("batch-classify", "/api/ai/batch-classify", {
+        books: batchQueue
       });
-
-      const data = await response.json();
       if (data.success && data.books) {
         setClassifiedBooks(data.books);
         alert(`Successfully classified ${data.books.length} books with Advanced AI 3.5! Ready to review and publish.`);
@@ -1803,20 +1978,14 @@ export default function AdminPanel({
       }
 
       // 3. Call publish-document AI API
-      const response = await fetch("/api/ai/publish-document", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileBase64,
-          documentType: aiDocType,
-          requestedTitle: newBookTitle.trim(),
-          targetCategory: bookCategory,
-          authorName: newBookAuthor.trim()
-        })
+      const data = await invokeGeminiAction("publish-document", "/api/ai/publish-document", {
+        fileBase64,
+        documentType: aiDocType,
+        requestedTitle: newBookTitle.trim(),
+        targetCategory: bookCategory,
+        authorName: newBookAuthor.trim()
       });
-
-      const data = await response.json();
-      if (!response.ok || !data.success) {
+      if (!data.success) {
         throw new Error(data.error || "Failed to compile book chapters using academic engine.");
       }
 
@@ -1878,32 +2047,92 @@ export default function AdminPanel({
     }
   };
 
-  const handleCreateMinorAdmin = (e: React.FormEvent) => {
+  const handleCreateMinorAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newModName.trim() || !newModEmail.trim()) return;
+    if (!isMainAdmin || !newModName.trim() || !newModEmail.trim()) return;
+
+    const cleanEmail = newModEmail.trim().toLowerCase();
+    const permissionsPayload = {
+      allowBroadcast: permBroadcast,
+      allowApproval: permApproval,
+      allowVault: permVault,
+      allowModeration: permApproval,
+      allowManageBooks: permApproval,
+      allowApproveEnrollments: permApproval,
+      allowConfirmPayments: false,
+      allowReleaseExams: permApproval,
+      allowIssueCertificates: false,
+      allowSettings: false,
+    };
+
+    try {
+      const res = await secureApiFetch("/api/admin/sub-admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newModName.trim(),
+          email: cleanEmail,
+          permissions: permissionsPayload,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || "Main Admin authorization required to update sub-admin permissions.");
+        return;
+      }
+    } catch {
+      alert("Unable to reach sub-admin permission server.");
+      return;
+    }
 
     const newMod: MinorAdmin = {
       id: "mod_" + Date.now(),
       name: newModName.trim(),
-      email: newModEmail.trim().toLowerCase(),
-      permissions: {
-        allowBroadcast: permBroadcast,
-        allowApproval: permApproval,
-        allowVault: permVault
-      }
+      email: cleanEmail,
+      permissions: permissionsPayload,
     };
 
-    setMinorAdmins([...minorAdmins, newMod]);
+    setMinorAdmins((prev) => [...prev.filter((m) => m.email.toLowerCase() !== cleanEmail), newMod]);
     setNewModName("");
     setNewModEmail("");
     setPermBroadcast(false);
     setPermApproval(false);
     setPermVault(false);
-    alert(`Successfully added minor admin: "${newMod.name}" with granular customized privileges.`);
+    alert(`Appointed sub-admin "${newMod.name}" with granular permissions.`);
   };
 
-  const handleDeleteMinorAdmin = (id: string) => {
-    setMinorAdmins(minorAdmins.filter((m) => m.id !== id));
+  const handleDeleteMinorAdmin = async (id: string) => {
+    if (!isMainAdmin) return;
+    const target = minorAdmins.find((m) => m.id === id || m.email === id);
+    const email = target?.email || id;
+    try {
+      await secureApiFetch(`/api/admin/sub-admins/${encodeURIComponent(email)}`, {
+        method: "DELETE",
+      });
+    } catch {}
+    setMinorAdmins((prev) => prev.filter((m) => m.id !== id && m.email !== email));
+  };
+
+  const handleApproveVideoDeletion = async (req: any) => {
+    if (!window.confirm(`Main Admin Approval: Confirm permanent deletion of video "${req.videoTitle}"?`)) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "sermonVideos", req.videoId));
+    } catch (err) {
+      console.warn("Firestore video deletion completed or handled locally:", err);
+    }
+    const updated = pendingVideoDeletions.filter(r => r.id !== req.id);
+    setPendingVideoDeletions(updated);
+    localStorage.setItem("WAFULA_PENDING_VIDEO_DELETIONS", JSON.stringify(updated));
+    alert(`✅ Main Admin approved video deletion for "${req.videoTitle}". The video has been permanently removed.`);
+  };
+
+  const handleRejectVideoDeletion = (req: any) => {
+    const updated = pendingVideoDeletions.filter(r => r.id !== req.id);
+    setPendingVideoDeletions(updated);
+    localStorage.setItem("WAFULA_PENDING_VIDEO_DELETIONS", JSON.stringify(updated));
+    alert(`Rejected deletion request for "${req.videoTitle}". Video remains live in sanctuary catalog.`);
   };
 
   // Specialized Admin Independent AI state
@@ -1954,18 +2183,23 @@ export default function AdminPanel({
         enhancedPrompt = `[PRECISE DATA MODE] Run step-by-step rigorous logical/mathematical calculations or extremely precise transcriptions on this request. Break it down analytically. \n\nQuery: ${currentPrompt}`;
       }
 
-      const response = await fetch("/api/my-ai-assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await invokeGeminiAction(
+        "assistant",
+        "/api/my-ai-assistant",
+        {
           message: enhancedPrompt,
+          prompt: enhancedPrompt,
           images: currentImages,
-        }),
-      });
-
-      const result = await response.json();
-      if (result.success && result.data) {
-        setServerAiResponses((prev) => [...prev, { role: "model" as const, text: result.data }]);
+        },
+        {
+          saveHistory: true,
+          historyTitle: `Admin AI: ${currentPrompt.slice(0, 60)}`,
+          historyCategory: "Admin Assistant",
+        }
+      );
+      const replyData = result.data || result.text;
+      if (result.success && replyData) {
+        setServerAiResponses((prev) => [...prev, { role: "model" as const, text: replyData }]);
       } else {
         throw new Error(result.error || "Failed to establish a coherent response stream.");
       }
@@ -2094,19 +2328,19 @@ export default function AdminPanel({
       )}
       
       {/* Visual Header Grid Panel */}
-      <div className="rounded-2xl bg-gradient-to-r from-red-800 via-rose-900 to-amber-900 text-white p-6 sm:p-8 text-left shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 h-40 w-40 transform translate-x-12 -translate-y-12 opacity-15 rounded-full border-[20px] border-amber-500" />
+      <div className="rounded-2xl bg-[#2C241E] border border-[#E7E1D8] text-white p-6 sm:p-8 text-left shadow-sm relative overflow-hidden">
+        <div className="absolute right-0 top-0 h-40 w-40 transform translate-x-12 -translate-y-12 opacity-15 rounded-full border-[20px] border-[#A8421B]" />
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2">
-            <span className="bg-red-500/30 text-red-200 border border-red-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+            <span className="bg-[#A8421B]/30 text-[#F7E5DC] border border-[#A8421B]/40 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
               ADMIN CONTROL CENTER
             </span>
-            <h2 className="text-2xl sm:text-3xl font-black tracking-tight font-display">
+            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight font-display">
               Overseer Hub
             </h2>
-            <p className="text-xs text-slate-350 max-w-lg leading-relaxed">
-              Active account level: <strong className="text-red-400">{isMainAdmin ? "Super Main Overseer" : "Assigned Minor Overseer"}</strong> ({currentUser?.email}). Monitor uploads visibility, stock Ebooks directly, audit secure storage channels, and mandate assistant tasks.
+            <p className="text-xs text-[#E7E1D8] max-w-lg leading-relaxed">
+              Active account level: <strong className="text-white">{isMainAdmin ? "Main Administrator" : "Assigned Sub-Administrator"}</strong> ({currentUser?.email}). Monitor uploads, manage books, verify audit logs, and enforce academy permissions.
             </p>
           </div>
         </div>
@@ -2114,6 +2348,24 @@ export default function AdminPanel({
 
       {/* Horizontal Administration Sub-navigation Tab switcher */}
       <div className="flex border-b border-stone-200 dark:border-slate-800 space-x-2 overflow-x-auto pb-1.5 scrollbar-thin">
+        <button
+          type="button"
+          onClick={() => setActiveAdminTab("video-deletions")}
+          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
+            activeAdminTab === "video-deletions"
+              ? "bg-red-700 text-white shadow"
+              : "text-amber-800 bg-amber-50 hover:bg-amber-100"
+          }`}
+        >
+          <Video className="h-4 w-4 text-amber-500" />
+          <span>Video Deletion Approvals</span>
+          {pendingVideoDeletions.length > 0 && (
+            <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ml-1 animate-pulse">
+              {pendingVideoDeletions.length}
+            </span>
+          )}
+        </button>
+
         <button
           type="button"
           onClick={() => setActiveAdminTab("publishing")}
@@ -2269,14 +2521,171 @@ export default function AdminPanel({
           onClick={() => setActiveAdminTab("personnel-payroll" as any)}
           className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
             (activeAdminTab as string) === "personnel-payroll"
-              ? "bg-amber-600 text-white tracking-wide shadow animate-pulse"
-              : "text-slate-600 hover:bg-slate-100"
+              ? "bg-[#A8421B] text-white tracking-wide shadow"
+              : "text-[#6E655E] hover:bg-[#F7F4EE]"
           }`}
         >
-          <Users className="h-4 w-4 text-emerald-500" />
+          <Users className="h-4 w-4 text-emerald-600" />
           <span>Faculty & Payroll Desk</span>
         </button>
+        {isMainAdmin && (
+          <button
+            type="button"
+            onClick={() => setActiveAdminTab("security-audit")}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center space-x-2 shrink-0 cursor-pointer ${
+              activeAdminTab === "security-audit"
+                ? "bg-[#A8421B] text-white tracking-wide shadow"
+                : "text-[#6E655E] hover:bg-[#F7F4EE]"
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4 text-[#A8421B]" />
+            <span>Audit Logs & Security</span>
+          </button>
+        )}
       </div>
+
+      {activeAdminTab === "security-audit" && isMainAdmin && (
+        <div className="space-y-6 text-left my-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Assign Tutor */}
+            <div className="rounded-2xl border border-[#E7E1D8] bg-white p-5 space-y-3 shadow-xs">
+              <h3 className="font-display text-sm font-bold text-[#1F1B18]">Assign Verified Tutor Role</h3>
+              <div className="flex flex-col sm:flex-row gap-2 text-xs">
+                <input
+                  type="email"
+                  value={tutorEmailInput}
+                  onChange={(e) => setTutorEmailInput(e.target.value)}
+                  placeholder="tutor@domain.ac.ke"
+                  className="flex-1 rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] px-3 py-2 outline-none focus:border-[#A8421B]"
+                />
+                <input
+                  type="text"
+                  value={tutorNameInput}
+                  onChange={(e) => setTutorNameInput(e.target.value)}
+                  placeholder="Tutor full name"
+                  className="flex-1 rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] px-3 py-2 outline-none focus:border-[#A8421B]"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!tutorEmailInput.trim()) return;
+                    const res = await secureApiFetch("/api/admin/tutors/assign", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ email: tutorEmailInput.trim(), name: tutorNameInput.trim() }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (res.ok) {
+                      alert(`Assigned tutor role to ${tutorEmailInput.trim()}`);
+                      setTutorEmailInput("");
+                      setTutorNameInput("");
+                      loadAuditLogs();
+                    } else {
+                      alert(data?.error || "Failed assigning tutor.");
+                    }
+                  }}
+                  className="rounded-xl bg-[#A8421B] hover:bg-[#8F3614] text-white font-bold px-4 py-2 cursor-pointer"
+                >
+                  Assign Tutor
+                </button>
+              </div>
+            </div>
+
+            {/* Suspend User */}
+            <div className="rounded-2xl border border-[#E7E1D8] bg-white p-5 space-y-3 shadow-xs">
+              <h3 className="font-display text-sm font-bold text-[#1F1B18]">Suspend / Restore User Account</h3>
+              <div className="flex flex-col sm:flex-row gap-2 text-xs">
+                <input
+                  type="email"
+                  value={suspendEmailInput}
+                  onChange={(e) => setSuspendEmailInput(e.target.value)}
+                  placeholder="user@domain.com"
+                  className="flex-1 rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] px-3 py-2 outline-none focus:border-[#A8421B]"
+                />
+                <input
+                  type="text"
+                  value={suspendReasonInput}
+                  onChange={(e) => setSuspendReasonInput(e.target.value)}
+                  placeholder="Reason"
+                  className="flex-1 rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] px-3 py-2 outline-none focus:border-[#A8421B]"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!suspendEmailInput.trim()) return;
+                    const res = await secureApiFetch(`/api/admin/users/${encodeURIComponent(suspendEmailInput.trim())}/suspend`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ reason: suspendReasonInput }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (res.ok) {
+                      alert(`Suspended ${suspendEmailInput.trim()}`);
+                      setSuspendEmailInput("");
+                      loadAuditLogs();
+                    } else {
+                      alert(data?.error || "Suspension failed.");
+                    }
+                  }}
+                  className="rounded-xl bg-[#A8421B] hover:bg-[#8F3614] text-white font-bold px-3.5 py-2 cursor-pointer"
+                >
+                  Suspend
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!suspendEmailInput.trim()) return;
+                    const res = await secureApiFetch(`/api/admin/users/${encodeURIComponent(suspendEmailInput.trim())}/suspend`, {
+                      method: "DELETE",
+                    });
+                    if (res.ok) {
+                      alert(`Restored ${suspendEmailInput.trim()}`);
+                      setSuspendEmailInput("");
+                      loadAuditLogs();
+                    }
+                  }}
+                  className="rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] hover:bg-white text-[#1F1B18] font-bold px-3 py-2 cursor-pointer"
+                >
+                  Restore
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Audit Logs Viewer */}
+          <div className="rounded-2xl border border-[#E7E1D8] bg-white p-5 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-display text-base font-bold text-[#1F1B18]">Security Audit Trail</h3>
+                <p className="text-[11px] text-[#6E655E]">Immutable server ledger of admin actions, payment confirmations, role changes, and certificate approvals.</p>
+              </div>
+              <button
+                type="button"
+                onClick={loadAuditLogs}
+                className="rounded-lg border border-[#E7E1D8] px-3 py-1.5 text-xs font-bold text-[#1F1B18] hover:bg-[#FAF8F4] cursor-pointer"
+              >
+                {isLoadingAudit ? "Refreshing..." : "Refresh Logs"}
+              </button>
+            </div>
+            <div className="max-h-80 overflow-y-auto divide-y divide-[#E7E1D8] text-xs">
+              {auditLogs.length === 0 ? (
+                <p className="py-6 text-center text-[#6E655E] italic">No security audit events recorded in this server session yet.</p>
+              ) : (
+                auditLogs.map((log: any) => (
+                  <div key={log.id} className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="font-mono text-[10px] font-bold uppercase text-[#A8421B] mr-2">{log.action}</span>
+                      <span className="font-semibold text-[#1F1B18]">{log.targetType}: {log.targetId}</span>
+                      <span className="block text-[10px] text-[#6E655E]">Actor: {log.actorEmail} ({log.actorRole})</span>
+                    </div>
+                    <span className="font-mono text-[10px] text-[#6E655E]">{log.createdAt}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {(activeAdminTab as string) === "personnel-payroll" && (
         <div className="space-y-6 text-left my-6">
@@ -3542,28 +3951,41 @@ CREATE TABLE enrollments (
                 <div className="space-y-1">
                   <h3 className="font-display text-base font-bold text-slate-950 flex items-center space-x-2">
                     <Award className="h-5 w-5 text-amber-550 shrink-0" />
-                    <span>Graduate Certificate Downloads Tracker</span>
+                    <span>Graduate Certificate Management & Downloads Ledger</span>
                   </h3>
                   <p className="text-[11px] text-stone-500 font-sans leading-relaxed">
-                    Track academic credentials downloaded by scholars in real-time. Verify digital certificate status, search student name, filter by date ranges, and export records ledger.
+                    Edit student certificate details, modify signatory names, configure filing fees, issue new academic credentials, and export real-time ledger reports.
                   </p>
                 </div>
-                <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCertConfigPanel(!showCertConfigPanel)}
+                    className="rounded-xl px-3.5 py-2 border border-stone-300 bg-stone-100 hover:bg-stone-200 text-stone-800 transition font-extrabold text-xs cursor-pointer flex items-center space-x-1.5 shadow-xs"
+                  >
+                    <Settings className="h-3.5 w-3.5 text-stone-600" />
+                    <span>{showCertConfigPanel ? "Hide Template Config" : "⚙️ Certificate Template Settings"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowIssueCertModal(true)}
+                    className="rounded-xl px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white transition font-extrabold text-xs cursor-pointer flex items-center space-x-1.5 shadow-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>➕ Issue Custom Certificate</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
-                      // Generate and download a CSV file of current filtered records
                       const filtered = certDownloads.filter(dl => {
                         const nameMatch = dl.name.toLowerCase().includes(certDlSearchName.toLowerCase()) || 
                                           dl.email.toLowerCase().includes(certDlSearchName.toLowerCase());
                         
                         let dateMatch = true;
-                        if (certDlStartDate) {
-                          dateMatch = dateMatch && dl.date >= certDlStartDate;
-                        }
-                        if (certDlEndDate) {
-                          dateMatch = dateMatch && dl.date <= certDlEndDate;
-                        }
+                        if (certDlStartDate) dateMatch = dateMatch && dl.date >= certDlStartDate;
+                        if (certDlEndDate) dateMatch = dateMatch && dl.date <= certDlEndDate;
                         return nameMatch && dateMatch;
                       });
 
@@ -3597,13 +4019,91 @@ CREATE TABLE enrollments (
                       link.click();
                       document.body.removeChild(link);
                     }}
-                    className="rounded-xl px-4 py-2 border border-stone-250 bg-stone-50 hover:bg-stone-105 text-stone-700 transition font-bold text-xs cursor-pointer flex items-center space-x-1.5 shadow-xs"
+                    className="rounded-xl px-3.5 py-2 border border-stone-250 bg-stone-50 hover:bg-stone-105 text-stone-700 transition font-bold text-xs cursor-pointer flex items-center space-x-1.5 shadow-xs"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Export CSV Report</span>
+                    <span>Export CSV</span>
                   </button>
                 </div>
               </div>
+
+              {/* GLOBAL CERTIFICATE CONFIGURATION PANEL */}
+              {showCertConfigPanel && (
+                <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 space-y-4 text-xs">
+                  <div className="flex items-center justify-between border-b border-amber-200/80 pb-3">
+                    <h4 className="font-extrabold text-amber-950 uppercase tracking-wide flex items-center space-x-2">
+                      <SlidersHorizontal className="h-4 w-4 text-amber-700" />
+                      <span>Admin Certificate Template & Signatory Configuration</span>
+                    </h4>
+                    <span className="text-[10px] font-mono text-amber-800 bg-amber-100 px-2 py-0.5 rounded font-bold">
+                      ACTIVE TEMPLATE OVERRIDES
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="font-bold text-amber-900 text-[10.5px] uppercase font-mono block">Institution Title</label>
+                      <input
+                        type="text"
+                        value={certInstName}
+                        onChange={(e) => setCertInstName(e.target.value)}
+                        className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-stone-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-amber-900 text-[10.5px] uppercase font-mono block">Faculty Dean / Overseer Signature</label>
+                      <input
+                        type="text"
+                        value={certHeadName}
+                        onChange={(e) => setCertHeadName(e.target.value)}
+                        className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-stone-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-amber-900 text-[10.5px] uppercase font-mono block">Chancellor / Signatory Title</label>
+                      <input
+                        type="text"
+                        value={certChancName}
+                        onChange={(e) => setCertChancName(e.target.value)}
+                        className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-stone-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1 lg:col-span-2">
+                      <label className="font-bold text-amber-900 text-[10.5px] uppercase font-mono block">Certificate Motto / Subtitle</label>
+                      <input
+                        type="text"
+                        value={certMotto}
+                        onChange={(e) => setCertMotto(e.target.value)}
+                        className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-stone-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-amber-900 text-[10.5px] uppercase font-mono block">Filing Fee Amount (KES)</label>
+                      <input
+                        type="number"
+                        value={certificateFeeDraft}
+                        onChange={(e) => setCertificateFeeDraft(parseInt(e.target.value, 10) || 0)}
+                        className="w-full bg-white border border-amber-300 rounded-lg p-2.5 text-stone-900 font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleSaveCertGlobalConfig}
+                      className="bg-amber-700 hover:bg-amber-800 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition cursor-pointer flex items-center space-x-1.5 shadow"
+                    >
+                      <Save className="h-4 w-4" />
+                      <span>Save Global Certificate Settings</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* STATS OVERVIEW CARDS */}
               <div className="grid gap-4 sm:grid-cols-4">
@@ -3799,26 +4299,51 @@ CREATE TABLE enrollments (
                                     </button>
                                   </td>
                                   <td className="p-3 text-right">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        // Re-generate and download the student PDF certificate right away
-                                        generateAccreditedCertificatePdf({
-                                          studentName: dl.name,
-                                          studentEmail: dl.email,
-                                          schoolName: dl.schoolName,
-                                          courseTopic: dl.courseTopic,
-                                          score: dl.score,
-                                          ledgerHash: dl.ledgerHash,
-                                          date: dl.date,
-                                          verificationUrl: `${window.location.origin}/?view=verify&certId=${dl.id}`
-                                        });
-                                      }}
-                                      className="rounded-lg border border-amber-600 hover:bg-amber-50 text-amber-900 px-3 py-1 font-bold transition flex items-center space-x-1 text-[10.5px] ml-auto cursor-pointer shadow-xs"
-                                    >
-                                      <Download className="h-3 w-3 shrink-0" />
-                                      <span>Re-issue PDF</span>
-                                    </button>
+                                    <div className="flex items-center justify-end space-x-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingCert(dl)}
+                                        className="rounded-lg border border-stone-300 hover:bg-stone-100 text-stone-700 px-2.5 py-1 font-extrabold transition flex items-center space-x-1 text-[10.5px] cursor-pointer shadow-xs"
+                                        title="Edit certificate details (Name, Email, Course, Score, Ledger Hash, Date)"
+                                      >
+                                        <FileText className="h-3 w-3 text-blue-600 shrink-0" />
+                                        <span>Edit Details</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          generateAccreditedCertificatePdf({
+                                            studentName: dl.name,
+                                            studentEmail: dl.email,
+                                            schoolName: dl.schoolName,
+                                            courseTopic: dl.courseTopic,
+                                            score: dl.score,
+                                            ledgerHash: dl.ledgerHash,
+                                            date: dl.date,
+                                            verificationUrl: `${window.location.origin}/?view=verify&certId=${dl.id}`,
+                                            institutionName: certInstName,
+                                            headDeanName: certHeadName,
+                                            chancellorName: certChancName,
+                                            mottoText: certMotto
+                                          });
+                                        }}
+                                        className="rounded-lg border border-amber-600 hover:bg-amber-50 text-amber-900 px-2.5 py-1 font-extrabold transition flex items-center space-x-1 text-[10.5px] cursor-pointer shadow-xs"
+                                        title="Re-generate and download official PDF diploma"
+                                      >
+                                        <Download className="h-3 w-3 shrink-0" />
+                                        <span>Re-issue PDF</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteCertRecord(dl.id, dl.name)}
+                                        className="rounded-lg border border-red-200 hover:bg-red-50 text-red-700 px-2 py-1 font-extrabold transition flex items-center space-x-1 text-[10.5px] cursor-pointer shadow-xs"
+                                        title="Delete certificate record from ledger"
+                                      >
+                                        <Trash2 className="h-3 w-3 text-red-600 shrink-0" />
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -3829,6 +4354,247 @@ CREATE TABLE enrollments (
                   </div>
                 )}
               </div>
+
+              {/* MODAL: EDIT CERTIFICATE DETAILS */}
+              {editingCert && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+                  <div className="bg-white dark:bg-stone-900 border border-amber-200 dark:border-stone-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 text-left my-8">
+                    <div className="flex items-center justify-between border-b border-stone-200 dark:border-stone-800 pb-3">
+                      <div className="flex items-center space-x-2">
+                        <Award className="h-5 w-5 text-amber-600" />
+                        <h3 className="font-display font-black text-base text-stone-900 dark:text-white">
+                          Edit Certificate Details — {editingCert.name}
+                        </h3>
+                      </div>
+                      <button
+                        onClick={() => setEditingCert(null)}
+                        className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 text-lg font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleSaveStudentCertEdit} className="space-y-4 text-xs">
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Student Full Name</label>
+                        <input
+                          type="text"
+                          value={editingCert.name}
+                          onChange={(e) => setEditingCert({ ...editingCert, name: e.target.value })}
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-bold"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Student Email Address</label>
+                        <input
+                          type="email"
+                          value={editingCert.email}
+                          onChange={(e) => setEditingCert({ ...editingCert, email: e.target.value })}
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-semibold"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Academic School / Faculty</label>
+                          <input
+                            type="text"
+                            value={editingCert.schoolName}
+                            onChange={(e) => setEditingCert({ ...editingCert, schoolName: e.target.value })}
+                            required
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-medium"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Grade Score (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={editingCert.score}
+                            onChange={(e) => setEditingCert({ ...editingCert, score: parseInt(e.target.value, 10) || 0 })}
+                            required
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-bold font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Course / Syllabus Topic Title</label>
+                        <input
+                          type="text"
+                          value={editingCert.courseTopic}
+                          onChange={(e) => setEditingCert({ ...editingCert, courseTopic: e.target.value })}
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-medium"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Ledger Hash Reference</label>
+                          <input
+                            type="text"
+                            value={editingCert.ledgerHash}
+                            onChange={(e) => setEditingCert({ ...editingCert, ledgerHash: e.target.value })}
+                            required
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-mono text-[11px]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Issued Date</label>
+                          <input
+                            type="date"
+                            value={editingCert.date}
+                            onChange={(e) => setEditingCert({ ...editingCert, date: e.target.value })}
+                            required
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-stone-200 dark:border-stone-800 flex items-center justify-end space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => setEditingCert(null)}
+                          className="px-4 py-2 border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-300 font-bold rounded-xl transition hover:bg-stone-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl transition shadow flex items-center space-x-1.5"
+                        >
+                          <Save className="h-4 w-4" />
+                          <span>Save Changes & Sync Ledger</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL: ISSUE NEW CUSTOM CERTIFICATE */}
+              {showIssueCertModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+                  <div className="bg-white dark:bg-stone-900 border border-amber-200 dark:border-stone-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5 text-left my-8">
+                    <div className="flex items-center justify-between border-b border-stone-200 dark:border-stone-800 pb-3">
+                      <div className="flex items-center space-x-2">
+                        <Plus className="h-5 w-5 text-amber-600" />
+                        <h3 className="font-display font-black text-base text-stone-900 dark:text-white">
+                          Issue Custom Graduate Diploma
+                        </h3>
+                      </div>
+                      <button
+                        onClick={() => setShowIssueCertModal(false)}
+                        className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 text-lg font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleIssueCustomCertificate} className="space-y-4 text-xs">
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Student Full Name</label>
+                        <input
+                          type="text"
+                          value={newCertForm.name}
+                          onChange={(e) => setNewCertForm({ ...newCertForm, name: e.target.value })}
+                          placeholder="e.g. Samuel Wafula Khaemba"
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-bold"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Student Email Address</label>
+                        <input
+                          type="email"
+                          value={newCertForm.email}
+                          onChange={(e) => setNewCertForm({ ...newCertForm, email: e.target.value })}
+                          placeholder="e.g. samuel.wafula@gmail.com"
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-semibold"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Academic School</label>
+                          <select
+                            value={newCertForm.schoolName}
+                            onChange={(e) => setNewCertForm({ ...newCertForm, schoolName: e.target.value })}
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-medium"
+                          >
+                            <option value="Zion School of Leadership & Public Values">Zion School of Leadership & Public Values</option>
+                            <option value="Zion School of Computer Science & IT">Zion School of Computer Science & IT</option>
+                            <option value="Zion School of Theology & Biblical Studies">Zion School of Theology & Biblical Studies</option>
+                            <option value="Zion School of Business & Entrepreneurship">Zion School of Business & Entrepreneurship</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Score Achieved (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={newCertForm.score}
+                            onChange={(e) => setNewCertForm({ ...newCertForm, score: parseInt(e.target.value, 10) || 0 })}
+                            required
+                            className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-bold font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Course / Syllabus Topic</label>
+                        <input
+                          type="text"
+                          value={newCertForm.courseTopic}
+                          onChange={(e) => setNewCertForm({ ...newCertForm, courseTopic: e.target.value })}
+                          placeholder="e.g. Module 1: Administrative Statesmanship"
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-medium"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-stone-700 dark:text-stone-300 uppercase font-mono block">Issued Date</label>
+                        <input
+                          type="date"
+                          value={newCertForm.date}
+                          onChange={(e) => setNewCertForm({ ...newCertForm, date: e.target.value })}
+                          required
+                          className="w-full bg-stone-50 dark:bg-stone-950 border border-stone-300 dark:border-stone-700 rounded-lg p-2.5 text-stone-900 dark:text-white font-mono"
+                        />
+                      </div>
+
+                      <div className="pt-3 border-t border-stone-200 dark:border-stone-800 flex items-center justify-end space-x-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowIssueCertModal(false)}
+                          className="px-4 py-2 border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-300 font-bold rounded-xl transition hover:bg-stone-100"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-xl transition shadow flex items-center space-x-1.5"
+                        >
+                          <Award className="h-4 w-4" />
+                          <span>Issue & Download PDF</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -4272,6 +5038,64 @@ CREATE TABLE enrollments (
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeAdminTab === "video-deletions" && (
+            <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-4 text-left">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b pb-4 gap-2">
+                <div>
+                  <h3 className="font-display text-base font-bold text-slate-950 flex items-center space-x-2">
+                    <ShieldCheck className="h-5 w-5 text-red-600" />
+                    <span>Main Admin Video Deletion Approval Queue</span>
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-1">
+                    Under Zion platform rules, uploaded sermons, motivational addresses, and worship videos CANNOT be deleted without explicit Main Admin clearance.
+                  </p>
+                </div>
+                <span className="bg-red-100 text-red-800 text-xs font-extrabold px-3 py-1 rounded-full shrink-0">
+                  {pendingVideoDeletions.length} Pending Request(s)
+                </span>
+              </div>
+
+              {pendingVideoDeletions.length === 0 ? (
+                <div className="p-8 text-center bg-stone-50 rounded-xl border border-dashed border-stone-300 space-y-2">
+                  <Check className="h-8 w-8 text-emerald-500 mx-auto" />
+                  <h4 className="text-sm font-bold text-stone-700">No Pending Video Deletion Requests</h4>
+                  <p className="text-xs text-stone-500">All published outreach videos, praise hymns, and motivational lectures are active and protected.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingVideoDeletions.map((req) => (
+                    <div key={req.id} className="p-4 bg-stone-50 rounded-xl border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center space-x-2">
+                          <Video className="h-4 w-4 text-amber-500" />
+                          <h4 className="font-extrabold text-stone-900 text-sm">{req.videoTitle}</h4>
+                        </div>
+                        <p className="text-xs text-stone-500">
+                          Requested By: <strong className="text-stone-700">{req.requestedBy}</strong> ({req.requestedEmail || "Secondary Admin"}) • {req.date}
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-2 shrink-0">
+                        <button
+                          onClick={() => handleApproveVideoDeletion(req)}
+                          className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center space-x-1 shadow"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Approve & Delete Video</span>
+                        </button>
+                        <button
+                          onClick={() => handleRejectVideoDeletion(req)}
+                          className="bg-stone-200 hover:bg-stone-300 text-stone-700 font-extrabold text-xs px-3 py-2 rounded-lg transition cursor-pointer"
+                        >
+                          Reject Request
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -6469,11 +7293,11 @@ CREATE TABLE enrollments (
 
               </div>
             ) : (
-              <div className="bg-stone-50 rounded-xl p-4 text-center text-stone-500 border border-dashed py-12">
-                <Lock className="h-6 w-6 text-stone-400 mx-auto mb-2 animate-pulse" />
-                <h4 className="font-bold text-slate-800 text-[11px] uppercase tracking-wide">Admin Store Secured</h4>
-                <p className="text-[10px] text-stone-400 max-w-[140px] mx-auto mt-1 leading-normal font-sans">
-                  Exclusive administrative files can only be unlocked by the main admin account (wafulak435@gmail.com).
+              <div className="bg-[#FAF8F4] rounded-xl p-4 text-center text-[#6E655E] border border-dashed border-[#E7E1D8] py-12">
+                <Lock className="h-6 w-6 text-[#A8421B] mx-auto mb-2" />
+                <h4 className="font-bold text-[#1F1B18] text-[11px] uppercase tracking-wide">Admin Store Secured</h4>
+                <p className="text-[10px] text-[#6E655E] max-w-[180px] mx-auto mt-1 leading-normal font-sans">
+                  Exclusive administrative files can only be unlocked by an authorized Main Administrator.
                 </p>
               </div>
             )}
@@ -7165,820 +7989,5 @@ npm run dev
 Now open your web browser and visit:
 👉 **http://localhost:3000**
 
-Enjoy high-performance offline services, interactive digital school, OCR scanner, and live AI assistant!`,
-};
-
-// @ts-ignore
-const _STALE_CODE_FILES = {
-  "server.ts (Backend & API Host)": `import express from "express";
-import path from "path";
-import dotenv from "dotenv";
-import { GoogleGenAI, Type, GenerateVideosOperation } from "@google/genai";
-import { createServer as createViteServer } from "vite";
-
-// Load environment variables
-dotenv.config();
-
-const app = express();
-const PORT = 3000;
-
-// Enable verbose JSON payloads for direct base64 uploads
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-// Lazy-initialize Gemini SDK to safeguard against missing keys during cold starts
-let genAIClient: GoogleGenAI | null = null;
-
-function getGenAI(): GoogleGenAI {
-  if (!genAIClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("⚠️ GEMINI_API_KEY is not defined. AI calls will fall back to smart offline templates.");
-    }
-    genAIClient = new GoogleGenAI({
-      apiKey: key || "MOCK_KEY",
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return genAIClient;
-}
-
-// REST APIs
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", mode: process.env.NODE_ENV || "development" });
-});
-
-// Specialized Admin High-Detail/Unlimited Photo AI
-app.post("/api/my-ai-assistant", async (req, res) => {
-  try {
-    const userMessage = req.body.message || "";
-    const images = req.body.images || []; // Array of base64 data URIs
-    console.log(\`📬 Message received in specialized Admin AI: "\${userMessage}", with \${images.length} images\`);
-
-    // Guard with a working key check
-    const activeKey = process.env.GEMINI_API_KEY || "AIzaSyDnokYDiiuC4CJCwUep3LCPPOUsOAtGxoU";
-    
-    // Instantiate GoogleGenAI instance for perfect reliability with specified/fallback keys
-    const localizedClient = new GoogleGenAI({
-      apiKey: activeKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-
-    const parts: any[] = [];
-    parts.push({ text: userMessage || "Analyze the provided input and photos in high detail." });
-
-    // Multi-photo processing with NO hard restriction on photos count
-    if (Array.isArray(images)) {
-      images.forEach((imgBase64: string) => {
-        if (imgBase64.startsWith("data:")) {
-          const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
-          if (match) {
-            parts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2],
-              },
-            });
-          }
-        }
-      });
-    }
-
-    const response = await localizedClient.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: { parts },
-      config: {
-        systemInstruction: "You are the Super Admin Independent AI Companion, equipped with unlimited multimodal visual analyzer capabilities and zero photo processing restrictions. Provide extremely thorough, expansive, detailed, and high-fidelity analytical explanations, breakdowns, and step-by-step guidance. Use markdown tables, bullet points, and highly professional layout instructions where appropriate. Make your output incredibly detailed, scholarly, and insightful.",
-      },
-    });
-
-    const text = response.text || "Empty response from Gemini.";
-    return res.json({ success: true, data: text });
-
-  } catch (error: any) {
-    console.error("Specialized Admin AI failed, attempting fallback...", error);
-    try {
-      const fallbackMsg = \`[SPECIALIZED UNLIMITED INTEL HUB] Server analysis processed.\\n\\nReceived instruction: "\${req.body.message}". \\n\\n*Note: High-capacity multi-photo processing fallback. Processed \${req.body.images?.length || 0} image resources successfully with unlimited direct buffer indexing.*\`;
-      return res.json({ success: true, data: fallbackMsg });
-    } catch (fallbackError: any) {
-      return res.status(500).json({ success: false, error: fallbackError.message });
-    }
-  }
-});
-
-// 1. AI ASSISTANT / CHAT (Complex Problem Solver)
-app.post("/api/ai/assistant", async (req, res) => {
-  const { prompt, voiceInput, image, history, category } = req.body;
-  
-  try {
-    const aiClient = getGenAI();
-    let contents: any[] = [];
-    
-    // Add context based on category
-    let systemInstruction = "You are Wafula Digital's professional, executive, and official AI Companion. You reside in Bungoma, Kenya, and write in an elite scholarly tone. IMPORTANT: You are strictly forbidden from addressing the user as 'Pastor' unless they explicitly ask you to in their query. Address them as 'Kelvin' or a professional term like 'Leader' or 'Scholar'. Additionally, you MUST NEVER use markdown '#' tag headers (like #, ##, or ###) in your output. Instead, format titles/headings with CAPITALIZED BOLD text lines with ample spacing so the output is elegant, extremely neat, and directly formatted for a professional PDF.";
-    
-    if (category === "Problem Solver") {
-      systemInstruction += " You are an expert STEM, Coding, and Mathematics Scholar. Present perfect, formal, step-by-step mathematical solutions and explanations without emojis or playful annotations. Avoid raw markdown hash headings.";
-    } else if (category === "Project Plan") {
-      systemInstruction += " You are an expert business and enterprise coordinator. Generate detailed, highly professional, formal project blueprints, timelines, and milestones. Avoid raw markdown hash headings.";
-    } else if (category === "Book Publisher") {
-      systemInstruction += " You are a digital book publishing machine. Generate highly structured, comprehensive, formal, and extensively informative book chapters in a scholarly tone. Avoid raw markdown hash headings.";
-    }
-
-    // Include recent history for context continuity
-    if (history && history.length > 0) {
-      const recentHistory = history.slice(-6); // grab last 6 messages
-      recentHistory.forEach((h: any) => {
-        contents.push({
-          role: h.role === "user" ? "user" : "model",
-          parts: [{ text: h.text }]
-        });
-      });
-    }
-
-    // Assemble image parts and query prompt inside the user turn
-    const userParts: any[] = [];
-
-    // Append standard user prompt text
-    userParts.push({ text: prompt || (voiceInput ? \`Interpret and transcribe/solve this query: \${voiceInput}\` : "Hello! Introduce yourself.") });
-
-    // Handle multiple image uploads if provided
-    const { images } = req.body;
-    if (images && Array.isArray(images)) {
-      images.forEach((imgBase64: string) => {
-        if (imgBase64.startsWith("data:")) {
-          const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
-          if (match) {
-            userParts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2]
-              }
-            });
-          }
-        }
-      });
-    } else if (image && image.startsWith("data:")) {
-      const semiMatch = image.match(/data:([^;]+);base64,(.*)/);
-      if (semiMatch) {
-         userParts.push({
-           inlineData: {
-             mimeType: semiMatch[1],
-             data: semiMatch[2]
-           }
-         });
-      }
-    }
-
-    // Append the primary user prompt text + all uploaded files in user turn
-    contents.push({
-      role: "user",
-      parts: userParts
-    });
-
-    if (process.env.GEMINI_API_KEY) {
-      const modelToUse = (category === "Problem Solver") ? "gemini-3.1-pro-preview" : "gemini-3.5-flash";
-      const response = await aiClient.models.generateContent({
-        model: modelToUse,
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-        }
-      });
-
-      const reply = response.text || "I processed your request, but wasn't able to extract any clean text.";
-      res.json({ success: true, text: reply, model: modelToUse });
-    } else {
-      // Offline fallback simulations (for elegant offline usability)
-      let reply = "";
-      if (category === "Problem Solver") {
-        reply = \`### [OFFLINE MODE] Bungoma STEM Offline Solve:\\n\\n**Query:** "\${prompt}"\\n\\n1. **Formula Hook**: Let $f(x) = \\\\int_{-\\\\infty}^{\\\\infty} e^{-x^2} dx$.\\n2. **Breakdown**: $I = \\\\sqrt{\\\\pi}$. Let's divide by local parameters.\\n3. **Bungoma Constant**: Perfect alignment completed.\\n\\n*Connecting to local DB to prevent data loss. Everything is stored instantly!*\`;
-      } else {
-        reply = \`### [OFFLINE MODE] Wafula Digital AI Companion:\\n\\n"**\${prompt}**"\\n\\nWelcome back! You are currently using WafulaSeller off-the-grid engine. All your message files, search histories, and linked items are safely backed up in Browser LocalStorage. Once connected, your records remain beautifully in sync across screens. Let me know how I can guide your learning in leadership and business!\`;
-      }
-      res.json({ success: true, text: reply, offline: true });
-    }
-  } catch (error: any) {
-    console.error("AI Assistant error:", error);
-    res.status(500).json({ success: false, error: error.message || "An error occurred with Gemini." });
-  }
-});
-
-// 2. TEXT EXTRACTION AI (Reads photos and formats downloadable PDFs)
-app.post("/api/ai/extract", async (req, res) => {
-  const { imageBase64, docTitle } = req.body;
-  
-  try {
-    const aiClient = getGenAI();
-    if (!imageBase64) {
-      return res.status(400).json({ success: false, error: "Image base64 data is required." });
-    }
-
-    const title = docTitle || "Extracted Content";
-    let textResult = "";
-
-    if (process.env.GEMINI_API_KEY) {
-      const semiMatch = imageBase64.match(/data:([^;]+);base64,(.*)/);
-      if (semiMatch) {
-         const mimeType = semiMatch[1];
-         const data = semiMatch[2];
-        
-         const response = await aiClient.models.generateContent({
-           model: "gemini-3.5-flash",
-           contents: [
-             {
-               inlineData: { mimeType, data }
-             },
-             {
-               text: "Extract all visible text from this image. If it contains mathematical equations, handwritten notes, tables, or structural documents, transcribe them perfectly. Present it beautifully using clean Markdown."
-             }
-           ],
-           config: {
-             systemInstruction: "You are an expert OCR and doc transcriber based in Bungoma. Transcribe all text accurately without leaving anything out."
-           }
-         });
-        
-         textResult = response.text || "No text could be extracted.";
-      } else {
-        throw new Error("Invalid base64 string format.");
-      }
-    } else {
-      textResult = \`### [OFFLINE EXTRACTION] \${title}
-
-We detected offline mode! Below is a simulated extraction representing what our high-capacity OCR performs online:
-- **Detected Section 1**: WAFULA DIGITAL BOOKS - LEADERSHIP LESSONS
-- **Extracted Paragraph**: "Empowering every African with knowledge that unlocks their God-given potential. Read. Lead. Transform."
-- **Notes**: Bungoma, Kenya, 2026. This data has been saved to your local offline Files workspace. Download as PDF is fully active!\`;
-    }
-
-    res.json({
-      success: true,
-      title,
-      text: textResult,
-      fileSize: \`\${((textResult.length * 2) / 1024).toFixed(1)} KB\`
-    });
-  } catch (error: any) {
-    console.error("OCR Extraction error:", error);
-    res.status(500).json({ success: false, error: error.message || "Extraction failed." });
-  }
-});
-
-// 3. AI PUBLISHING MACHINE (Converts files, outlines, or text into a polished eBook)
-app.post("/api/ai/publish", async (req, res) => {
-  const { originalContent, requestedTitle, targetCategory, authorName } = req.body;
-  
-  try {
-    const aiClient = getGenAI();
-    const title = requestedTitle || "Untitled Published Book";
-    const author = authorName || "Kelvin Opara Wafula";
-    const category = targetCategory || "Leadership";
-    
-    let compiledBook = "";
-
-    if (process.env.GEMINI_API_KEY) {
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: \`Create a fully structured, multi-chapter eBook. Title: "\${title}", Category: "\${category}", Author: "\${author}". Use the following source notes/file content: "\${originalContent}". Elaborate, expand, structure nicely (Chapter 1, Chapter 2, Chapter 3 with elegant themes), and generate introductory and concluding sections with a professional design. Make it extensive, inspiring, and fully formatted.\`,
-        config: {
-          systemInstruction: "You are a master digital publisher machine. You write comprehensive, inspirational African digital books that look professional and structured. Never call the user 'Pastor'. Address them as 'Kelvin' or 'Leader' or 'Scholar'. IMPORTANT: Do not use markdown hash (#) headers in your output. Format titles/headings in all-caps bold on single lines so the text translates perfectly to an A4 PDF template."
-        }
-      });
-      compiledBook = response.text || "Publishing generation failed.";
-    } else {
-      compiledBook = \`# \${title}
-*By \${author} | Published through Wafula AI Digital Publishers, Bungoma*
-*Category: \${category}*
-
-## Introduction
-This book serves as a timeless document synthesized by our smart local publishing engine. It builds on Kenyan wisdom, leadership values, and modern intellectual resources.
-
-## Chapter 1: The Core Foundation
-Leadership is not about positions; it is about transformative action. By empowering every reader with premium, accessible knowledge, we elevate local and global spheres of impact.
-
-## Chapter 2: Vision into Reality
-"Read. Lead. Transform." is the fundamental slogan. It requires precision of thought, diligent state building, and active study.
-
-## Conclusion
-A finalized work crafted to be accessed offline or online anywhere across East Africa. Download the PDF and share the message.\`;
-    }
-
-    res.json({
-      success: true,
-      title,
-      author,
-      category,
-      content: compiledBook,
-      fileSize: \`\${((compiledBook.length * 2) / 1024).toFixed(1)} KB\`
-    });
-  } catch (error: any) {
-    console.error("AI Publisher error:", error);
-    res.status(500).json({ success: false, error: error.message || "Publishing machine failed." });
-  }
-});
-
-// 4. LANGUAGE LEARNING TUTOR
-app.post("/api/ai/language-translate", async (req, res) => {
-  const { text, targetLang, mode } = req.body; // mode can be 'translate', 'lesson', or 'practice'
-  try {
-    const aiClient = getGenAI();
-    let prompt = "";
-    let systemInstruction = "You are a professional, official academic instructor at Wafula Language and Leadership Academy. You write in an elite scholarly tone. Do not use any emojis, jokes, or informal greetings. Avoid adding questions or quizzes unless specifically requested by the reader. Never call the user 'Pastor'. Address them as 'Leader' or 'Kelvin'. Additionally, you are strictly forbidden from writing markdown '#' headers. Format topic sections with bold CAPITALIZED text lines on their own line with nice spacing.";
-    
-    if (targetLang === "Leadership") {
-      systemInstruction = "You are a Senior Executive Leadership Scholar and Management Consultant. You generate highly authoritative, exhaustive, and detailed lecture notes. Never call the user 'Pastor'; address them as 'Leader' or 'Kelvin'. Never use raw markdown '#' hash section titles; use CAPITALIZED BOLD text lines with clean spaces surrounding them.";
-      prompt = \`Provide comprehensive, academic-grade, and structured lecture notes on the leadership topic: "\${text || 'Strategic Management and Delegating Responsibility'}". Elaborate extensively on executive strategies, theoretical frameworks, case principles, and rigorous implementation checklists. Do NOT include any quizzes, questions, assessment exercises, or emojis. Ensure the tone is highly official and formal.\`;
-    } else {
-      if (mode === "translate") {
-        prompt = \`Translate the following English term into \${targetLang}. Give the exact translation, accurate phonetic pronunciation, and 3 formal/conversational example sentences with English translations: "\${text}". Do not use emojis.\`;
-      } else if (mode === "lesson") {
-        prompt = \`Generate a modern 5-minute formal lesson to learn \${targetLang} centered on the theme: "\${text || 'Everyday greetings & core vocabulary'}". Include vocabulary list with English meanings, precise pronunciation tips, and a detailed cultural context. Do NOT include any mini quizzes, question prompts, or emojis unless the user explicitly requested a quiz in the topic input.\`;
-      } else {
-        prompt = \`Act as a professional conversational dialogue tutor speaking in \${targetLang}. Reply to the user's input: "\${text || 'Habari! Hello!'}" in both \${targetLang} and English translation, and suggest an official reply prompt for them. Do not use emojis.\`;
-      }
-    }
-
-    if (process.env.GEMINI_API_KEY) {
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: { systemInstruction }
-      });
-      res.json({ success: true, text: response.text });
-    } else {
-      // Offline fallback templates
-      let mockReply = "";
-      if (targetLang === "Leadership") {
-        mockReply = \`### Strategic Executive Lecture Notes: \${text || 'Delegating Responsibility'}\\n\\n#### 1. Theoretical Foundation\\nEffective delegation is an analytical management framework that redistributes strategic decision authority. It establishes high-performance execution patterns across organization layers.\\n\\n#### 2. Key Implementation Principles\\n- **Objective Definition**: Specifying target parameters clearly before initiating execution buffers.\\n- **Capability Matching**: Selecting managers based on recorded competency histories.\\n- **Accountability Integrity**: Ensuring regular execution audits of active operations.\\n\\nEverything has been logged securely to your offline dashboard.\`;
-      } else if (mode === "translate") {
-        mockReply = \`### \${targetLang} Formal Translation for: "\${text}"\\n\\n- **Translation**: [Offline Match]\\n- **Pronunciation**: /wa-fu-la/ \\n- **Context**: "Habari ya asubuhi, mgeni wa heshima" (Good morning, honorable guest). Ready for offline use.\`;
-      } else if (mode === "lesson") {
-        mockReply = \`### lesson: \${targetLang} Basics\\n\\n1. **Lead** in \${targetLang}: *Kiongozi* (Pronounced: kee-on-go-zee).\\n2. **Book** in \${targetLang}: *Kitabu* (Pronounced: kee-tah-boo).\\n\\nThis basic vocabulary forms the foundation of educational literature in \${targetLang}.\`;
-      } else {
-        mockReply = \`### \${targetLang} Academy Chat Dialogue:\\n\\n"Jambo! Habari yako?" (Greetings, how are you?)\\n\\n*English Translation*: Greetings! How is your condition?\\n\\n*Try replying with*: "Salama kabisa" (I am perfectly peaceful).\`;
-      }
-      res.json({ success: true, text: mockReply, offline: true });
-    }
-  } catch (error: any) {
-    console.error("Language API error:", error);
-    res.status(500).json({ success: false, error: error.message || "Language API failed." });
-  }
-});
-
-// 5. BATCH CLASSIFICATION OF BOOKS
-app.post("/api/ai/batch-classify", async (req, res) => {
-  const { books } = req.body; // array of { title, author, description, base64Image, generateCoverPrompt }
-  
-  if (!books || !Array.isArray(books)) {
-    return res.status(400).json({ success: false, error: "An array of books is required." });
-  }
-
-  try {
-    const aiClient = getGenAI();
-    const results = [];
-
-    for (let i = 0; i < books.length; i++) {
-      const book = books[i];
-      let finalCategory = "Non-Fiction";
-      let finalIntroduction = book.description || "";
-      let finalCoverImage = book.base64Image || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
-
-      // If online, run Gemini analysis to detect category and generate description expansion
-      if (process.env.GEMINI_API_KEY) {
-        try {
-          const schema = {
-            type: Type.OBJECT,
-            properties: {
-              category: {
-                type: Type.STRING,
-                description: "Must be exactly one of: 'Fiction', 'Non-Fiction', 'Business', 'Technology', 'Self-Help', 'Education', 'Health', 'Science', 'Religion'. Choose the closest fit.",
-              },
-              introduction: {
-                type: Type.STRING,
-                description: "An elegant, inspiring 2-sentence summary/introduction of the book.",
-              }
-            },
-            required: ["category", "introduction"]
-          };
-
-          const prompt = \`Analyze this digital book for classification and synopsis.
-Title: "\${book.title}"
-Author: "\${book.author || 'Kelvin Opara Wafula'}"
-Initial Notes: "\${book.description || ''}"\`;
-
-          const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: prompt,
-            config: {
-              systemInstruction: "You are a master digital publisher. Classify books into standard categories accurately.",
-              responseMimeType: "application/json",
-              responseSchema: schema,
-            }
-          });
-
-          if (response.text) {
-            const parsed = JSON.parse(response.text.trim());
-            if (parsed.category) finalCategory = parsed.category;
-            if (parsed.introduction) finalIntroduction = parsed.introduction;
-          }
-        } catch (e) {
-          console.error("Single book classification failed, using defaults:", e);
-        }
-
-        // If and only if the admin requests AI image cover generation (no uploaded photo)
-        if (book.generateCoverPrompt && !book.base64Image) {
-          try {
-            const imageResponse = await aiClient.models.generateContent({
-              model: 'gemini-2.5-flash-image',
-              contents: {
-                parts: [{ text: \`A beautiful professional book cover design for a book titled "\${book.title}" in the genre "\${finalCategory}". Prompt: \${book.generateCoverPrompt}, photorealistic, elegant vector graphics\` }]
-              },
-              config: {
-                imageConfig: { aspectRatio: '3:4' }
-              }
-            });
-
-            if (imageResponse?.candidates?.[0]?.content?.parts) {
-              const part = imageResponse.candidates[0].content.parts.find((p: any) => p.inlineData);
-              if (part?.inlineData?.data) {
-                finalCoverImage = \`data:image/png;base64,\${part.inlineData.data}\`;
-              }
-            }
-          } catch (imgError) {
-            console.error("Cover image generation failed:", imgError);
-          }
-        }
-      } else {
-        // Offline fallback simulation of category checking based on keywords
-        const textToAnalyze = \`\${book.title} \${book.description}\`.toLowerCase();
-        if (textToAnalyze.includes("jesus") || textToAnalyze.includes("faith") || textToAnalyze.includes("god") || textToAnalyze.includes("church") || textToAnalyze.includes("bible")) {
-          finalCategory = "Religion";
-        } else if (textToAnalyze.includes("business") || textToAnalyze.includes("finance") || textToAnalyze.includes("money") || textToAnalyze.includes("capital")) {
-          finalCategory = "Business";
-        } else if (textToAnalyze.includes("code") || textToAnalyze.includes("programming") || textToAnalyze.includes("ai") || textToAnalyze.includes("software") || textToAnalyze.includes("computer")) {
-          finalCategory = "Technology";
-        } else if (textToAnalyze.includes("learn") || textToAnalyze.includes("school") || textToAnalyze.includes("study") || textToAnalyze.includes("teacher")) {
-          finalCategory = "Education";
-        } else if (textToAnalyze.includes("novel") || textToAnalyze.includes("story") || textToAnalyze.includes("love")) {
-          finalCategory = "Fiction";
-        } else {
-          finalCategory = "Non-Fiction";
-        }
-
-        if (!finalIntroduction) {
-          finalIntroduction = \`An inspiring guide written to elevate perspectives about "\${book.title}" in the \${finalCategory} spectrum. Perfect for modern Bungoma scholars.\`;
-        }
-
-        // If offline and cover image generation was requested but there is no photo
-        if (book.generateCoverPrompt && !book.base64Image) {
-          finalCoverImage = \`https://picsum.photos/seed/\${encodeURIComponent(book.title)}/350/500\`;
-        }
-      }
-
-      results.push({
-        id: "book_ai_" + Date.now() + "_" + i,
-        title: book.title,
-        author: book.author || "Kelvin Opara Wafula",
-        price: parseFloat(book.price) || 350,
-        category: finalCategory,
-        description: finalIntroduction,
-        coverImage: finalCoverImage,
-        fileSize: \`\${(Math.random() * 5 + 2).toFixed(1)}MB\`,
-        pages: Math.floor(Math.random() * 120) + 100,
-        publishedDate: new Date().toISOString().split("T")[0],
-        isFeatured: false,
-        status: "active",
-        rating: 5,
-        reviewsCount: 1
-      });
-    }
-
-    res.json({ success: true, books: results });
-  } catch (error: any) {
-    console.error("Batch classification failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Batch process failed." });
-  }
-});
-
-// 6. CREATIVE AI IMAGE GENERATION
-app.post("/api/ai/generate-image", async (req, res) => {
-  const { prompt, aspectRatio, hdMode } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ success: false, error: "Prompt is required." });
-  }
-
-  try {
-    const aiClient = getGenAI();
-    let imageBase64 = "";
-
-    if (process.env.GEMINI_API_KEY) {
-      const model = hdMode ? 'gemini-3.1-flash-image-preview' : 'gemini-2.5-flash-image';
-      
-      const response = await aiClient.models.generateContent({
-        model,
-        contents: {
-          parts: [{ text: prompt }]
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: aspectRatio || "1:1",
-            imageSize: hdMode ? "1K" : undefined
-          }
-        }
-      });
-
-      if (response?.candidates?.[0]?.content?.parts) {
-        const part = response.candidates[0].content.parts.find((p: any) => p.inlineData);
-        if (part?.inlineData?.data) {
-          imageBase64 = \`data:image/png;base64,\${part.inlineData.data}\`;
-        }
-      }
-
-      if (!imageBase64) {
-        throw new Error("No image data returned from Gemini.");
-      }
-    } else {
-      imageBase64 = \`https://picsum.photos/seed/\${encodeURIComponent(prompt)}/800/800\`;
-    }
-
-    res.json({ success: true, imageUrl: imageBase64 });
-  } catch (error: any) {
-    console.error("Creative Image Generator failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to generate image." });
-  }
-});
-
-// 7. CREATIVE AI VIDEO GENERATION (VEO START)
-app.post("/api/ai/generate-video", async (req, res) => {
-  const { prompt, aspectRatio, resolution } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ success: false, error: "Prompt is required." });
-  }
-
-  try {
-    const aiClient = getGenAI();
-
-    if (process.env.GEMINI_API_KEY) {
-      const operation = await aiClient.models.generateVideos({
-        model: 'veo-3.1-lite-generate-preview',
-        prompt: prompt,
-        config: {
-          numberOfVideos: 1,
-          resolution: resolution || '720p',
-          aspectRatio: aspectRatio || '16:9'
-        }
-      });
-
-      res.json({ success: true, operationName: operation.name });
-    } else {
-      res.json({ success: true, operationName: "mock-operations/veo-video-" + Date.now(), offline: true });
-    }
-  } catch (error: any) {
-    console.error("Creative Video Generator failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to start video operation." });
-  }
-});
-
-// 8. CREATIVE AI VIDEO STATUS (VEO POLL)
-app.post("/api/ai/video-status", async (req, res) => {
-  const { operationName } = req.body;
-  if (!operationName) {
-    return res.status(400).json({ success: false, error: "Operation name is required." });
-  }
-
-  try {
-    if (operationName.startsWith("mock-operations/")) {
-      const elapsed = Date.now() - parseInt(operationName.split("-")[1]);
-      const done = elapsed > 4000;
-      return res.json({ success: true, done, offline: true });
-    }
-
-    const aiClient = getGenAI();
-    const op = new GenerateVideosOperation();
-    op.name = operationName;
-    const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    
-    res.json({ success: true, done: updated.done });
-  } catch (error: any) {
-    console.error("Video Operation status error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to poll video status." });
-  }
-});
-
-// 9. CREATIVE AI VIDEO DOWNLOAD & PIPING (VEO FETCH)
-app.post("/api/ai/video-download", async (req, res) => {
-  const { operationName } = req.body;
-  if (!operationName) {
-    return res.status(400).json({ success: false, error: "Operation name is required." });
-  }
-
-  try {
-    if (operationName.startsWith("mock-operations/")) {
-      return res.redirect("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
-    }
-
-    const aiClient = getGenAI();
-    const op = new GenerateVideosOperation();
-    op.name = operationName;
-    const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    
-    const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
-    if (!uri) {
-      return res.status(404).json({ success: false, error: "Video URI not found or video not compiled yet." });
-    }
-
-    const key = process.env.GEMINI_API_KEY;
-    const videoRes = await fetch(uri, {
-      headers: { 'x-goog-api-key': key || "" },
-    });
-    
-    res.setHeader('Content-Type', 'video/mp4');
-    
-    if (videoRes.body) {
-      const nodeStream = (videoRes.body as any);
-      if (typeof nodeStream.pipe === "function") {
-        nodeStream.pipe(res);
-      } else {
-        const reader = videoRes.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(Buffer.from(value));
-        }
-        res.end();
-      }
-    } else {
-      res.redirect(uri);
-    }
-  } catch (error: any) {
-    console.error("Video Download error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to download video file." });
-  }
-});
-
-// Capture all assets through Vite for full SPA execution
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(\`🚀 Wafula Full-Stack server booted successfully on http://0.0.0.0:\${PORT}\`);
-  });
-}
-
-startServer();`,
-
-  "package.json (Dependency Declarations)": `{
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@google/genai": "^1.29.0",
-    "@tailwindcss/vite": "^4.1.14",
-    "@vitejs/plugin-react": "^5.0.4",
-    "d3": "^7.9.0",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
-    "firebase": "^12.13.0",
-    "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
-    "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "recharts": "^3.8.1",
-    "vite": "^6.2.3"
-  },
-  "devDependencies": {
-    "@types/d3": "^7.4.3",
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.14.0",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
-  }
-}`,
-
-  "vite.config.ts (Vite Dev Config)": `import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import {defineConfig} from 'vite';
-
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
-    },
-    server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
-    },
-  };
-});`,
-
-  "tsconfig.json (TypeScript Config)": `{
-  "compilerOptions": {
-    "target": "ES2022",
-    "experimentalDecorators": true,
-    "useDefineForClassFields": false,
-    "module": "ESNext",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "allowJs": true,
-    "jsx": "react-jsx",
-    "paths": {
-      "@/*": [
-        "./*"
-      ]
-    },
-    "allowImportingTsExtensions": true,
-    "noEmit": true
-  }
-}`,
-
-  "RUN_GUIDE.md (Laptop Setup & Execution Manual)": `## Laptop Standalone Build Guide
-
-Follow these steps to deploy and run the Wafula Digital application locally on your laptop:
-
-### 1. Install Node.js
-Go to https://nodejs.org and install the recommended Long Term Support (LTS) edition for Windows, macOS, or Linux. Please verify install success by running:
-\`\`\`bash
-node -v
-npm -v
-\`\`\`
-
-### 2. Prepare Project Files
-- Prepare a directory on your laptop workspace, e.g. \`C:\\wafula-digital\` or \`~/wafula-digital\`.
-- Populate this directory with your frontend code modules (like \`src/App.tsx\`, \`index.html\`, \`src/index.css\`, etc.).
-- Copy paste \`package.json\`, \`server.ts\`, \`vite.config.ts\`, and \`tsconfig.json\` into this directory root.
-
-### 3. Create Environment File (.env)
-Add a new \`.env\` file in the root workspace directory with the following variables so offline mode triggers automatically if the key is empty, or uses the real API key if provided:
-\`\`\`env
-# .env
-PORT=3000
-GEMINI_API_KEY=your_actual_gemini_api_key_here
-\`\`\`
-
-### 4. Install Core Packages
-Standardize packages using the NPM installer command:
-\`\`\`bash
-npm install
-\`\`\`
-
-### 5. Launch the Local Server
-Run the local dev command. This spins up the unified fullstack Express development server and binds the client on port 3000:
-\`\`\`bash
-npm run dev
-\`\`\`
-Now, launch Google Chrome or any modern browser and visit:
-👉 **http://localhost:3000**
-
-Enjoy premium local dynamic features, offline books, interactive discussion boards, OCR photo scanner processing, and the AI Teacher Classroom!
-
-### 6. Production Builds
-To build and start standalone production files:
-\`\`\`bash
-npm run build
-npm start
-\`\`\`
-`
+  Enjoy high-performance offline services, interactive digital school, OCR scanner, and live AI assistant!`,
 };

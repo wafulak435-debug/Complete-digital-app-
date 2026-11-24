@@ -9,6 +9,7 @@ import {
 import { db } from "../lib/firebase";
 import { collection, addDoc, onSnapshot, query, where, deleteDoc, doc, orderBy } from "firebase/firestore";
 import { getPdfFromOfflineDb } from "../utils/pdfDb";
+import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
 
 // --- INDEXEDDB OFFLINE BUFFER ENGINE ---
 const openIndexedDB = (): Promise<IDBDatabase> => {
@@ -193,7 +194,7 @@ export default function SecureBookReader({
   onTriggerPayment,
   onAddNewDocument
 }: SecureBookReaderProps) {
-  const canAccessFully = hasPaid || isAdmin || (book.id.startsWith("book_") && !["b1", "b2", "b3"].includes(book.id)) || (book.pdfUrl && (book.pdfUrl.includes("/api/books/pdf/") || book.pdfUrl.startsWith("indexeddb://")));
+  const canAccessFully = (book.price || 0) <= 0 || hasPaid || isAdmin;
 
   const isAdminUploadedMainBook = book.id.startsWith("book_") && !book.id.startsWith("book_ai_doc_") && !["b1", "b2", "b3"].includes(book.id);
   const isWordDoc = book.pdfUrl?.includes("/api/books/docx/") || book.pdfUrl?.endsWith(".docx") || book.pdfUrl?.endsWith(".doc");
@@ -255,17 +256,21 @@ Description: "${book.description || 'A theological and leadership study manual.'
 
 Please write at least 3 dense chapters. For each chapter, include an introduction, study outlines, rich analytical body commentary, real-world development checklists for East Africa (specifically Bungoma, Kenya), and review exercises. Provide absolute canonical depth. Do not include summary prefixes like 'Sure, here is your book' or mock outlines only. Fill in real content!`;
 
-      const response = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: promptMessage,
           category: "Book Publisher"
-        })
-      });
-      
+        },
+        {
+          saveHistory: true,
+          historyTitle: `Compiled Book: ${book.title}`,
+          historyCategory: "Book Publisher",
+        }
+      );
+
       setCompilationProgress("Synthesizing chapters and formatting pages...");
-      const data = await response.json();
       if (data.success && data.text) {
         const gText = data.text;
         setLocalBookContent(gText);
@@ -398,11 +403,26 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
         return;
       }
 
+      if (!canAccessFully && (book.price || 0) > 0) {
+        try {
+          const previewRes = await secureApiFetch(`/api/books/${encodeURIComponent(book.id)}/preview`);
+          if (previewRes.ok) {
+            const previewData = await previewRes.json().catch(() => null);
+            if (previewData?.book?.content && active) {
+              setLocalBookContent(previewData.book.content);
+            }
+          }
+        } catch {
+          // Offline preview fallback remains active
+        }
+        if (active) setResolvedPdfUrl(null);
+        return;
+      }
+
       // Check IndexedDB offline cache first for optimal speed and reliability
       try {
         const offlineBlob = await getPdfFromOfflineDb(book.id);
         if (offlineBlob && active) {
-          console.log(`Loading Book "${book.title}" from local high-speed IndexedDB cache...`);
           localUrlObj = URL.createObjectURL(offlineBlob);
           setResolvedPdfUrl(localUrlObj);
           return;
@@ -425,6 +445,21 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
           console.error("Reader: Failed to load book blob from IndexedDB indices:", err);
           if (active) setResolvedPdfUrl(null);
         }
+      } else if (book.pdfUrl.startsWith("/api/books/pdf/") || book.pdfUrl.startsWith("/api/books/docx/")) {
+        try {
+          const res = await secureApiFetch(book.pdfUrl);
+          if (!res.ok) {
+            if (active) setResolvedPdfUrl(null);
+            return;
+          }
+          const blob = await res.blob();
+          if (active) {
+            localUrlObj = URL.createObjectURL(blob);
+            setResolvedPdfUrl(localUrlObj);
+          }
+        } catch {
+          if (active) setResolvedPdfUrl(null);
+        }
       } else {
         setResolvedPdfUrl(book.pdfUrl);
       }
@@ -438,7 +473,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
         URL.revokeObjectURL(localUrlObj);
       }
     };
-  }, [book.pdfUrl, book.id]);
+  }, [book.pdfUrl, book.id, canAccessFully, book.price]);
 
   useEffect(() => {
     setJumpPageVal(currentPage.toString());

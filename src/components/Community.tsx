@@ -6,20 +6,11 @@ import {
   Megaphone, Pin, AlertCircle, Sparkle, Loader, Edit3
 } from "lucide-react";
 import { CommunityMessage, User } from "../types";
+import { secureApiFetch } from "../lib/aiClient";
 
 export function isUserWorker(user: User | null): boolean {
   if (!user) return false;
-  if (user.role === 'admin') return true;
-  const email = (user.email || "").toLowerCase().trim();
-  return email.includes("admin") ||
-         email.includes("opara") ||
-         email.includes("wafula") ||
-         email.includes("teacher") ||
-         email.includes("staff") ||
-         email.includes("worker") ||
-         email.includes("stakeholder") ||
-         email.includes("school") ||
-         email.includes("books");
+  return ["main_admin", "admin", "sub_admin", "manager", "tutor"].includes(user.role);
 }
 
 interface CommunityProps {
@@ -34,11 +25,16 @@ interface CommunityProps {
   isLoading?: boolean;
 }
 
-type ChannelType = '#generatechat' | '#workers' | string;
+type ChannelType = '#General' | '#Book Talks' | '#Leadership' | '#Publishing' | '#Bible Study' | '#Computing' | '#workers' | string;
 
 const AVAILABLE_CHANNELS: { id: ChannelType; name: string; desc: string; icon: string }[] = [
-  { id: '#generatechat', name: "General Discussions Hub", desc: "Share information, theological views, and local updates with everyone globally", icon: "💬" },
-  { id: '#workers', name: "Worker Communication Hub", desc: "Private channel for administrators, books managers, and school workers", icon: "🔐" }
+  { id: '#General', name: "General", desc: "Welcome lounge, daily reflections, and reader introductions", icon: "#" },
+  { id: '#Book Talks', name: "Book Talks", desc: "Discuss chapters, highlights, and reading club notes", icon: "#" },
+  { id: '#Leadership', name: "Leadership", desc: "Cohort strategy, ethics, and fellowship mentorship", icon: "#" },
+  { id: '#Publishing', name: "Publishing", desc: "Drafting manuscripts, editing, and author discussions", icon: "#" },
+  { id: '#Bible Study', name: "Bible Study", desc: "Scripture reflections across all 66 NIV books", icon: "#" },
+  { id: '#Computing', name: "Computing", desc: "Programming, digital tools, and technology study group", icon: "#" },
+  { id: '#workers', name: "Staff & Faculty Room", desc: "Private room verified for tutors, managers, and administrators", icon: "🔒" }
 ];
 
 interface AnnouncementNotice {
@@ -74,11 +70,13 @@ export default function Community({
   onUpdateBroadcastAnnouncement,
   isLoading = false
 }: CommunityProps) {
-  const [activeChannel, setActiveChannel] = useState<ChannelType>('#generatechat');
+  const [activeChannel, setActiveChannel] = useState<ChannelType>('#General');
   const [chatInput, setChatInput] = useState("");
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [replyToMessage, setReplyToMessage] = useState<CommunityMessage | null>(null);
   const [showSidebarMobile, setShowSidebarMobile] = useState(true);
+  const [serverChannelMessages, setServerChannelMessages] = useState<CommunityMessage[]>([]);
+  const [channelAccessError, setChannelAccessError] = useState<string | null>(null);
 
   // Editing state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -166,11 +164,34 @@ export default function Community({
   // Scroll to bottom helper
   const chatFeedRef = useRef<HTMLDivElement>(null);
 
+  // Sync verified room history from backend (respecting private room membership checks)
+  useEffect(() => {
+    let active = true;
+    setChannelAccessError(null);
+    secureApiFetch(`/api/community/messages?channel=${encodeURIComponent(activeChannel)}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!active) return;
+        if (res.status === 403) {
+          setChannelAccessError(data?.error || "Restricted room: Only verified tutors, managers, and administrators may view #workers.");
+          setServerChannelMessages([]);
+          return;
+        }
+        if (res.ok && Array.isArray(data?.messages)) {
+          setServerChannelMessages(data.messages);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [activeChannel, currentUser?.email, currentUser?.role]);
+
   useEffect(() => {
     if (chatFeedRef.current) {
       chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
     }
-  }, [messages, activeChannel, showSidebarMobile]);
+  }, [messages, serverChannelMessages, activeChannel, showSidebarMobile]);
 
   // Voice recording simulation
   const startRecording = () => {
@@ -272,6 +293,16 @@ export default function Community({
     }
 
     onSendMessage(textToSend, replyToMessage?.id, activeChannel, extras);
+    secureApiFetch("/api/community/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel: activeChannel,
+        text: textToSend,
+        parentId: replyToMessage?.id,
+        ...extras,
+      }),
+    }).catch(() => {});
     
     setChatInput("");
     setReplyToMessage(null);
@@ -374,12 +405,29 @@ export default function Community({
     setRealAttachedFile(null);
   };
 
+  // Combine local & server-verified channel messages without duplicates
+  const mergedMessages = React.useMemo(() => {
+    const map = new Map<string, CommunityMessage>();
+    for (const m of messages) map.set(m.id, m);
+    for (const m of serverChannelMessages) map.set(m.id, m);
+    return Array.from(map.values());
+  }, [messages, serverChannelMessages]);
+
+  const normalizeChannel = (raw?: string): string => {
+    if (!raw || raw === "#generatechat" || raw.toLowerCase() === "#general") return "#General";
+    if (raw.toLowerCase() === "#book talks") return "#Book Talks";
+    if (raw.toLowerCase() === "#leadership") return "#Leadership";
+    if (raw.toLowerCase() === "#publishing") return "#Publishing";
+    if (raw.toLowerCase() === "#bible study") return "#Bible Study";
+    if (raw.toLowerCase() === "#computing") return "#Computing";
+    if (raw.toLowerCase() === "#workers") return "#workers";
+    return raw;
+  };
+
   // Filter messages based on active channel and search query
-  const filteredMessages = messages.filter((m) => {
-    let msgChan = m.channel || "#generatechat";
-    if (msgChan === "#General" || msgChan === "#Book Talks" || msgChan === "#Leadership" || msgChan === "#Publishing") {
-      msgChan = "#generatechat";
-    }
+  const filteredMessages = mergedMessages.filter((m) => {
+    const msgChan = normalizeChannel(m.channel);
+    if (msgChan === "#workers" && !isUserWorker(currentUser)) return false;
     const isChannelMatch = msgChan === activeChannel;
     const isSearchMatch = m.text.toLowerCase().includes(messageSearchQuery.toLowerCase()) || 
                           m.userName.toLowerCase().includes(messageSearchQuery.toLowerCase());
@@ -389,14 +437,50 @@ export default function Community({
   // Root level messages in this channel
   const rootMessages = filteredMessages.filter((m) => !m.parentId);
 
-  const isAdmin = currentUser && (
-    currentUser.role === 'admin' || 
-    currentUser.email === 'wafulak435@gmail.com' || 
-    currentUser.email === 'wafula435@gmail.com'
+  const isAdmin = Boolean(
+    currentUser && (
+      ["main_admin", "admin"].includes(currentUser.role) ||
+      (currentUser.role === "sub_admin" && currentUser.permissions?.allowModeration)
+    )
   );
 
+  // Unique participants in the active view for the left sidebar members roster
+  const activeRoomMembers = React.useMemo(() => {
+    const seen = new Map<string, { name: string; initial: string; role?: string }>();
+    if (currentUser && currentUser.role !== "guest") {
+      seen.set(currentUser.email, {
+        name: currentUser.name,
+        initial: currentUser.name.charAt(0).toUpperCase(),
+        role: currentUser.role,
+      });
+    }
+    for (const m of filteredMessages) {
+      if (!seen.has(m.userId) && m.userName) {
+        seen.set(m.userId, {
+          name: m.userName,
+          initial: m.userName.charAt(0).toUpperCase(),
+          role: m.role,
+        });
+      }
+    }
+    return Array.from(seen.values()).slice(0, 8);
+  }, [filteredMessages, currentUser]);
+
   return (
-    <div id="whatsapp_community_clone" className="w-full h-[calc(100vh-5rem)] flex flex-col p-1 sm:p-2">
+    <div id="whatsapp_community_clone" className="w-full max-w-7xl mx-auto min-h-[calc(100vh-8rem)] flex flex-col px-3 sm:px-6 lg:px-8 py-4 space-y-4">
+      
+      {/* Editorial Section Header matching Screenshot 3 */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 text-left">
+        <div>
+          <h2 className="font-serif text-2xl sm:text-3xl font-bold text-[#1F1B18] dark:text-[#F5F1EB] flex items-center gap-2 tracking-tight">
+            <MessageSquare className="h-6 w-6 text-[#A8421B] dark:text-[#D96B3E]" />
+            <span>Community</span>
+          </h2>
+          <p className="text-xs text-[#6E655E] dark:text-[#B6ABA0] mt-0.5">
+            Share photos, PDFs and documents. Reply, tag members, send emojis or discuss readings together.
+          </p>
+        </div>
+      </div>
       
       {/* Hidden system files selectors */}
       <input 
@@ -414,16 +498,16 @@ export default function Community({
         onChange={(e) => handleNativeFileSelected(e, 'doc')} 
       />
 
-      {/* 1. Global Admin Announcements Panel Widget */}
-      <div className="mb-2 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-950 p-2.5 shadow-sm text-left transition duration-300">
-        <div className="flex items-center justify-between border-b border-stone-100 dark:border-stone-900 pb-1.5 mb-1.5">
+      {/* 1. Admin Announcements Strip */}
+      <div className="rounded-2xl border border-[#E7E1D8] dark:border-[#332C26] bg-white dark:bg-[#1E1A17] p-3 shadow-2xs text-left">
+        <div className="flex items-center justify-between border-b border-[#E7E1D8]/70 dark:border-[#332C26] pb-1.5 mb-2">
           <button 
             onClick={() => setIsNoticesExpanded(!isNoticesExpanded)}
-            className="flex items-center space-x-1.5 hover:opacity-80 focus:outline-none text-rose-700 dark:text-rose-400 font-bold"
+            className="flex items-center space-x-1.5 hover:opacity-80 focus:outline-none text-[#A8421B] dark:text-[#D96B3E] font-bold cursor-pointer"
           >
-            <Megaphone className="h-4 w-4 shrink-0 animate-bounce" />
-            <span className="text-[11px] uppercase font-mono font-extrabold tracking-wider">📢 Admin Bulletin ({announcements.length})</span>
-            <span className="text-[9px] text-stone-400 font-normal">({isNoticesExpanded ? "Collapse" : "Show All"})</span>
+            <Megaphone className="h-4 w-4 shrink-0" />
+            <span className="text-[11px] uppercase font-mono font-bold tracking-wider">Campus Bulletin ({announcements.length})</span>
+            <span className="text-[10px] text-[#6E655E] dark:text-[#B6ABA0] font-normal">({isNoticesExpanded ? "Hide" : "Show"})</span>
           </button>
 
           <div className="flex items-center space-x-1.5">
@@ -432,40 +516,38 @@ export default function Community({
                 <button
                   type="button"
                   onClick={handlePruneOutdatedNotices}
-                  className="bg-transparent hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-700 dark:text-rose-400 font-mono text-[9px] uppercase font-bold px-2 py-0.5 rounded border border-rose-200 dark:border-rose-900 flex items-center space-x-1"
-                  title="Prune/delete all announcements older than 24 hours"
+                  className="bg-transparent hover:bg-[#FAF8F4] text-[#A8421B] dark:text-[#D96B3E] font-mono text-[9px] uppercase font-bold px-2 py-0.5 rounded border border-[#E7E1D8] dark:border-[#332C26] flex items-center space-x-1 cursor-pointer"
                 >
-                  <Trash2 className="h-2.5 w-2.5 text-rose-650" />
+                  <Trash2 className="h-2.5 w-2.5" />
                   <span>Prune</span>
                 </button>
                 <button
                   onClick={() => setShowAnnouncementMaker(!showAnnouncementMaker)}
-                  className="bg-rose-750 hover:bg-rose-800 text-white font-mono text-[9px] uppercase font-bold px-2 py-0.5 rounded transition flex items-center space-x-1"
+                  className="bg-[#A8421B] hover:bg-[#8F3614] text-white font-mono text-[9px] uppercase font-bold px-2.5 py-0.5 rounded transition cursor-pointer"
                 >
-                  <span>{showAnnouncementMaker ? "Cancel" : "✍️ Notice"}</span>
+                  <span>{showAnnouncementMaker ? "Cancel" : "+ Notice"}</span>
                 </button>
               </>
             )}
-            <span className="bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 text-[8px] font-mono px-1.5 py-0.5 rounded font-black uppercase">Official</span>
+            <span className="bg-[#A8421B]/10 text-[#A8421B] dark:text-[#D96B3E] text-[8.5px] font-mono px-2 py-0.5 rounded font-bold uppercase">Official</span>
           </div>
         </div>
 
-        {/* New announcement input form */}
         {showAnnouncementMaker && isAdmin && (
-          <form onSubmit={handlePostAnnouncement} className="mb-2 p-2 bg-rose-50/50 dark:bg-rose-950/10 rounded-lg border border-rose-100 dark:border-rose-900/60 animate-in slide-in-from-top-2">
-            <span className="text-[9px] uppercase font-mono font-extrabold text-rose-900 dark:text-rose-300 block mb-1">Compose New Broadcast Notice</span>
+          <form onSubmit={handlePostAnnouncement} className="mb-2 p-2.5 bg-[#FAF8F4] dark:bg-[#141210] rounded-xl border border-[#E7E1D8] dark:border-[#332C26]">
+            <span className="text-[9px] uppercase font-mono font-bold text-[#6E655E] block mb-1">Post New Campus Notice</span>
             <div className="flex gap-2">
               <input 
                 type="text"
                 required
-                placeholder="Publish administrative cohort notes..."
+                placeholder="Share a cohort update or schedule notice..."
                 value={announcementInput}
                 onChange={(e) => setAnnouncementInput(e.target.value)}
-                className="flex-grow text-xs rounded-lg border border-rose-200 dark:border-rose-900 bg-white dark:bg-stone-900 px-3 py-1.5 cursor-text focus:outline-none focus:ring-1 focus:ring-rose-700 text-stone-900 dark:text-slate-100"
+                className="flex-grow text-xs rounded-lg border border-[#E7E1D8] dark:border-[#332C26] bg-white dark:bg-[#1E1A17] px-3 py-1.5 cursor-text focus:outline-none focus:border-[#A8421B] text-[#1F1B18] dark:text-[#F5F1EB]"
               />
               <button 
                 type="submit" 
-                className="bg-rose-700 hover:bg-rose-800 text-white font-mono text-[10px] font-bold px-3 rounded-lg transition"
+                className="bg-[#A8421B] hover:bg-[#8F3614] text-white font-mono text-[10px] font-bold px-3 rounded-lg transition cursor-pointer"
               >
                 Publish
               </button>
@@ -473,9 +555,8 @@ export default function Community({
           </form>
         )}
 
-        {/* Announcements list rendering */}
         {isNoticesExpanded && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5 max-h-24 overflow-y-auto pr-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 max-h-24 overflow-y-auto pr-1">
             {announcements.map((item) => {
               const itemTime = (() => {
                 try {
@@ -488,32 +569,26 @@ export default function Community({
               return (
                 <div 
                   key={item.id} 
-                  className="bg-stone-50 dark:bg-stone-900 p-2 rounded-lg border border-stone-200 dark:border-stone-800 relative flex flex-col justify-between text-left"
+                  className="bg-[#FAF8F4] dark:bg-[#141210] p-2.5 rounded-xl border border-[#E7E1D8] dark:border-[#332C26] relative flex flex-col justify-between text-left"
                 >
                   <div>
-                    <div className="flex items-center justify-between mb-1 border-b border-dashed border-stone-200 dark:border-stone-800 pb-0.5">
-                      <span className="text-[8.5px] font-extrabold text-[#111] dark:text-slate-350 font-mono flex items-center select-none">
-                        <Pin className="h-2.5 w-2.5 mr-0.5 text-rose-600 rotate-45" /> {item.author.split(" ")[0]}
+                    <div className="flex items-center justify-between mb-1 border-b border-dashed border-[#E7E1D8] dark:border-[#332C26] pb-0.5">
+                      <span className="text-[9px] font-bold text-[#1F1B18] dark:text-[#F5F1EB] font-mono flex items-center select-none">
+                        <Pin className="h-2.5 w-2.5 mr-1 text-[#A8421B] rotate-45" /> {item.author.split(" ")[0]}
                         {isNew && (
-                          <span className="ml-1 bg-rose-600 text-white text-[7px] font-extrabold uppercase px-1 py-0.2 rounded-sm tracking-wide animate-pulse">
-                            New
-                          </span>
+                          <span className="ml-1 bg-[#A8421B] text-white text-[7px] font-bold uppercase px-1 rounded-sm">New</span>
                         )}
                       </span>
-                      <span className="text-[7.5px] text-stone-400 font-mono">{item.date}</span>
+                      <span className="text-[8px] text-[#6E655E] font-mono">{item.date}</span>
                     </div>
-                    <p className="text-[10px] text-stone-700 dark:text-stone-300 leading-normal font-sans">
-                      {item.text}
-                    </p>
+                    <p className="text-[10.5px] text-[#6E655E] dark:text-[#B6ABA0] leading-normal">{item.text}</p>
                   </div>
- 
-                  {/* Admins can delete any notice */}
+
                   {isAdmin && (
-                    <div className="flex justify-end mt-0.5 pt-0.5 border-t border-stone-100 dark:border-stone-850/40">
+                    <div className="flex justify-end mt-1 pt-0.5 border-t border-[#E7E1D8]/50">
                       <button
                         onClick={() => handleDeleteAnnouncement(item.id, item.text)}
-                        className="text-[7.5px] text-rose-600 hover:text-rose-800 font-mono font-bold flex items-center space-x-0.5 p-0.5 cursor-pointer"
-                        title="Delete global notice"
+                        className="text-[8px] text-rose-700 dark:text-rose-400 font-mono font-bold flex items-center space-x-0.5 p-0.5 cursor-pointer"
                       >
                         <Trash2 className="h-2.5 w-2.5" />
                         <span>Remove</span>
@@ -527,67 +602,38 @@ export default function Community({
         )}
       </div>
 
-      {/* 2. Main Dual Panel WhatsApp Desk - Fully Responsive for and collapsible */}
-      <div className="flex-grow flex rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-900 overflow-hidden shadow-lg min-h-0">
+      {/* 2. Editorial Dual-Panel Community Rooms Desk */}
+      <div className="flex-grow flex rounded-2xl border border-[#E7E1D8] dark:border-[#332C26] bg-[#FAF8F4] dark:bg-[#141210] overflow-hidden shadow-xs min-h-[480px]">
         
-        {/* Left hand channel selection layout */}
-        <div className={`w-full md:w-72 border-r border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-955 flex flex-col shrink-0 select-none ${showSidebarMobile ? "flex" : "hidden md:flex"}`}>
-          {/* Sidebar user container header in WA theme */}
-          <div className="p-2.5 bg-emerald-800 dark:bg-emerald-950 text-white flex items-center justify-between">
-            <div className="flex items-center space-x-1.5 text-left">
-              <div className="h-8 w-8 rounded-full bg-emerald-700 flex items-center justify-center font-bold text-xs border border-white/20 uppercase select-none">
-                {currentUser ? currentUser.name.charAt(0) : "G"}
-              </div>
-              <div className="truncate max-w-[120px]">
-                <h4 className="text-xs font-bold truncate">{currentUser ? currentUser.name : "Guest Scholar"}</h4>
-                <p className="text-[9px] text-emerald-200 font-mono tracking-tight">Active Academic Ledger</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-1.5 text-emerald-100">
-              <span className="bg-emerald-700/60 text-[8px] font-mono px-1.5 py-0.5 rounded font-extrabold uppercase">ONLINE</span>
-              <MoreVertical className="h-3.5 w-3.5 cursor-pointer" />
-            </div>
-          </div>
-
-          {/* Search channel/chats input block */}
-          <div className="p-2 bg-stone-50 dark:bg-stone-900 border-b border-stone-150 dark:border-stone-800">
-            <div className="relative flex items-center bg-white dark:bg-stone-950 rounded-lg px-2 py-1 border border-stone-200 dark:border-stone-800">
-              <Search className="h-3 w-3 text-stone-400 mr-1.5 shrink-0" />
+        {/* Left Rooms & Members Column */}
+        <div className={`w-full md:w-64 border-r border-[#E7E1D8] dark:border-[#332C26] bg-[#FAF8F4] dark:bg-[#141210] flex flex-col shrink-0 select-none ${showSidebarMobile ? "flex" : "hidden md:flex"}`}>
+          {/* Room Search */}
+          <div className="p-3 border-b border-[#E7E1D8] dark:border-[#332C26]">
+            <div className="relative flex items-center bg-white dark:bg-[#1E1A17] rounded-lg px-2.5 py-1.5 border border-[#E7E1D8] dark:border-[#332C26]">
+              <Search className="h-3.5 w-3.5 text-[#6E655E] mr-2 shrink-0" />
               <input 
                 type="text" 
-                placeholder="Search chats or lessons..."
+                placeholder="Search messages..."
                 value={messageSearchQuery}
                 onChange={(e) => setMessageSearchQuery(e.target.value)}
-                className="w-full text-xs bg-transparent focus:outline-none cursor-text text-stone-800 dark:text-stone-100 font-sans"
+                className="w-full text-xs bg-transparent focus:outline-none cursor-text text-[#1F1B18] dark:text-[#F5F1EB]"
               />
               {messageSearchQuery && (
-                <button onClick={() => setMessageSearchQuery("")} className="text-stone-400 hover:text-stone-600 p-0.5">
+                <button onClick={() => setMessageSearchQuery("")} className="text-[#6E655E] hover:text-[#1F1B18] p-0.5">
                   <X className="h-3 w-3" />
                 </button>
               )}
             </div>
           </div>
 
-          {/* Communities & Channels list */}
-          <div className="flex-1 overflow-y-auto divide-y divide-stone-100 dark:divide-stone-900">
-            <div className="p-2 text-[8px] uppercase font-mono tracking-wider text-stone-400 text-left font-black">
-              📚 COHORT GROUP DIRECTORIES
-            </div>
+          {/* Rooms list */}
+          <div className="p-3 space-y-1 flex-1 overflow-y-auto">
+            <span className="px-2 text-[9px] uppercase font-mono tracking-[0.18em] text-[#6E655E] dark:text-[#B6ABA0] font-bold block mb-2 text-left">
+              ROOMS
+            </span>
             {AVAILABLE_CHANNELS.filter(chan => chan.id !== '#workers' || isUserWorker(currentUser)).map((chan) => {
               const isActive = activeChannel === chan.id;
-              
-              // Find and count channel messages (merging legacy message channels into #generatechat)
-              const channelMsgs = messages.filter((m) => {
-                let msgChan = m.channel || "#generatechat";
-                if (msgChan === "#General" || msgChan === "#Book Talks" || msgChan === "#Leadership" || msgChan === "#Publishing") {
-                  msgChan = "#generatechat";
-                }
-                return msgChan === chan.id;
-              });
-              
-              const channelMsgsCount = channelMsgs.length;
-              const lastMsg = channelMsgs[channelMsgs.length - 1];
-              const lastMsgSnippet = lastMsg ? lastMsg.text : "No messages posted in this channel ledger...";
+              const channelMsgsCount = mergedMessages.filter((m) => normalizeChannel(m.channel) === chan.id).length;
 
               return (
                 <button
@@ -597,116 +643,72 @@ export default function Community({
                     setReplyToMessage(null);
                     setShowSidebarMobile(false);
                   }}
-                  className={`w-full flex items-start p-2.5 text-left transition ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-xs font-semibold transition cursor-pointer ${
                     isActive 
-                      ? "bg-emerald-50/50 dark:bg-emerald-950/20 border-l-4 border-emerald-600" 
-                      : "hover:bg-stone-50 dark:hover:bg-stone-900"
+                      ? "bg-[#A8421B] text-white font-bold shadow-2xs" 
+                      : "text-[#1F1B18]/80 dark:text-[#F5F1EB]/80 hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17]"
                   }`}
                 >
-                  <span className="text-xl mr-2 shrink-0 select-none bg-stone-100 dark:bg-stone-800 h-8 w-8 rounded-full flex items-center justify-center">
-                    {chan.icon}
+                  <span className="truncate">
+                    {chan.id === '#workers' ? '🔒 Workers Room' : `# ${chan.name}`}
                   </span>
-                  <div className="flex-grow min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="font-extrabold text-xs text-stone-900 dark:text-stone-100 font-sans tracking-tight truncate">
-                        {chan.id} {chan.name.split(" ")[0]}
-                      </span>
-                      <span className="text-[7.5px] text-stone-400 font-mono shrink-0">
-                        {lastMsg ? lastMsg.time.split(" ")[0] : "11:58 AM"}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-0.5 font-sans">
-                      {lastMsgSnippet}
-                    </p>
-                    <div className="flex items-center justify-between mt-0.5">
-                      <span className="text-[7.5px] font-mono text-stone-400 max-w-[130px] truncate leading-none">
-                        {chan.desc}
-                      </span>
-                      {channelMsgsCount > 0 && (
-                        <span className="bg-emerald-650 text-white font-mono font-bold text-[8px] rounded-full h-3.5 min-w-[14px] px-0.5 flex items-center justify-center shrink-0">
-                          {channelMsgsCount}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  {channelMsgsCount > 0 && (
+                    <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full ${isActive ? "bg-white/20 text-white" : "text-[#6E655E] dark:text-[#B6ABA0]"}`}>
+                      {channelMsgsCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
-          </div>
 
-          {/* Quick AI Shortcuts */}
-          <div className="p-2 sm:p-3 bg-stone-100 dark:bg-stone-900 border-t border-stone-200 dark:border-stone-850 text-left space-y-1.5 shrink-0">
-            <span className="font-mono text-[8px] font-extrabold text-stone-405 text-stone-400 uppercase tracking-widest block">🎓 AI SHORTCUT CHEATS</span>
-            <div className="flex flex-wrap gap-1">
-              <button 
-                onClick={() => {
-                  triggerLanguageQuizHelp("@ai Teach me core Swahili grammar vocabulary");
-                  setShowSidebarMobile(false);
-                }}
-                className="bg-white dark:bg-stone-800 hover:bg-stone-100 border border-stone-200 dark:border-stone-700/50 rounded px-1.5 py-0.5 text-[8.5px] text-stone-600 dark:text-stone-300 font-sans transition cursor-pointer"
-              >
-                🌍 Swahili Grammar
-              </button>
-              <button 
-                onClick={() => {
-                  triggerLanguageQuizHelp("@ai Explain core strategic leadership principles");
-                  setShowSidebarMobile(false);
-                }}
-                className="bg-white dark:bg-stone-800 hover:bg-stone-100 border border-stone-200 dark:border-stone-700/50 rounded px-1.5 py-0.5 text-[8.5px] text-stone-600 dark:text-stone-300 font-sans transition cursor-pointer"
-              >
-                🎓 Leadership Theory
-              </button>
+            {/* Active Members Roster */}
+            <div className="pt-5 mt-4 border-t border-[#E7E1D8] dark:border-[#332C26]">
+              <span className="px-2 text-[9px] uppercase font-mono tracking-[0.18em] text-[#6E655E] dark:text-[#B6ABA0] font-bold block mb-2 text-left">
+                MEMBERS ({activeRoomMembers.length})
+              </span>
+              <div className="space-y-1.5 px-1">
+                {activeRoomMembers.map((mem, i) => (
+                  <div key={i} className="flex items-center space-x-2.5 py-1 text-left">
+                    <div className="h-6 w-6 rounded-full bg-[#EFECE6] dark:bg-[#26211D] text-[#A8421B] dark:text-[#D96B3E] flex items-center justify-center text-[10px] font-bold shrink-0">
+                      {mem.initial}
+                    </div>
+                    <span className="text-xs text-[#1F1B18] dark:text-[#F5F1EB] truncate">{mem.name}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Right hand WhatsApp chat view panel */}
-        <div className={`flex-grow flex flex-col bg-[#efeae2] dark:bg-[#0b141a] relative min-w-0 ${!showSidebarMobile ? "flex" : "hidden md:flex"}`}>
+        {/* Right Chat Area */}
+        <div className={`flex-grow flex flex-col bg-white dark:bg-[#1E1A17] relative min-w-0 ${!showSidebarMobile ? "flex" : "hidden md:flex"}`}>
           
-          {/* Wallpaper pattern overlay */}
-          <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] bg-[radial-gradient(#005c4b_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
-
-          {/* Chat Header block */}
-          <div className="p-2.5 bg-stone-100 dark:bg-stone-900 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between z-15 select-none shrink-0 text-left">
-            <div className="flex items-center space-x-2 min-w-0">
+          {/* Chat Header */}
+          <div className="px-4 py-3 bg-white dark:bg-[#1E1A17] border-b border-[#E7E1D8] dark:border-[#332C26] flex items-center justify-between z-15 select-none shrink-0 text-left">
+            <div className="flex items-center space-x-2.5 min-w-0">
               <button 
                 onClick={() => setShowSidebarMobile(true)}
-                className="md:hidden p-1 text-emerald-850 hover:text-emerald-950 dark:text-emerald-400 dark:hover:text-emerald-250 select-none"
-                title="Go back to cohort list"
+                className="md:hidden p-1 text-[#A8421B] hover:opacity-80 cursor-pointer"
+                title="Back to rooms"
               >
-                <ChevronLeft className="h-5.5 w-5.5" />
+                <ChevronLeft className="h-5 w-5" />
               </button>
-              
-              <span className="text-xl h-9 w-9 rounded-full bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0 border border-stone-250 dark:border-stone-800">
-                {AVAILABLE_CHANNELS.find((c) => c.id === activeChannel)?.icon || "🌐"}
-              </span>
-              
               <div className="truncate">
-                <h3 className="text-xs font-black font-sans text-stone-900 dark:text-stone-100 tracking-tight flex items-center leading-tight">
-                  <span className="truncate">{activeChannel} Chatroom</span>
-                  <span className="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse shrink-0" />
+                <h3 className="text-sm font-bold text-[#1F1B18] dark:text-[#F5F1EB] tracking-tight truncate">
+                  {activeChannel === '#workers' ? '🔒 Workers Room' : `# ${AVAILABLE_CHANNELS.find((c) => c.id === activeChannel)?.name || activeChannel.replace('#', '')}`}
                 </h3>
-                <p className="text-[8.5px] text-stone-500 dark:text-stone-400 font-mono truncate max-w-[200px] mt-0.5">
-                  Secure Workspace Ledger • Active Administrators
-                </p>
               </div>
             </div>
 
-            <div className="flex items-center space-x-3.5 text-stone-500 dark:text-stone-400 mr-1 shrink-0">
-              <button onClick={() => alert("📞 establishing secure VOIP conference channel...")} title="Start Voice Call" className="hover:text-emerald-600 transition">
-                <Phone className="h-4 w-4" />
-              </button>
-              <button onClick={() => alert("📹 Peer-to-peer visual cohort session connecting...")} title="Start Video Call" className="hover:text-emerald-600 transition">
-                <Video className="h-4 w-4" />
-              </button>
-              <span className="h-3.5 w-px bg-stone-250 dark:bg-stone-800" />
+            <div className="flex items-center space-x-3 text-[#6E655E] dark:text-[#B6ABA0] shrink-0">
+              <span className="text-xs font-mono">{Math.max(activeRoomMembers.length, 3)} members</span>
               <button 
                 onClick={() => {
-                  const s = prompt("Enter text to filter messages:");
+                  const s = prompt("Filter messages in this room:");
                   if (s !== null) setMessageSearchQuery(s);
                 }} 
                 title="Filter messages"
-                className="hover:text-emerald-600 transition"
+                className="hover:text-[#A8421B] transition cursor-pointer"
               >
                 <Search className="h-4 w-4" />
               </button>
@@ -716,64 +718,62 @@ export default function Community({
           {/* Scrollable messages area */}
           <div 
             ref={chatFeedRef}
-            className="flex-1 overflow-y-auto p-3.5 space-y-4.5 z-10 scrollbar-thin select-text text-left"
+            className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 z-10 scrollbar-thin select-text text-left bg-[#FAF8F4]/40 dark:bg-[#141210]/40"
           >
-            {/* Security Indicator */}
-            <div className="mx-auto max-w-sm text-center">
-              <div className="bg-yellow-50 dark:bg-[#182229] border border-yellow-250/30 dark:border-stone-800/80 rounded-lg p-2 text-[9px] text-stone-600 dark:text-stone-400 font-sans tracking-wide space-y-0.5 shadow-xs">
-                <div className="font-extrabold flex items-center justify-center text-emerald-700 dark:text-emerald-400 uppercase tracking-widest font-mono">
-                  🔒 Zion Verified Community Ledger
-                </div>
-                <p>Messages, photos, stickers, and credentials are encrypted in local caches. Digital books study is free and guarded.</p>
+            {channelAccessError ? (
+              <div className="max-w-md mx-auto my-12 p-6 rounded-2xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-900/50 text-center space-y-2">
+                <ShieldAlert className="h-7 w-7 text-rose-600 mx-auto" />
+                <h4 className="font-bold text-sm text-rose-800 dark:text-rose-300">Restricted Staff Room</h4>
+                <p className="text-xs text-rose-700 dark:text-rose-200">{channelAccessError}</p>
               </div>
-            </div>
-
-            {isLoading ? (
+            ) : isLoading ? (
               <div className="space-y-4 animate-pulse">
                 {[1, 2, 3].map((i) => (
                   <div key={i} className={`flex flex-col max-w-[70%] ${i % 2 === 0 ? "self-end items-end ml-auto" : "self-start items-start mr-auto"}`}>
-                    <div className="p-3 rounded-xl bg-stone-100 dark:bg-[#202c33] space-y-1.5 w-56 border border-stone-200/40">
-                      <div className="h-2 bg-stone-200 dark:bg-stone-750 rounded w-1/4"></div>
-                      <div className="h-2.5 bg-stone-250 dark:bg-stone-700 rounded w-full"></div>
+                    <div className="p-3 rounded-2xl bg-[#ECE7DF] dark:bg-[#26211D] space-y-1.5 w-56">
+                      <div className="h-2 bg-[#E7E1D8] rounded w-1/4"></div>
+                      <div className="h-2.5 bg-[#E7E1D8] rounded w-full"></div>
                     </div>
                   </div>
                 ))}
               </div>
             ) : rootMessages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center text-center py-24 text-stone-405 dark:text-stone-500">
-                <span className="text-3xl animate-bounce">🕊️</span>
-                <h4 className="text-xs font-bold text-stone-850 dark:text-stone-250 mt-2 font-mono">Ledger is empty in {activeChannel}</h4>
-                <p className="text-[9px] max-w-xs mt-0.5">Post an idea, Swahili note, photo, or study query below!</p>
+              <div className="flex flex-col items-center justify-center text-center py-20 text-[#6E655E] dark:text-[#B6ABA0]">
+                <MessageSquare className="h-8 w-8 text-[#A8421B]/50 mb-2" />
+                <h4 className="text-sm font-bold text-[#1F1B18] dark:text-[#F5F1EB]">Start the conversation in {activeChannel}</h4>
+                <p className="text-xs max-w-xs mt-1">Share book thoughts, fellowship prayers, or study questions with the community.</p>
               </div>
             ) : (
               rootMessages.map((m) => {
-                const isMe = currentUser && (m.userId === currentUser.email);
-                const repliesList = messages.filter((rep) => rep.parentId === m.id);
-                const canDelete = currentUser && (currentUser.role === "admin" || currentUser.email === m.userId);
-                const isVoiceNote = m.text.includes("🎤 Simulated Voice Note");
+                const isMe = Boolean(currentUser && m.userId?.toLowerCase() === currentUser.email?.toLowerCase());
+                const repliesList = mergedMessages.filter((rep) => rep.parentId === m.id);
+                const canDelete = Boolean(isAdmin || (currentUser && currentUser.email?.toLowerCase() === m.userId?.toLowerCase()));
+                const isVoiceNote = m.text.includes("Simulated Voice Note");
 
                 return (
-                  <div key={m.id} className="flex flex-col space-y-1.5">
-                    
-                    {/* Message Bubble Container */}
-                    <div className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${isMe ? "self-end items-end ml-auto text-right" : "self-start items-start mr-auto text-left"}`}>
-                      <div className={`p-2.5 rounded-xl relative shadow-xs text-left group ${
-                        isMe 
-                          ? "bg-emerald-100 dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-tr-none" 
-                          : "bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-tl-none border border-stone-200/80 dark:border-stone-800/40"
+                  <div key={m.id} className="flex flex-col space-y-2">
+                    <div className={`flex items-start gap-2.5 max-w-[85%] sm:max-w-[72%] ${isMe ? "self-end flex-row-reverse ml-auto text-right" : "self-start mr-auto text-left"}`}>
+                      <div className={`h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5 ${
+                        isMe ? "bg-[#A8421B] text-white" : "bg-[#ECE7DF] dark:bg-[#26211D] text-[#1F1B18] dark:text-[#F5F1EB]"
                       }`}>
-                        
-                        {/* Member classification tag */}
+                        {m.userName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex flex-col space-y-1">
                         {!isMe && (
-                          <div className="flex items-center space-x-1 mb-1 justify-between select-none">
-                            <span className="text-[10px] font-extrabold text-[#00a884] uppercase tracking-wider font-sans">
-                              {m.userName}
-                            </span>
-                            <span className="text-[7.5px] bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-300 rounded px-1.5 py-0.2 font-bold shrink-0 border border-stone-205 dark:border-stone-705">
-                              {m.role === "admin" ? "OFFICER" : "STUDENT"}
-                            </span>
+                          <div className="flex items-center space-x-2 select-none px-1">
+                            <span className="text-[11px] font-semibold text-[#6E655E] dark:text-[#B6ABA0]">{m.userName}</span>
+                            {["main_admin", "admin", "sub_admin", "manager", "tutor"].includes(m.role || "") && (
+                              <span className="text-[8.5px] bg-[#A8421B]/10 text-[#A8421B] dark:text-[#D96B3E] rounded px-1.5 py-0.5 font-mono font-bold uppercase">
+                                Staff
+                              </span>
+                            )}
                           </div>
                         )}
+                        <div className={`px-3.5 py-2.5 rounded-2xl relative text-left ${
+                          isMe 
+                            ? "bg-[#A8421B] text-white rounded-tr-sm" 
+                            : "bg-[#ECE7DF] dark:bg-[#26211D] text-[#1F1B18] dark:text-[#F5F1EB] rounded-tl-sm"
+                        }`}>
 
                         {/* Inline Graphic STICKER display */}
                         {m.stickerEmoji && (
@@ -874,7 +874,7 @@ export default function Community({
                             ) : (
                               /* Standard Text payload: render unless Sticker block rendered without text */
                               (!m.stickerEmoji || m.imageContent || m.attachedFile) && (
-                                <p className="text-xs leading-normal break-words whitespace-pre-wrap font-sans text-stone-850 dark:text-slate-100">
+                                <p className={`text-xs leading-normal break-words whitespace-pre-wrap font-sans ${isMe ? "text-white" : "text-[#1F1B18] dark:text-[#F5F1EB]"}`}>
                                   {m.text}
                                 </p>
                               )
@@ -882,18 +882,15 @@ export default function Community({
                           </>
                         )}
 
-                        {/* Ticks and timestamps */}
-                        <div className="flex items-center space-x-1 justify-end mt-1 text-[8px] text-stone-500 dark:text-stone-400 select-none font-mono">
-                          {m.isEdited && <span className="text-[7.5px] italic text-stone-400 mr-1 select-none">(Edited)</span>}
+                        <div className={`flex items-center space-x-1 justify-end mt-1 text-[8.5px] select-none font-mono ${isMe ? "text-white/75" : "text-[#6E655E] dark:text-[#B6ABA0]"}`}>
+                          {m.isEdited && <span className="italic mr-1">(Edited)</span>}
                           <span>{m.time.split(" ")[0]} {m.time.split(" ")[1] || ""}</span>
-                          {isMe ? <CheckCheck className="h-3 w-3 text-sky-400 shrink-0" /> : <CheckCheck className="h-3 w-3 text-stone-400/55 shrink-0" />}
                         </div>
 
-                        {/* Actions (Reply, Edit, Delete) bar under card */}
-                        <div className="mt-1.5 pt-1.5 border-t border-stone-100 dark:border-stone-860/30 flex items-center gap-2 justify-end text-[8.5px] select-none text-stone-400">
+                        <div className={`mt-1.5 pt-1 border-t flex items-center gap-2 justify-end text-[9px] select-none ${isMe ? "border-white/20 text-white/85" : "border-[#1F1B18]/10 text-[#6E655E] dark:text-[#B6ABA0]"}`}>
                           <button 
                             onClick={() => setReplyToMessage(m)}
-                            className="hover:text-emerald-600 font-bold font-mono transition flex items-center space-x-0.5 p-0.5 cursor-pointer"
+                            className="hover:underline font-bold font-mono flex items-center space-x-0.5 cursor-pointer"
                           >
                             <Reply className="h-2.5 w-2.5" />
                             <span>Reply</span>
@@ -905,7 +902,7 @@ export default function Community({
                                 setEditingMessageId(m.id);
                                 setEditingText(m.text);
                               }}
-                              className="hover:text-amber-600 font-bold font-mono transition flex items-center space-x-0.5 p-0.5 cursor-pointer"
+                              className="hover:underline font-bold font-mono flex items-center space-x-0.5 cursor-pointer"
                             >
                               <Edit3 className="h-2.5 w-2.5" />
                               <span>Edit</span>
@@ -915,39 +912,37 @@ export default function Community({
                           {canDelete && (
                             <button 
                               onClick={() => onDeleteMessage(m.id)}
-                              className="text-rose-500 hover:text-rose-700 font-bold font-mono transition flex items-center space-x-0.5 p-0.5 cursor-pointer"
+                              className="hover:underline font-bold font-mono flex items-center space-x-0.5 cursor-pointer"
                             >
                               <Trash2 className="h-2.5 w-2.5" />
-                              <span>Purge</span>
+                              <span>Delete</span>
                             </button>
                           )}
                         </div>
                       </div>
                     </div>
+                    </div>
 
                     {/* Threaded Replies */}
                     {repliesList.length > 0 && (
-                      <div className="flex flex-col space-y-1.5 mt-0.5 pl-6 sm:pl-8 border-l border-emerald-500/20 ml-3 max-w-[95%]">
+                      <div className="flex flex-col space-y-1.5 mt-0.5 pl-6 sm:pl-8 border-l-2 border-[#A8421B]/30 ml-3 max-w-[95%]">
                         {repliesList.map((reply) => {
-                          const isReplyMe = currentUser && (reply.userId === currentUser.email);
-                          const canDeleteReply = currentUser && (currentUser.role === "admin" || currentUser.email === reply.userId);
+                          const isReplyMe = Boolean(currentUser && reply.userId?.toLowerCase() === currentUser.email?.toLowerCase());
+                          const canDeleteReply = Boolean(isAdmin || (currentUser && currentUser.email?.toLowerCase() === reply.userId?.toLowerCase()));
 
                           return (
                             <div 
                               key={reply.id}
                               className={`flex flex-col max-w-[90%] ${isReplyMe ? "self-end items-end ml-auto text-right" : "self-start items-start mr-auto text-left"}`}
                             >
-                              <div className={`p-2 rounded-xl relative shadow-2xs text-left ${
+                              <div className={`px-3 py-2 rounded-xl relative text-left ${
                                 isReplyMe 
-                                  ? "bg-emerald-50 dark:bg-[#004d3c]/80 text-[#111b21] dark:text-[#e9edef] rounded-tr-none" 
-                                  : "bg-stone-100 dark:bg-[#1f2c34] text-[#111b21] dark:text-[#e9edef] rounded-tl-none border border-stone-200/50 dark:border-stone-800/40"
+                                  ? "bg-[#A8421B] text-white rounded-tr-sm" 
+                                  : "bg-[#ECE7DF] dark:bg-[#26211D] text-[#1F1B18] dark:text-[#F5F1EB] rounded-tl-sm"
                               }`}>
-                                <div className="flex items-center space-x-1.5 mb-1 justify-between select-none font-sans">
-                                  <span className="text-[9px] font-extrabold text-[#00a884] uppercase">
+                                <div className="flex items-center space-x-1.5 mb-1 justify-between select-none">
+                                  <span className={`text-[9.5px] font-bold uppercase ${isReplyMe ? "text-white/85" : "text-[#A8421B] dark:text-[#D96B3E]"}`}>
                                     {isReplyMe ? "You" : reply.userName}
-                                  </span>
-                                  <span className="text-[7px] bg-stone-200 dark:bg-stone-800 px-1 py-0.2 rounded font-mono font-bold uppercase shrink-0">
-                                    {reply.role === "admin" ? "OFFICER" : "STUDENT"}
                                   </span>
                                 </div>
 
@@ -956,7 +951,7 @@ export default function Community({
                                     <textarea
                                       value={editingText}
                                       onChange={(e) => setEditingText(e.target.value)}
-                                      className="w-full text-xs p-1 rounded border border-emerald-400 bg-white dark:bg-stone-900 text-stone-900 dark:text-slate-100 min-h-[45px] focus:outline-none"
+                                      className="w-full text-xs p-1.5 rounded border border-[#E7E1D8] bg-white text-[#1F1B18] min-h-[45px] focus:outline-none"
                                     />
                                     <div className="flex items-center space-x-1 justify-end">
                                       <button
@@ -967,39 +962,38 @@ export default function Community({
                                           }
                                           setEditingMessageId(null);
                                         }}
-                                        className="bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded text-[8.5px] uppercase cursor-pointer"
+                                        className="bg-[#A8421B] text-white font-bold px-2 py-0.5 rounded text-[8.5px] uppercase cursor-pointer"
                                       >
                                         Save
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setEditingMessageId(null)}
-                                        className="bg-stone-250 dark:bg-stone-800 text-stone-700 dark:text-stone-300 px-1.5 py-0.5 rounded text-[8.5px] uppercase cursor-pointer"
+                                        className="bg-[#ECE7DF] text-[#1F1B18] px-2 py-0.5 rounded text-[8.5px] uppercase cursor-pointer"
                                       >
                                         Cancel
                                       </button>
                                     </div>
                                   </div>
                                 ) : (
-                                  <p className="text-xs leading-normal break-words font-sans text-stone-850 dark:text-slate-150">
+                                  <p className={`text-xs leading-normal break-words ${isReplyMe ? "text-white" : "text-[#1F1B18] dark:text-[#F5F1EB]"}`}>
                                     {reply.text}
                                   </p>
                                 )}
 
-                                <div className="flex items-center space-x-1 justify-end mt-0.5 text-[7.5px] text-stone-405 text-stone-500 select-none font-mono">
-                                  {reply.isEdited && <span className="text-[7px] italic text-stone-400 mr-0.5 select-none">(Edited)</span>}
+                                <div className={`flex items-center space-x-1 justify-end mt-1 text-[8px] select-none font-mono ${isReplyMe ? "text-white/75" : "text-[#6E655E]"}`}>
+                                  {reply.isEdited && <span className="italic mr-0.5">(Edited)</span>}
                                   <span>{reply.time.split(" ")[0]}</span>
-                                  {isReplyMe ? <CheckCheck className="h-2.5 w-2.5 text-sky-400" /> : <CheckCheck className="h-2.5 w-2.5 text-stone-400/50" />}
                                 </div>
 
-                                <div className="mt-1 pt-1 border-t border-stone-200/50 dark:border-stone-700/30 flex justify-end gap-1.5 text-[8px]">
+                                <div className={`mt-1 pt-1 border-t flex justify-end gap-2 text-[8.5px] ${isReplyMe ? "border-white/20 text-white/85" : "border-[#1F1B18]/10 text-[#6E655E]"}`}>
                                   {isReplyMe && onEditMessage && (
                                     <button
                                       onClick={() => {
                                         setEditingMessageId(reply.id);
                                         setEditingText(reply.text);
                                       }}
-                                      className="hover:text-amber-600 font-bold font-mono transition text-[8px]"
+                                      className="hover:underline font-bold font-mono cursor-pointer"
                                     >
                                       Edit
                                     </button>
@@ -1007,10 +1001,10 @@ export default function Community({
                                   {canDeleteReply && (
                                     <button 
                                       onClick={() => onDeleteMessage(reply.id)}
-                                      className="text-rose-550 hover:text-rose-700 font-mono font-bold flex items-center space-x-0.5 cursor-pointer"
+                                      className="hover:underline font-mono font-bold flex items-center space-x-0.5 cursor-pointer"
                                     >
                                       <Trash2 className="h-2.5 w-2.5" />
-                                      <span>Purge</span>
+                                      <span>Delete</span>
                                     </button>
                                   )}
                                 </div>
@@ -1113,7 +1107,7 @@ export default function Community({
           )}
 
           {/* Typing Container & Send elements */}
-          <div className="p-2 sm:p-3 bg-stone-105 bg-stone-100 dark:bg-stone-900 border-t border-stone-200 dark:border-stone-800 z-15 shrink-0">
+          <div className="p-2.5 sm:p-3.5 bg-white dark:bg-[#1E1A17] border-t border-[#E7E1D8] dark:border-[#332C26] z-15 shrink-0">
             <div className="flex items-center space-x-1.5 sm:space-x-2">
               
               {/* Attachment clips */}
@@ -1125,56 +1119,34 @@ export default function Community({
                     setShowStickerPicker(false);
                     setShowEmojiPicker(false);
                   }}
-                  title="Attach Documents or Media files" 
-                  className={`h-8.5 w-8.5 rounded-full flex items-center justify-center transition shrink-0 ${isAttachmentOpen ? "bg-emerald-605 bg-emerald-600 text-white" : "hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-300"}`}
+                  title="Attach Documents or Media" 
+                  className={`h-8 w-8 rounded-full flex items-center justify-center transition shrink-0 cursor-pointer ${isAttachmentOpen ? "bg-[#A8421B] text-white" : "hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-[#6E655E] dark:text-[#B6ABA0]"}`}
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>
                 {isAttachmentOpen && (
-                  <div className="absolute bottom-11 left-0 bg-white dark:bg-stone-950 rounded-xl border border-stone-200 dark:border-stone-800 shadow-xl p-1.5 w-48 space-y-0.5 text-left z-35 animate-in slide-in-from-bottom-2 selection:bg-none">
+                  <div className="absolute bottom-11 left-0 bg-white dark:bg-[#1E1A17] rounded-xl border border-[#E7E1D8] dark:border-[#332C26] shadow-xl p-1.5 w-52 space-y-0.5 text-left z-35">
                     <button 
                       type="button"
                       onClick={() => handleRealFileClick(photoInputRef)} 
-                      className="w-full flex items-center space-x-2 p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-900 text-left text-xs"
+                      className="w-full flex items-center space-x-2 p-2 rounded-lg hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-left text-xs text-[#1F1B18] dark:text-[#F5F1EB] cursor-pointer"
                     >
-                      <Image className="h-4 w-4 text-sky-500 shrink-0" />
-                      <span>Upload Photo from device</span>
+                      <Image className="h-4 w-4 text-[#A8421B] shrink-0" />
+                      <span>Upload Photo</span>
                     </button>
                     <button 
                       type="button"
                       onClick={() => handleRealFileClick(docInputRef)} 
-                      className="w-full flex items-center space-x-2 p-1.5 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-900 text-left text-xs"
+                      className="w-full flex items-center space-x-2 p-2 rounded-lg hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-left text-xs text-[#1F1B18] dark:text-[#F5F1EB] cursor-pointer"
                     >
-                      <FileText className="h-4 w-4 text-amber-500 shrink-0" />
-                      <span>Upload Doce/PDF from device</span>
-                    </button>
-                    <div className="h-px bg-stone-100 dark:bg-stone-900 my-1"></div>
-                    <button 
-                      type="button"
-                      onClick={() => handleAttachMockFile('photo')} 
-                      className="w-full flex items-center space-x-2 p-1 rounded-lg hover:bg-stone-50 dark:hover:bg-stone-900/60 text-left text-[10.5px] italic text-stone-400"
-                    >
-                      <span>📎 Fast Mock Photo</span>
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => handleAttachMockFile('video')} 
-                      className="w-full flex items-center space-x-2 p-1 rounded-lg hover:bg-stone-50 dark:hover:bg-stone-900/60 text-left text-[10.5px] italic text-stone-400"
-                    >
-                      <span>📎 Fast Mock Video</span>
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => handleAttachMockFile('doc')} 
-                      className="w-full flex items-center space-x-2 p-1 rounded-lg hover:bg-stone-50 dark:hover:bg-stone-900/60 text-left text-[10.5px] italic text-stone-400"
-                    >
-                      <span>📎 Fast Mock Doce</span>
+                      <FileText className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span>Upload Document / PDF</span>
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Emoji tray toggler */}
+              {/* Emoji tray */}
               <button 
                 type="button"
                 onClick={() => {
@@ -1182,13 +1154,13 @@ export default function Community({
                   setShowStickerPicker(false);
                   setIsAttachmentOpen(false);
                 }}
-                title="Toggle Emojis Picker Keyboard"
-                className={`h-8.5 w-8.5 rounded-full flex items-center justify-center transition shrink-0 ${showEmojiPicker ? "bg-amber-100 text-amber-700" : "hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-300"}`}
+                title="Emojis"
+                className={`h-8 w-8 rounded-full flex items-center justify-center transition shrink-0 cursor-pointer ${showEmojiPicker ? "bg-[#A8421B]/10 text-[#A8421B]" : "hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-[#6E655E] dark:text-[#B6ABA0]"}`}
               >
-                <Smile className="h-4.5 w-4.5" />
+                <Smile className="h-4 w-4" />
               </button>
 
-              {/* Stickers badge trigger */}
+              {/* Stickers */}
               <button 
                 type="button"
                 onClick={() => {
@@ -1196,48 +1168,32 @@ export default function Community({
                   setShowEmojiPicker(false);
                   setIsAttachmentOpen(false);
                 }}
-                title="Sticker Academy Badges Store"
-                className={`h-8.5 w-8.5 rounded-full flex items-center justify-center transition shrink-0 font-extrabold text-xs ${showStickerPicker ? "bg-emerald-100 text-emerald-700" : "hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-300"}`}
+                title="Community Badges"
+                className={`h-8 w-8 rounded-full flex items-center justify-center transition shrink-0 text-xs cursor-pointer ${showStickerPicker ? "bg-[#A8421B]/10 text-[#A8421B]" : "hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-[#6E655E] dark:text-[#B6ABA0]"}`}
               >
-                🎓 Sticker
+                🎓
               </button>
 
-              {/* Swahili helper translator */}
-              <button 
-                type="button"
-                onClick={() => {
-                  const keyword = prompt("Translate Swahili query into English instantly (e.g. Asanti, Kiongozi, Karibu):");
-                  if (keyword) {
-                    setChatInput(`Swahili vocabulary: "${keyword}" translates to relevant contextual learning.`);
-                  }
-                }}
-                title="Instant Swahili glossary translation"
-                className="h-8.5 w-8.5 rounded-full flex items-center justify-center hover:bg-stone-200 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-300 transition shrink-0"
-              >
-                🌎
-              </button>
-
-              {/* Input edit field or recording mic */}
-              <form onSubmit={handleSubmitMessage} className="flex-1 flex items-center space-x-1.5 sm:space-x-2 relative">
+              {/* Compose field */}
+              <form onSubmit={handleSubmitMessage} className="flex-1 flex items-center space-x-2 relative">
                 {isRecording ? (
-                  <div className="flex-grow flex items-center justify-between rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/60 px-3.5 py-1.5 z-30">
-                    <div className="flex items-center space-x-1.5 text-red-600 animate-pulse text-[11px]">
+                  <div className="flex-grow flex items-center justify-between rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/60 px-3.5 py-1.5 z-30">
+                    <div className="flex items-center space-x-1.5 text-rose-700 dark:text-rose-300 text-[11px]">
                       <Mic className="h-4 w-4" />
-                      <span className="font-extrabold">🎤 VoIP Study Memo...</span>
-                      <span className="font-mono">({recordTimer}s)</span>
+                      <span className="font-bold">Recording voice note ({recordTimer}s)</span>
                     </div>
                     <div className="flex items-center space-x-1.5 font-mono">
                       <button 
                         type="button" 
                         onClick={stopRecordingAndSend}
-                        className="bg-emerald-600 text-white rounded px-2.5 py-0.5 text-[9.5px] font-black uppercase cursor-pointer"
+                        className="bg-[#A8421B] text-white rounded px-2.5 py-0.5 text-[9.5px] font-bold uppercase cursor-pointer"
                       >
                         Send
                       </button>
                       <button 
                         type="button" 
                         onClick={cancelRecording}
-                        className="text-[9.5px] text-stone-500 hover:text-stone-800 dark:hover:text-stone-300 font-bold uppercase cursor-pointer"
+                        className="text-[9.5px] text-[#6E655E] font-bold uppercase cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -1249,28 +1205,27 @@ export default function Community({
                     required={!realAttachedFile && !simulatedAttachment}
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder={currentUser ? "Type a message or school request..." : "Please sign in to participate in discussion forums..."}
-                    disabled={!currentUser}
-                    className="w-full rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-950 px-3.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-600 text-stone-850 dark:text-stone-100 placeholder-stone-400 cursor-text"
+                    placeholder={currentUser ? "Write a message..." : "Sign in to write a message..."}
+                    disabled={!currentUser || Boolean(channelAccessError)}
+                    className="w-full rounded-xl border border-[#E7E1D8] dark:border-[#332C26] bg-[#FAF8F4] dark:bg-[#141210] px-3.5 py-2 text-xs outline-none focus:border-[#A8421B] text-[#1F1B18] dark:text-[#F5F1EB] placeholder-[#6E655E]/70 cursor-text"
                   />
                 )}
 
-                {/* Send action */}
                 {!chatInput.trim() && !realAttachedFile && !simulatedAttachment && !isRecording ? (
                   <button 
                     type="button"
                     onClick={startRecording}
-                    title="Press and talk"
-                    className="h-8.5 w-8.5 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white flex items-center justify-center transition shrink-0 cursor-pointer shadow-xs"
+                    title="Voice note"
+                    className="h-9 w-9 rounded-xl bg-[#EFECE6] dark:bg-[#26211D] hover:bg-[#A8421B] hover:text-white text-[#1F1B18] dark:text-[#F5F1EB] flex items-center justify-center transition shrink-0 cursor-pointer"
                   >
                     <Mic className="h-4 w-4" />
                   </button>
                 ) : (
                   <button 
                     type="submit"
-                    className="h-8.5 w-8.5 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white flex items-center justify-center transition shrink-0 cursor-pointer shadow-xs"
+                    className="h-9 w-9 rounded-xl bg-[#A8421B] hover:bg-[#8F3614] text-white flex items-center justify-center transition shrink-0 cursor-pointer shadow-xs"
                   >
-                    <Send className="h-3.5 w-3.5" />
+                    <Send className="h-4 w-4" />
                   </button>
                 )}
               </form>

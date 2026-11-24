@@ -32,10 +32,8 @@ export default function Upload({
   onPayUpload,
   globalSettings
 }: UploadProps) {
-  const isAdmin = currentUser && (
-    currentUser.role === 'admin' || 
-    currentUser.email === 'wafulak435@gmail.com' || 
-    currentUser.email === 'wafula435@gmail.com'
+  const isAdmin = Boolean(
+    currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role)
   );
   const isRestricted = !!(globalSettings?.restrictMemberUploads && !isAdmin);
 

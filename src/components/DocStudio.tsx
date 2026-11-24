@@ -9,6 +9,7 @@ import { getAccessToken, googleSignIn, sendGmailMessage } from "../lib/firebase"
 import { saveDocumentToFirestore, deleteSavedDocumentFromFirestore } from "../lib/firestoreUtils";
 import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
 import { jsPDF } from "jspdf";
+import { invokeGeminiAction } from "../lib/aiClient";
 
 interface DocStudioProps {
   currentUser: { email: string; name: string; role?: string } | null;
@@ -1124,18 +1125,12 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           setDocTitle(med.name.replace(/\.[^/.]+$/, ""));
         }
 
-        const res = await fetch("/api/ai/extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileBase64: med.dataUrl,
-            fileName: med.name,
-            customMimeType: payloadMime,
-            docTitle
-          })
+        const data = await invokeGeminiAction("extract", "/api/ai/extract", {
+          fileBase64: med.dataUrl,
+          fileName: med.name,
+          customMimeType: payloadMime,
+          docTitle
         });
-        
-        const data = await res.json();
         if (data.success && data.text) {
           if (mediaFiles.length > 1) {
             concatenatedResult += `\n\n=== EXTRACTED FROM: ${med.name.toUpperCase()} ===\n\n${data.text}`;
@@ -1226,32 +1221,19 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     setConversionOutput("");
     
     try {
-      let response;
-      if (conversionFile) {
-        response = await fetch("/api/ai/extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const data = conversionFile
+        ? await invokeGeminiAction("extract", "/api/ai/extract", {
             fileBase64: conversionFile.dataUrl,
             fileName: conversionFile.name,
             docTitle,
             customMimeType: convertFrom === "Word" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : convertFrom === "PDF" ? "application/pdf" : "text/plain"
           })
-        });
-      } else {
-        response = await fetch("/api/ai/publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        : await invokeGeminiAction("publish", "/api/ai/publish", {
             originalContent: sourceCode,
             requestedTitle: `${docTitle} (Converted)`,
             targetCategory: "Conversion",
             authorName: currentUser?.name || "Wafula Library Member"
-          })
-        });
-      }
-
-      const data = await response.json();
+          });
       if (data.success) {
         const textValue = data.text || data.content || "";
         setConversionOutput(textValue);
@@ -1276,12 +1258,16 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     setCurriculumError("");
 
     try {
-      const response = await fetch("/api/school/generate-curriculum", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: curriculumSubject.trim() })
-      });
-      const data = await response.json();
+      const data = await invokeGeminiAction(
+        "generate-curriculum",
+        "/api/school/generate-curriculum",
+        { subject: curriculumSubject.trim() },
+        {
+          saveHistory: true,
+          historyTitle: `Curriculum: ${curriculumSubject.trim()}`,
+          historyCategory: "Doc Studio Curriculum",
+        }
+      );
       if (data.success) {
         setEditorContent(data.notes);
         setDocTitle(`${data.subject} Curricular Notes`);
@@ -1314,18 +1300,21 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
       const stagedAttachments = attachmentsOverride || solverAttachedFiles;
       const imagesPayload = stagedAttachments.map(f => f.dataUrl);
 
-      const response = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: promptToSend,
           category: "Problem Solver",
           enableGoogleSearch: enableGrounding,
           images: imagesPayload.length > 0 ? imagesPayload : undefined
-        })
-      });
-
-      const data = await response.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `Problem Solver: ${promptToSend.slice(0, 60)}`,
+          historyCategory: "Problem Solver",
+        }
+      );
       if (data.success) {
         setSolverResult(data.text);
         if (data.groundingSources) {
@@ -1380,17 +1369,20 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
     setVoiceResponseSources([]);
 
     try {
-      const response = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: promptToSend,
           category: "Problem Solver",
           enableGoogleSearch: voiceQueryGrounding
-        })
-      });
-
-      const data = await response.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `Voice Query: ${promptToSend.slice(0, 60)}`,
+          historyCategory: "Voice Solver",
+        }
+      );
       if (data.success) {
         setVoiceAnswer(data.text);
         if (data.groundingSources) {

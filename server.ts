@@ -1,32 +1,88 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
+import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type, GenerateVideosOperation } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import mammoth from "mammoth";
+import {
+  attachIdentity,
+  AuthenticatedRequest,
+  canTutorAccessCourse,
+  clearSessionCookie,
+  EMPTY_CAPABILITIES,
+  enforceAiRateLimit,
+  getSupabaseServerStatus,
+  hasCapability,
+  hashPasswordScrypt,
+  MAIN_ADMIN_EMAILS,
+  persistSecurityState,
+  recordAuditLog,
+  requireAdminAccess,
+  requireAuth,
+  requireMainAdmin,
+  requireManagerAccess,
+  resolveAuthoritativeRoleAndPermissions,
+  resolveSafeFileInsideDir,
+  sanitizeUploadId,
+  securityState,
+  setSessionCookie,
+  signSessionToken,
+  SubAdminCapabilityMap,
+  verifyPasswordScrypt,
+  verifySupabaseTokenWithServerSdk,
+} from "./server/security";
+import { supabaseSessionRefreshMiddleware } from "./server/supabaseSsr";
+import { mpesaRouter } from "./server/mpesa";
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
-// Enable verbose JSON payloads for direct base64 uploads
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Lazy-initialize Gemini SDK to safeguard against missing keys during cold starts
+// Refresh @supabase/ssr session cookies when present, then attach verified identity
+app.use(supabaseSessionRefreshMiddleware);
+app.use(attachIdentity);
+
+// CSRF origin & requested-with check for cookie-authenticated state-changing requests
+app.use("/api", (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS" || req.path === "/mpesa/callback") {
+    return next();
+  }
+  const hasBearer = Boolean(req.headers.authorization?.startsWith("Bearer "));
+  const hasCookie = Boolean(
+    req.headers.cookie &&
+      (req.headers.cookie.includes("zion_session=") ||
+        /(?:^|;\s*)sb-[a-zA-Z0-9_-]+-auth-token/.test(req.headers.cookie))
+  );
+  if (hasCookie && !hasBearer) {
+    const requestedWith = String(req.headers["x-requested-with"] || "").toLowerCase();
+    const origin = String(req.headers.origin || "");
+    const host = String(req.headers.host || "");
+    const originMatchesHost = !origin || (host && origin.includes(host));
+    if (requestedWith !== "xmlhttprequest" && !originMatchesHost) {
+      return res.status(403).json({ success: false, error: "Invalid request origin." });
+    }
+  }
+  return next();
+});
+
+// Lazy-initialize Gemini SDK safely without mock key strings
 let genAIClient: GoogleGenAI | null = null;
 
-function getGenAI(): GoogleGenAI {
+function getGenAI(): GoogleGenAI | null {
+  const key = process.env.GEMINI_API_KEY?.trim();
+  if (!key) {
+    return null;
+  }
   if (!genAIClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("⚠️ GEMINI_API_KEY is not defined. AI calls will fall back to smart offline templates.");
-    }
     genAIClient = new GoogleGenAI({
-      apiKey: key || "MOCK_KEY",
+      apiKey: key,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
@@ -37,317 +93,1996 @@ function getGenAI(): GoogleGenAI {
   return genAIClient;
 }
 
-// REST APIs
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", mode: process.env.NODE_ENV || "development" });
-});
-
-// Directory to hold uploaded PDFs
-const PDF_DIR = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(PDF_DIR)) {
-  fs.mkdirSync(PDF_DIR, { recursive: true });
+function safeError(_error: unknown, fallbackMessage = "Request could not be completed safely."): string {
+  return fallbackMessage;
 }
 
-// Upload endpoint for custom books
-app.post("/api/books/pdf", (req, res) => {
+function stripQuestionAnswerKeys(questions: any[]): { question: string; options: string[] }[] {
+  if (!Array.isArray(questions)) return [];
+  return questions.map((q: any) => ({
+    question: String(q?.question || ""),
+    options: Array.isArray(q?.options) ? q.options.map((o: any) => String(o)) : [],
+  }));
+}
+
+function extractIp(req: Request): string {
+  return String(req.headers["x-forwarded-for"] || req.ip || "unknown").split(",")[0].trim();
+}
+
+function timingSafeTextEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Optional Firebase ID token verification using public project API key
+let cachedFirebaseApiKey: string | null = null;
+function getFirebaseWebApiKey(): string {
+  if (cachedFirebaseApiKey !== null) return cachedFirebaseApiKey;
   try {
-    const { id, pdfBase64 } = req.body;
-    if (!id || !pdfBase64) {
-      return res.status(400).json({ success: false, error: "Missing book id or PDF data" });
+    const cfgPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(cfgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+      cachedFirebaseApiKey = String(parsed.apiKey || "");
+      return cachedFirebaseApiKey;
     }
-    
-    let pureBase64 = pdfBase64;
-    if (pdfBase64.startsWith("data:")) {
-      const parts = pdfBase64.split(";base64,");
-      if (parts[1]) pureBase64 = parts[1];
-    }
-    
-    const buffer = Buffer.from(pureBase64, "base64");
-    const filePath = path.join(PDF_DIR, `${id}.pdf`);
-    fs.writeFileSync(filePath, buffer);
-    console.log(`Saved PDF on server for book: ${id}`);
-    
-    return res.json({ success: true, url: `/api/books/pdf/${id}` });
-  } catch (error: any) {
-    console.error("Failed to save book PDF on server:", error);
-    return res.status(500).json({ success: false, error: error.message });
+  } catch {
+    // ignore
   }
-});
+  cachedFirebaseApiKey = "";
+  return "";
+}
 
-// Serve book PDFs endpoint
-app.get("/api/books/pdf/:id", (req, res) => {
+async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; email: string; name: string } | null> {
+  const apiKey = getFirebaseWebApiKey();
+  if (!apiKey || !idToken) return null;
   try {
-    const { id } = req.params;
-    const filePath = path.join(PDF_DIR, `${id}.pdf`);
-    
-    if (fs.existsSync(filePath)) {
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="${id}.pdf"`);
-      return res.sendFile(filePath);
-    } else {
-      return res.status(404).json({ success: false, error: "PDF document not found on server" });
-    }
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// New Endpoint to serve uploaded Word Documents
-app.get("/api/books/docx/:id", (req, res) => {
-  try {
-    const { id } = req.params;
-    const filePath = path.join(PDF_DIR, `${id}.docx`);
-    if (fs.existsSync(filePath)) {
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      res.setHeader("Content-Disposition", `inline; filename="${id}.docx"`);
-      return res.sendFile(filePath);
-    } else {
-      return res.status(404).json({ success: false, error: "Word document not found on server" });
-    }
-  } catch (error: any) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// New Unified upload endpoint for Word or PDF Documents
-app.post("/api/books/upload-doc", async (req, res) => {
-  try {
-    const { id, fileBase64, fileName } = req.body;
-    if (!id || !fileBase64 || !fileName) {
-      return res.status(400).json({ success: false, error: "Missing required fields: id, fileBase64, or fileName" });
-    }
-
-    let pureBase64 = fileBase64;
-    if (fileBase64.startsWith("data:")) {
-      const parts = fileBase64.split(";base64,");
-      if (parts[1]) pureBase64 = parts[1];
-    }
-
-    const buffer = Buffer.from(pureBase64, "base64");
-    const ext = path.extname(fileName).toLowerCase();
-
-    if (!fs.existsSync(PDF_DIR)) {
-      fs.mkdirSync(PDF_DIR, { recursive: true });
-    }
-
-    // Save the original document file
-    const originalFilePath = path.join(PDF_DIR, `${id}${ext}`);
-    fs.writeFileSync(originalFilePath, buffer);
-    console.log(`Saved original document (${ext}) to ${originalFilePath}`);
-
-    let extractedText = "";
-    let fileType = "pdf";
-
-    if (ext === ".docx") {
-      fileType = "word";
-      try {
-        const mammothResult = await mammoth.extractRawText({ buffer });
-        extractedText = mammothResult.value || "";
-        console.log(`Successfully extracted ${extractedText.length} characters of raw text from Word document ${fileName}`);
-      } catch (err: any) {
-        console.error("Mammoth DOCX text extraction failed:", err);
-      }
-    } else if (ext === ".pdf") {
-      fileType = "pdf";
-      // Save duplicate with .pdf extension to be compatible with normal serving
-      const pdfFilePath = path.join(PDF_DIR, `${id}.pdf`);
-      fs.writeFileSync(pdfFilePath, buffer);
-    }
-
-    return res.json({
-      success: true,
-      url: ext === ".pdf" ? `/api/books/pdf/${id}` : `/api/books/docx/${id}`,
-      text: extractedText,
-      fileType: fileType,
-      fileName: fileName
+    const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
     });
-  } catch (error: any) {
-    console.error("Unified Document Upload API failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as any;
+    const u = data?.users?.[0];
+    if (!u?.localId || !u?.email) return null;
+    // Do not trust unverified email addresses for admin privilege mapping
+    const safeEmail = u.emailVerified ? String(u.email) : `unverified:${u.localId}`;
+    return {
+      uid: String(u.localId),
+      email: safeEmail,
+      name: String(u.displayName || String(u.email).split("@")[0]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildPublicUserResponse(uid: string, email: string, name: string) {
+  const resolved = resolveAuthoritativeRoleAndPermissions(email, uid);
+  return {
+    id: uid,
+    email,
+    name,
+    role: resolved.role,
+    isMainAdmin: resolved.isMainAdmin,
+    isSuspended: resolved.isSuspended,
+    permissions: resolved.capabilities,
+    authorizedCourses: resolved.authorizedCourses,
+  };
+}
+
+// ============================================================================
+// M-PESA DARAJA PRODUCTION PAYMENT GATEWAY
+// ============================================================================
+app.use("/api/mpesa", mpesaRouter);
+
+// ============================================================================
+// HEALTH & AUTHENTICATION / SESSION ENDPOINTS
+// ============================================================================
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    mode: process.env.NODE_ENV || "development",
+    supabase: getSupabaseServerStatus(),
+  });
+});
+
+app.get("/api/auth/bootstrap-status", (_req, res) => {
+  const hasEnvPasscode = Boolean(process.env.ADMIN_ACCESS_PASSCODE && process.env.ADMIN_ACCESS_PASSCODE.trim().length > 0);
+  res.json({
+    success: true,
+    hasEnvPasscode,
+    adminClaimRequired: !hasEnvPasscode && !securityState.adminPasscodeHash,
+  });
+});
+
+app.post("/api/auth/session", async (req: Request, res: Response) => {
+  try {
+    const mode = String(req.body?.mode || "login");
+    const rawEmail = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    const passcode = String(req.body?.passcode || "");
+    const name = String(req.body?.name || "").trim();
+
+    if (mode === "demo_member") {
+      const uid = "demo_kenya_member";
+      const email = "member@ziondigital.co.ke";
+      const token = signSessionToken({ uid, email, name: "Bungoma Scholar (Demo)" });
+      setSessionCookie(res, token, req);
+      return res.json({
+        success: true,
+        sessionToken: token,
+        user: buildPublicUserResponse(uid, email, "Bungoma Scholar (Demo)"),
+      });
+    }
+
+    if (mode === "supabase") {
+      const accessToken = String(req.body?.accessToken || "");
+      const verified = await verifySupabaseTokenWithServerSdk(accessToken);
+      if (!verified) {
+        return res.status(401).json({ success: false, error: "Invalid or expired Supabase token." });
+      }
+      const userObj = buildPublicUserResponse(verified.uid, verified.email, verified.name);
+      if (userObj.isSuspended) {
+        return res.status(403).json({ success: false, error: "Account is suspended." });
+      }
+      const token = signSessionToken({ uid: verified.uid, email: verified.email, name: verified.name });
+      setSessionCookie(res, token, req);
+      return res.json({ success: true, sessionToken: token, user: userObj });
+    }
+
+    if (mode === "firebase") {
+      const idToken = String(req.body?.idToken || "");
+      const verified = await verifyFirebaseIdToken(idToken);
+      if (!verified) {
+        return res.status(401).json({ success: false, error: "Invalid or expired Firebase authentication token." });
+      }
+      const userObj = buildPublicUserResponse(verified.uid, verified.email, verified.name);
+      if (userObj.isSuspended) {
+        return res.status(403).json({ success: false, error: "Account is suspended." });
+      }
+      const token = signSessionToken({ uid: verified.uid, email: verified.email, name: verified.name });
+      setSessionCookie(res, token, req);
+      return res.json({ success: true, sessionToken: token, user: userObj });
+    }
+
+    if (!rawEmail || !rawEmail.includes("@")) {
+      return res.status(400).json({ success: false, error: "A valid email address is required." });
+    }
+
+    if (mode === "bootstrap_admin") {
+      if (!MAIN_ADMIN_EMAILS.has(rawEmail)) {
+        return res.status(403).json({ success: false, error: "Only designated principal administrator emails may claim admin setup." });
+      }
+      if (process.env.ADMIN_ACCESS_PASSCODE || securityState.adminPasscodeHash) {
+        return res.status(403).json({ success: false, error: "Administrator passcode is already configured." });
+      }
+      if (passcode.length < 8) {
+        return res.status(400).json({ success: false, error: "Choose an administrator passcode of at least 8 characters." });
+      }
+      securityState.adminPasscodeHash = hashPasswordScrypt(passcode);
+      persistSecurityState();
+      const uid = `admin_${crypto.createHash("sha256").update(rawEmail).digest("hex").slice(0, 12)}`;
+      const displayName = name || "Principal Administrator";
+      const token = signSessionToken({ uid, email: rawEmail, name: displayName });
+      setSessionCookie(res, token, req);
+      recordAuditLog({
+        actorEmail: rawEmail,
+        actorRole: "main_admin",
+        category: "ADMIN_ACTION",
+        action: "ADMIN_PASSCODE_CLAIMED",
+        targetType: "system",
+        targetId: rawEmail,
+        details: "Initial preview administrator passcode configured securely via scrypt hash.",
+        ip: extractIp(req),
+      });
+      return res.json({
+        success: true,
+        sessionToken: token,
+        user: buildPublicUserResponse(uid, rawEmail, displayName),
+      });
+    }
+
+    if (mode === "register") {
+      if (MAIN_ADMIN_EMAILS.has(rawEmail)) {
+        return res.status(403).json({ success: false, error: "Administrator accounts cannot be self-registered." });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ success: false, error: "Password must be at least 6 characters long." });
+      }
+      if (securityState.accounts[rawEmail]) {
+        return res.status(409).json({ success: false, error: "An account with this email already exists. Please sign in." });
+      }
+      const uid = `usr_${crypto.randomBytes(8).toString("hex")}`;
+      const displayName = name || rawEmail.split("@")[0];
+      // Self-registration ALWAYS assigns lowest privilege ("member") — never trusts client role
+      securityState.accounts[rawEmail] = {
+        id: uid,
+        email: rawEmail,
+        name: displayName,
+        role: "member",
+        passwordHash: hashPasswordScrypt(password),
+        createdAt: new Date().toISOString(),
+      };
+      persistSecurityState();
+      const token = signSessionToken({ uid, email: rawEmail, name: displayName });
+      setSessionCookie(res, token, req);
+      return res.status(201).json({
+        success: true,
+        sessionToken: token,
+        user: buildPublicUserResponse(uid, rawEmail, displayName),
+      });
+    }
+
+    // Standard login or admin_passcode verification
+    const secretInput = passcode || password;
+    if (!secretInput) {
+      return res.status(400).json({ success: false, error: "Password or passcode is required." });
+    }
+
+    const existingAccount = securityState.accounts[rawEmail];
+    const envAdminPasscode = process.env.ADMIN_ACCESS_PASSCODE?.trim();
+
+    if (MAIN_ADMIN_EMAILS.has(rawEmail)) {
+      const envOk = Boolean(envAdminPasscode && timingSafeTextEqual(secretInput, envAdminPasscode));
+      const claimedOk = Boolean(securityState.adminPasscodeHash && verifyPasswordScrypt(secretInput, securityState.adminPasscodeHash));
+      const accountOk = Boolean(existingAccount && verifyPasswordScrypt(secretInput, existingAccount.passwordHash));
+
+      if (!envOk && !claimedOk && !accountOk) {
+        recordAuditLog({
+          actorEmail: rawEmail,
+          actorRole: "anonymous",
+          category: "ACCESS_DENIED",
+          action: "ADMIN_LOGIN_FAILED",
+          targetType: "auth",
+          targetId: rawEmail,
+          details: "Failed main administrator authentication attempt.",
+          ip: extractIp(req),
+        });
+        return res.status(401).json({ success: false, error: "Invalid administrator credentials." });
+      }
+
+      const uid = existingAccount?.id || `admin_${crypto.createHash("sha256").update(rawEmail).digest("hex").slice(0, 12)}`;
+      const displayName = existingAccount?.name || name || "Kelvin Opara Wafula";
+      const token = signSessionToken({ uid, email: rawEmail, name: displayName });
+      setSessionCookie(res, token, req);
+      return res.json({
+        success: true,
+        sessionToken: token,
+        user: buildPublicUserResponse(uid, rawEmail, displayName),
+      });
+    }
+
+    if (!existingAccount || !verifyPasswordScrypt(secretInput, existingAccount.passwordHash)) {
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
+
+    const userObj = buildPublicUserResponse(existingAccount.id, rawEmail, existingAccount.name);
+    if (userObj.isSuspended) {
+      return res.status(403).json({ success: false, error: "This account has been suspended by administration." });
+    }
+
+    const token = signSessionToken({ uid: existingAccount.id, email: rawEmail, name: existingAccount.name });
+    setSessionCookie(res, token, req);
+    return res.json({ success: true, sessionToken: token, user: userObj });
+  } catch (err) {
+    console.error("Auth session error:", err);
+    return res.status(500).json({ success: false, error: safeError(err) });
   }
 });
 
-// Expose actual workspace source files to Admin Panel for local standalone replication
-app.get("/api/admin/workspace-files", (req, res) => {
+app.post("/api/auth/logout", (req: Request, res: Response) => {
+  clearSessionCookie(res, req);
+  return res.json({ success: true });
+});
+
+app.get("/api/auth/me", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  return res.json({
+    success: true,
+    user: {
+      id: req.identity!.uid,
+      email: req.identity!.email,
+      name: req.identity!.name,
+      role: req.identity!.role,
+      isMainAdmin: req.identity!.isMainAdmin,
+      isSuspended: req.identity!.isSuspended,
+      permissions: req.identity!.capabilities,
+      authorizedCourses: req.identity!.authorizedCourses,
+    },
+  });
+});
+
+// ============================================================================
+// STAGE 3: SERVER-SIDE ADMIN & MANAGER ACCESS CHECKS + RBAC MANAGEMENT
+// ============================================================================
+app.get("/api/admin/access-check", requireAdminAccess(), (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, user: req.identity });
+});
+
+app.get("/api/manager/access-check", requireManagerAccess, (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, user: req.identity });
+});
+
+app.get("/api/admin/sub-admins", requireMainAdmin, (_req: AuthenticatedRequest, res: Response) => {
+  return res.json({ success: true, subAdmins: Object.values(securityState.subAdminPermissions) });
+});
+
+app.post("/api/admin/sub-admins", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const subName = String(req.body?.name || "").trim();
+  const rawPerms = (req.body?.permissions || {}) as Partial<SubAdminCapabilityMap>;
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "Valid sub-administrator email is required." });
+  }
+  if (MAIN_ADMIN_EMAILS.has(email)) {
+    return res.status(400).json({ success: false, error: "Main administrator permissions cannot be downgraded here." });
+  }
+
+  const sanitizedPerms: SubAdminCapabilityMap = {
+    allowBroadcast: Boolean(rawPerms.allowBroadcast),
+    allowApproval: Boolean(rawPerms.allowApproval),
+    allowVault: Boolean(rawPerms.allowVault),
+    allowManageBooks: Boolean(rawPerms.allowManageBooks),
+    allowConfirmPayments: Boolean(rawPerms.allowConfirmPayments),
+    allowManageEnrollments: Boolean(rawPerms.allowManageEnrollments),
+    allowManageExams: Boolean(rawPerms.allowManageExams),
+    allowIssueCertificates: Boolean(rawPerms.allowIssueCertificates),
+    allowModeration: Boolean(rawPerms.allowModeration),
+    allowSuspendUsers: Boolean(rawPerms.allowSuspendUsers),
+  };
+
+  const id = securityState.subAdminPermissions[email]?.id || `sa_${Date.now()}`;
+  const record = {
+    id,
+    name: subName || email.split("@")[0],
+    email,
+    permissions: sanitizedPerms,
+    createdBy: req.identity!.email,
+    updatedAt: new Date().toISOString(),
+  };
+
+  securityState.subAdminPermissions[email] = record;
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ROLE_CHANGE",
+    action: "SUBADMIN_PERMISSION_SAVED",
+    targetType: "sub_admin_permission",
+    targetId: email,
+    details: `Main admin updated capabilities for ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, subAdmin: record });
+});
+
+app.put("/api/admin/sub-admins/:email", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const email = decodeURIComponent(req.params.email || "").trim().toLowerCase();
+  const existing = securityState.subAdminPermissions[email];
+  if (!existing) {
+    return res.status(404).json({ success: false, error: "Sub-administrator record not found." });
+  }
+
+  const rawPerms = (req.body?.permissions || {}) as Partial<SubAdminCapabilityMap>;
+  const updatedPerms: SubAdminCapabilityMap = { ...EMPTY_CAPABILITIES };
+  (Object.keys(EMPTY_CAPABILITIES) as (keyof SubAdminCapabilityMap)[]).forEach((k) => {
+    updatedPerms[k] = rawPerms[k] !== undefined ? Boolean(rawPerms[k]) : existing.permissions[k];
+  });
+
+  existing.permissions = updatedPerms;
+  if (req.body?.name) existing.name = String(req.body.name).trim();
+  existing.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ROLE_CHANGE",
+    action: "SUBADMIN_PERMISSION_UPDATED",
+    targetType: "sub_admin_permission",
+    targetId: email,
+    details: `Updated sub-admin permissions for ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, subAdmin: existing });
+});
+
+app.delete("/api/admin/sub-admins/:email", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const email = decodeURIComponent(req.params.email || "").trim().toLowerCase();
+  if (!securityState.subAdminPermissions[email]) {
+    return res.status(404).json({ success: false, error: "Sub-administrator not found." });
+  }
+  delete securityState.subAdminPermissions[email];
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ROLE_CHANGE",
+    action: "SUBADMIN_REVOKED",
+    targetType: "sub_admin_permission",
+    targetId: email,
+    details: `Revoked sub-admin status for ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true });
+});
+
+app.get("/api/admin/tutors", requireManagerAccess, (_req: AuthenticatedRequest, res: Response) => {
+  const tutors = Object.entries(securityState.tutorCourses).map(([email, courses]) => ({
+    email,
+    authorizedCourses: courses,
+    name: securityState.accounts[email]?.name || email.split("@")[0],
+  }));
+  return res.json({ success: true, tutors });
+});
+
+app.post("/api/admin/tutors/assign", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const courses = Array.isArray(req.body?.authorizedCourses)
+    ? req.body.authorizedCourses.map((c: any) => String(c).trim()).filter(Boolean)
+    : [];
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "Valid tutor email is required." });
+  }
+  securityState.tutorCourses[email] = courses;
+  if (securityState.accounts[email] && securityState.accounts[email].role === "member") {
+    securityState.accounts[email].role = "tutor";
+    securityState.accounts[email].authorizedCourses = courses;
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ROLE_CHANGE",
+    action: "TUTOR_COURSES_ASSIGNED",
+    targetType: "tutor",
+    targetId: email,
+    details: `Assigned authorized courses [${courses.join(", ")}] to ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, email, authorizedCourses: courses });
+});
+
+app.get("/api/admin/accounts", requireMainAdmin, (_req: AuthenticatedRequest, res: Response) => {
+  const accounts = Object.values(securityState.accounts).map((acc) => ({
+    id: acc.id,
+    email: acc.email,
+    name: acc.name,
+    role: acc.role,
+    authorizedCourses: acc.authorizedCourses || securityState.tutorCourses[acc.email] || [],
+    suspended: Boolean(acc.suspended || securityState.suspendedUsers[acc.email]),
+    createdAt: acc.createdAt,
+  }));
+  return res.json({
+    success: true,
+    accounts,
+    suspendedUsers: securityState.suspendedUsers,
+  });
+});
+
+app.post("/api/admin/accounts", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const name = String(req.body?.name || "").trim();
+  const role = String(req.body?.role || "member") as any;
+  const password = String(req.body?.password || "");
+  const authorizedCourses = Array.isArray(req.body?.authorizedCourses)
+    ? req.body.authorizedCourses.map((c: any) => String(c))
+    : [];
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "Valid email is required." });
+  }
+  if (!["sub_admin", "manager", "tutor", "member"].includes(role)) {
+    return res.status(400).json({ success: false, error: "Invalid role assignment." });
+  }
+
+  const existing = securityState.accounts[email];
+  if (!existing && password.length < 6) {
+    return res.status(400).json({ success: false, error: "Password of at least 6 characters is required for new staff accounts." });
+  }
+
+  securityState.accounts[email] = {
+    id: existing?.id || `usr_${crypto.randomBytes(6).toString("hex")}`,
+    email,
+    name: name || existing?.name || email.split("@")[0],
+    role,
+    passwordHash: password.length >= 6 ? hashPasswordScrypt(password) : existing!.passwordHash,
+    authorizedCourses,
+    suspended: existing?.suspended || false,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+  };
+
+  if (role === "tutor") {
+    securityState.tutorCourses[email] = authorizedCourses;
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ROLE_CHANGE",
+    action: "STAFF_ACCOUNT_SAVED",
+    targetType: "account",
+    targetId: email,
+    details: `Main admin assigned role "${role}" to ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({
+    success: true,
+    account: {
+      id: securityState.accounts[email].id,
+      email,
+      name: securityState.accounts[email].name,
+      role,
+      authorizedCourses,
+    },
+  });
+});
+
+app.post("/api/admin/users/:email/suspend", requireAdminAccess("allowSuspendUsers"), (req: AuthenticatedRequest, res: Response) => {
+  const email = decodeURIComponent(req.params.email || "").trim().toLowerCase();
+  const reason = String(req.body?.reason || "Suspended by administration").slice(0, 300);
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "Valid user email is required." });
+  }
+  if (MAIN_ADMIN_EMAILS.has(email)) {
+    return res.status(403).json({ success: false, error: "Main administrator cannot be suspended." });
+  }
+
+  securityState.suspendedUsers[email] = {
+    reason,
+    suspendedBy: req.identity!.email,
+    suspendedAt: new Date().toISOString(),
+  };
+  if (securityState.accounts[email]) {
+    securityState.accounts[email].suspended = true;
+    securityState.accounts[email].suspendedReason = reason;
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "USER_SUSPENSION",
+    action: "USER_SUSPENDED",
+    targetType: "user",
+    targetId: email,
+    details: reason,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, email, suspended: true });
+});
+
+app.delete("/api/admin/users/:email/suspend", requireAdminAccess("allowSuspendUsers"), (req: AuthenticatedRequest, res: Response) => {
+  const email = decodeURIComponent(req.params.email || "").trim().toLowerCase();
+  delete securityState.suspendedUsers[email];
+  if (securityState.accounts[email]) {
+    securityState.accounts[email].suspended = false;
+    delete securityState.accounts[email].suspendedReason;
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "USER_SUSPENSION",
+    action: "USER_UNSUSPENDED",
+    targetType: "user",
+    targetId: email,
+    details: `Suspension lifted for ${email}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, email, suspended: false });
+});
+
+// ============================================================================
+// STAGE 6: IMMUTABLE AUDIT LOG ENDPOINTS
+// ============================================================================
+app.get("/api/admin/audit-logs", requireAdminAccess("allowVault"), (req: AuthenticatedRequest, res: Response) => {
+  const limit = Math.min(Number(req.query.limit || 200), 1000);
+  const category = req.query.category ? String(req.query.category) : null;
+  const logs = category
+    ? securityState.auditLogs.filter((l) => l.category === category).slice(0, limit)
+    : securityState.auditLogs.slice(0, limit);
+  return res.json({ success: true, auditLogs: logs });
+});
+
+app.all("/api/admin/audit-logs*", requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(403).json({
+    success: false,
+    error: "Audit logs are server-generated, append-only, and immutable.",
+  });
+});
+
+// Expose workspace source files ONLY to authenticated Main Admin (excluding dotfiles/.env)
+app.get("/api/admin/workspace-files", requireMainAdmin, (_req: AuthenticatedRequest, res: Response) => {
   try {
     const filesMap: Record<string, string> = {};
-    const rootFiles = ["package.json", "tsconfig.json", "vite.config.ts", "index.html", "server.ts", ".env.example", "firestore.rules"];
+    const rootFiles = ["package.json", "tsconfig.json", "vite.config.ts", "index.html", "firestore.rules"];
     const srcRootFiles = ["src/main.tsx", "src/index.css", "src/App.tsx", "src/types.ts", "src/data.ts", "src/schoolCurriculum.ts"];
-    const srcLibFiles = ["src/lib/bibleDb.ts", "src/lib/firebase.ts", "src/lib/firestoreUtils.ts"];
+    const srcLibFiles = ["src/lib/bibleDb.ts", "src/lib/firebase.ts", "src/lib/firestoreUtils.ts", "src/lib/aiClient.ts"];
     const srcUtilsFiles = ["src/utils/cookies.ts", "src/utils/pdfDb.ts"];
 
-    // 1. Gather static known files
-    const allExpectedFiles = [
-      ...rootFiles,
-      ...srcRootFiles,
-      ...srcLibFiles,
-      ...srcUtilsFiles
-    ];
-
-    // 2. Dynamically gather all files inside src/components
+    const allExpectedFiles = [...rootFiles, ...srcRootFiles, ...srcLibFiles, ...srcUtilsFiles];
     const componentsDir = path.join(process.cwd(), "src", "components");
     if (fs.existsSync(componentsDir)) {
-      const components = fs.readdirSync(componentsDir);
-      components.forEach(file => {
+      fs.readdirSync(componentsDir).forEach((file) => {
         if (file.endsWith(".ts") || file.endsWith(".tsx")) {
           allExpectedFiles.push(`src/components/${file}`);
         }
       });
     }
 
-    // 3. Populate file contents map safely
-    allExpectedFiles.forEach(relPath => {
+    allExpectedFiles.forEach((relPath) => {
       const fullPath = path.join(process.cwd(), relPath);
       if (fs.existsSync(fullPath)) {
         filesMap[relPath] = fs.readFileSync(fullPath, "utf8");
       }
     });
 
-    res.json({ success: true, files: filesMap });
-  } catch (error: any) {
-    console.error("Workspace files API error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    return res.json({ success: true, files: filesMap });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err) });
   }
 });
 
-// Specialized Admin High-Detail/Unlimited Photo AI
-app.post("/api/my-ai-assistant", async (req, res) => {
+// ============================================================================
+// STAGE 5: PROTECTED BOOK CATALOG & FILE ACCESS
+// ============================================================================
+const PDF_DIR = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(PDF_DIR)) {
+  fs.mkdirSync(PDF_DIR, { recursive: true });
+}
+
+app.get("/api/books", (req: AuthenticatedRequest, res: Response) => {
+  const canManage = req.identity ? hasCapability(req.identity, "allowManageBooks") : false;
+  const callerEmail = req.identity?.email.toLowerCase() || "";
+  const list = Object.values(securityState.books)
+    .filter((b) => {
+      if (b.status === "active") return true;
+      if (canManage) return true;
+      return Boolean(callerEmail && b.authorEmail.toLowerCase() === callerEmail);
+    })
+    .map((b) => ({
+      ...b,
+      // Do not expose paid full text over unpurchased public catalog listing
+      content: (b.price <= 0 || canManage || (callerEmail && b.authorEmail.toLowerCase() === callerEmail))
+        ? b.content
+        : undefined,
+    }));
+  return res.json({ success: true, books: list });
+});
+
+app.post("/api/books", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const isManagerOrAdmin = hasCapability(actor, "allowManageBooks");
+  const bookId = sanitizeUploadId(String(req.body?.id || `book_${Date.now()}`));
+  if (!bookId) {
+    return res.status(400).json({ success: false, error: "Invalid book ID format." });
+  }
+
+  const requestedStatus = String(req.body?.status || "active") === "draft" ? "draft" : "active";
+  // Ordinary non-admin authors cannot self-publish directly to active without approval
+  const finalStatus: "active" | "draft" = isManagerOrAdmin ? requestedStatus : "draft";
+
+  const record = {
+    id: bookId,
+    title: String(req.body?.title || "Untitled Book").slice(0, 200),
+    author: String(req.body?.author || actor.name).slice(0, 120),
+    authorId: actor.uid,
+    authorEmail: actor.email.toLowerCase(),
+    price: Math.max(0, Number(req.body?.price || 0)),
+    status: finalStatus,
+    category: String(req.body?.category || "Non-Fiction").slice(0, 60),
+    allowPreview: req.body?.allowPreview !== false,
+    previewDuration: Number(req.body?.previewDuration || 30),
+    content: typeof req.body?.content === "string" ? req.body.content : undefined,
+    previewExcerpt: typeof req.body?.previewExcerpt === "string"
+      ? req.body.previewExcerpt.slice(0, 1200)
+      : typeof req.body?.content === "string"
+      ? req.body.content.slice(0, 600)
+      : undefined,
+    pdfUrl: typeof req.body?.pdfUrl === "string" ? req.body.pdfUrl : undefined,
+  };
+
+  securityState.books[bookId] = record;
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "BOOK_ACTION",
+    action: "BOOK_CREATED",
+    targetType: "book",
+    targetId: bookId,
+    details: `Book "${record.title}" (${record.status}, KES ${record.price}) saved`,
+    ip: extractIp(req),
+  });
+
+  return res.status(201).json({ success: true, book: record });
+});
+
+app.put("/api/books/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const bookId = sanitizeUploadId(req.params.id);
+  if (!bookId) return res.status(400).json({ success: false, error: "Invalid book ID." });
+  const existing = securityState.books[bookId];
+  if (!existing) return res.status(404).json({ success: false, error: "Book not found." });
+
+  const isBookAdmin = hasCapability(actor, "allowManageBooks");
+  const isAuthorOwner = existing.authorEmail === actor.email.toLowerCase() || existing.authorId === actor.uid;
+  if (!isBookAdmin && !isAuthorOwner) {
+    return res.status(403).json({ success: false, error: "Not authorized to modify this book." });
+  }
+
+  if (req.body?.title) existing.title = String(req.body.title).slice(0, 200);
+  if (req.body?.category) existing.category = String(req.body.category).slice(0, 60);
+  if (req.body?.price !== undefined && isBookAdmin) existing.price = Math.max(0, Number(req.body.price));
+  if (req.body?.status && isBookAdmin) {
+    existing.status = req.body.status === "draft" ? "draft" : "active";
+  }
+  if (typeof req.body?.content === "string") {
+    existing.content = req.body.content;
+    existing.previewExcerpt = req.body.content.slice(0, 600);
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "BOOK_ACTION",
+    action: "BOOK_UPDATED",
+    targetType: "book",
+    targetId: bookId,
+    details: `Updated book "${existing.title}"`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, book: existing });
+});
+
+app.delete("/api/books/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const bookId = sanitizeUploadId(req.params.id);
+  if (!bookId) return res.status(400).json({ success: false, error: "Invalid book ID." });
+  const existing = securityState.books[bookId];
+  if (!existing) return res.status(404).json({ success: false, error: "Book not found." });
+
+  const isBookAdmin = hasCapability(actor, "allowManageBooks");
+  const isDraftAuthor = existing.status === "draft" && (existing.authorEmail === actor.email.toLowerCase() || existing.authorId === actor.uid);
+  if (!isBookAdmin && !isDraftAuthor) {
+    return res.status(403).json({ success: false, error: "Only authorized book administrators may delete published books." });
+  }
+
+  delete securityState.books[bookId];
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "BOOK_ACTION",
+    action: "BOOK_DELETED",
+    targetType: "book",
+    targetId: bookId,
+    details: `Deleted book "${existing.title}"`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true });
+});
+
+app.get("/api/books/:id/preview", (req: Request, res: Response) => {
+  const bookId = sanitizeUploadId(req.params.id);
+  if (!bookId) return res.status(400).json({ success: false, error: "Invalid book ID." });
+  const book = securityState.books[bookId];
+  if (!book) {
+    return res.status(404).json({ success: false, error: "Book preview not found." });
+  }
+  if (book.allowPreview === false) {
+    return res.status(403).json({ success: false, error: "Previews are disabled for this volume." });
+  }
+  return res.json({
+    success: true,
+    preview: {
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      price: book.price,
+      previewDuration: book.previewDuration || 30,
+      excerpt: book.previewExcerpt || book.content?.slice(0, 600) || `Preview excerpt for ${book.title}. Purchase full volume to unlock all chapters and downloads.`,
+    },
+  });
+});
+
+function hasBookFileAccess(identity: AuthenticatedRequest["identity"] | undefined, bookId: string): { allowed: boolean; reason?: string } {
+  const book = securityState.books[bookId];
+  if (!book) {
+    // Unregistered file in uploads/ requires authenticated book manager or matching entitlement
+    if (!identity) return { allowed: false, reason: "Authentication required to access protected document." };
+    if (hasCapability(identity, "allowManageBooks") || securityState.bookEntitlements[`${bookId}:${identity.email.toLowerCase()}`]) {
+      return { allowed: true };
+    }
+    return { allowed: false, reason: "Purchase or authorization required to access this document." };
+  }
+
+  if (book.price <= 0 && book.status === "active") {
+    return { allowed: true };
+  }
+
+  if (!identity) {
+    return { allowed: false, reason: "Authentication and verified purchase required for paid books." };
+  }
+  if (identity.isSuspended) {
+    return { allowed: false, reason: "Account is suspended." };
+  }
+  if (hasCapability(identity, "allowManageBooks") || identity.isMainAdmin || identity.role === "manager") {
+    return { allowed: true };
+  }
+  if (book.authorEmail.toLowerCase() === identity.email.toLowerCase() || book.authorId === identity.uid) {
+    return { allowed: true };
+  }
+  if (securityState.bookEntitlements[`${bookId}:${identity.email.toLowerCase()}`]) {
+    return { allowed: true };
+  }
+  return { allowed: false, reason: "Verified purchase required before downloading paid book files." };
+}
+
+app.post("/api/books/pdf", requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userMessage = req.body.message || "";
-    const images = req.body.images || []; // Array of base64 data URIs
-    console.log(`📬 Message received in specialized Admin AI: "${userMessage}", with ${images.length} images`);
-
-    // Guard with a working key check
-    const activeKey = process.env.GEMINI_API_KEY || "AIzaSyDnokYDiiuC4CJCwUep3LCPPOUsOAtGxoU";
-    
-    // Instantiate GoogleGenAI instance for perfect reliability with specified/fallback keys
-    const localizedClient = new GoogleGenAI({
-      apiKey: activeKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-
-    const parts: any[] = [];
-    parts.push({ text: userMessage || "Analyze the provided input and photos in high detail." });
-
-    // Multi-photo processing with NO hard restriction on photos count
-    if (Array.isArray(images)) {
-      images.forEach((imgBase64: string) => {
-        if (imgBase64.startsWith("data:")) {
-          const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
-          if (match) {
-            parts.push({
-              inlineData: {
-                mimeType: match[1],
-                data: match[2],
-              },
-            });
-          }
-        }
-      });
+    const actor = req.identity!;
+    const safeId = sanitizeUploadId(String(req.body?.id || ""));
+    const { pdfBase64 } = req.body;
+    if (!safeId || !pdfBase64) {
+      return res.status(400).json({ success: false, error: "Valid book id and PDF data are required." });
     }
 
-    const response = await localizedClient.models.generateContent({
-      model: "gemini-3.5-flash",
+    const existing = securityState.books[safeId];
+    const isBookAdmin = hasCapability(actor, "allowManageBooks");
+    if (existing && !isBookAdmin && existing.authorEmail !== actor.email.toLowerCase()) {
+      return res.status(403).json({ success: false, error: "Not authorized to overwrite this book's PDF." });
+    }
+    if (!existing && !isBookAdmin) {
+      return res.status(403).json({ success: false, error: "Book publishing permission required to upload standalone PDFs." });
+    }
+
+    let pureBase64 = String(pdfBase64);
+    if (pureBase64.startsWith("data:")) {
+      const parts = pureBase64.split(";base64,");
+      if (parts[1]) pureBase64 = parts[1];
+    }
+
+    const buffer = Buffer.from(pureBase64, "base64");
+    const filePath = resolveSafeFileInsideDir(PDF_DIR, `${safeId}.pdf`);
+    if (!filePath) return res.status(400).json({ success: false, error: "Invalid file path." });
+
+    fs.writeFileSync(filePath, buffer);
+    return res.json({ success: true, url: `/api/books/pdf/${safeId}` });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err) });
+  }
+});
+
+app.get("/api/books/pdf/:id", (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const safeId = sanitizeUploadId(req.params.id);
+    if (!safeId) return res.status(400).json({ success: false, error: "Invalid document ID." });
+
+    const access = hasBookFileAccess(req.identity, safeId);
+    if (!access.allowed) {
+      recordAuditLog({
+        actor: req.identity,
+        category: "ACCESS_DENIED",
+        action: "PAID_PDF_ACCESS_BLOCKED",
+        targetType: "book_file",
+        targetId: safeId,
+        details: access.reason || "Unauthorized paid PDF access attempt",
+        ip: extractIp(req),
+      });
+      return res.status(req.identity ? 403 : 401).json({ success: false, error: access.reason });
+    }
+
+    const filePath = resolveSafeFileInsideDir(PDF_DIR, `${safeId}.pdf`);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "PDF document not found on server." });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safeId}.pdf"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.sendFile(filePath);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err) });
+  }
+});
+
+app.get("/api/books/docx/:id", (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const safeId = sanitizeUploadId(req.params.id);
+    if (!safeId) return res.status(400).json({ success: false, error: "Invalid document ID." });
+
+    const access = hasBookFileAccess(req.identity, safeId);
+    if (!access.allowed) {
+      return res.status(req.identity ? 403 : 401).json({ success: false, error: access.reason });
+    }
+
+    const filePath = resolveSafeFileInsideDir(PDF_DIR, `${safeId}.docx`);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "Word document not found on server." });
+    }
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `inline; filename="${safeId}.docx"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.sendFile(filePath);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err) });
+  }
+});
+
+app.post("/api/books/upload-doc", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const actor = req.identity!;
+    const safeId = sanitizeUploadId(String(req.body?.id || ""));
+    const { fileBase64, fileName } = req.body;
+    if (!safeId || !fileBase64 || !fileName) {
+      return res.status(400).json({ success: false, error: "Valid id, fileBase64, and fileName are required." });
+    }
+
+    const ext = path.extname(String(fileName)).toLowerCase();
+    if (ext !== ".pdf" && ext !== ".docx") {
+      return res.status(400).json({ success: false, error: "Only .pdf and .docx uploads are permitted." });
+    }
+
+    const existing = securityState.books[safeId];
+    const isBookAdmin = hasCapability(actor, "allowManageBooks");
+    if (existing && !isBookAdmin && existing.authorEmail !== actor.email.toLowerCase()) {
+      return res.status(403).json({ success: false, error: "Not authorized to overwrite this book document." });
+    }
+    if (!existing && !isBookAdmin && !hasCapability(actor, "allowApproval") && actor.role === "member") {
+      // Allow members to upload pending draft documents owned by themselves
+      securityState.books[safeId] = {
+        id: safeId,
+        title: String(fileName).replace(/\.(pdf|docx)$/i, ""),
+        author: actor.name,
+        authorId: actor.uid,
+        authorEmail: actor.email.toLowerCase(),
+        price: 0,
+        status: "draft",
+        category: "Education",
+        allowPreview: true,
+      };
+      persistSecurityState();
+    }
+
+    let pureBase64 = String(fileBase64);
+    if (pureBase64.startsWith("data:")) {
+      const parts = pureBase64.split(";base64,");
+      if (parts[1]) pureBase64 = parts[1];
+    }
+
+    const buffer = Buffer.from(pureBase64, "base64");
+    const originalFilePath = resolveSafeFileInsideDir(PDF_DIR, `${safeId}${ext}`);
+    if (!originalFilePath) return res.status(400).json({ success: false, error: "Invalid destination filename." });
+
+    fs.writeFileSync(originalFilePath, buffer);
+
+    let extractedText = "";
+    let fileType = "pdf";
+    if (ext === ".docx") {
+      fileType = "word";
+      try {
+        const mammothResult = await mammoth.extractRawText({ buffer });
+        extractedText = mammothResult.value || "";
+      } catch (docxErr) {
+        console.warn("Mammoth DOCX extraction failed:", docxErr);
+      }
+    }
+
+    return res.json({
+      success: true,
+      url: ext === ".pdf" ? `/api/books/pdf/${safeId}` : `/api/books/docx/${safeId}`,
+      text: extractedText,
+      fileType,
+      fileName: path.basename(String(fileName)),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err) });
+  }
+});
+
+// ============================================================================
+// STAGE 2: ORDERS, FEE PAYMENTS, ENROLLMENTS, CERTIFICATES
+// ============================================================================
+app.get("/api/orders", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const isFinance = hasCapability(actor, "allowConfirmPayments") || actor.role === "manager" || actor.isMainAdmin;
+  const callerEmail = actor.email.toLowerCase();
+  const orders = Object.values(securityState.orders).filter((o) =>
+    isFinance || o.userEmail.toLowerCase() === callerEmail || o.userId === actor.uid
+  );
+  return res.json({ success: true, orders });
+});
+
+app.post("/api/orders", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const bookId = sanitizeUploadId(String(req.body?.bookId || ""));
+  if (!bookId) return res.status(400).json({ success: false, error: "Valid bookId is required." });
+
+  const catalogBook = securityState.books[bookId];
+  const derivedTitle = catalogBook?.title || String(req.body?.bookTitle || "Digital Volume").slice(0, 180);
+  const derivedPrice = catalogBook ? catalogBook.price : Math.max(0, Number(req.body?.price || 0));
+
+  // Ignore any client-supplied status/verifiedBy/userId — always starts pending
+  const orderId = `ord_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+  const now = new Date().toISOString();
+  const order = {
+    id: orderId,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    userName: actor.name,
+    bookId,
+    bookTitle: derivedTitle,
+    price: derivedPrice,
+    status: "pending" as const,
+    paymentReference: req.body?.paymentReference ? String(req.body.paymentReference).slice(0, 80) : undefined,
+    date: now,
+    updatedAt: now,
+  };
+
+  securityState.orders[orderId] = order;
+  persistSecurityState();
+
+  return res.status(201).json({ success: true, order });
+});
+
+app.put("/api/orders/:id/status", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const canConfirm = hasCapability(actor, "allowConfirmPayments") || actor.role === "manager" || actor.isMainAdmin;
+  if (!canConfirm) {
+    recordAuditLog({
+      actor,
+      category: "ACCESS_DENIED",
+      action: "ORDER_STATUS_TAMPER_BLOCKED",
+      targetType: "order",
+      targetId: req.params.id,
+      details: `Unauthorized user attempted to set order status to "${req.body?.status}"`,
+      ip: extractIp(req),
+    });
+    return res.status(403).json({ success: false, error: "Only trusted payment processing or finance administrators may confirm orders." });
+  }
+
+  const order = securityState.orders[req.params.id];
+  if (!order) return res.status(404).json({ success: false, error: "Order not found." });
+
+  const nextStatus = String(req.body?.status || "");
+  if (!["approved", "rejected", "pending"].includes(nextStatus)) {
+    return res.status(400).json({ success: false, error: "Invalid order status." });
+  }
+
+  order.status = nextStatus as any;
+  order.verifiedBy = actor.email;
+  order.updatedAt = new Date().toISOString();
+
+  if (nextStatus === "approved") {
+    securityState.bookEntitlements[`${order.bookId}:${order.userEmail.toLowerCase()}`] = {
+      bookId: order.bookId,
+      userEmail: order.userEmail.toLowerCase(),
+      orderId: order.id,
+      grantedAt: new Date().toISOString(),
+    };
+  } else {
+    delete securityState.bookEntitlements[`${order.bookId}:${order.userEmail.toLowerCase()}`];
+  }
+
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "PAYMENT_CONFIRMATION",
+    action: `ORDER_${nextStatus.toUpperCase()}`,
+    targetType: "order",
+    targetId: order.id,
+    details: `Order for "${order.bookTitle}" (KES ${order.price}, ${order.userEmail}) marked ${nextStatus}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, order });
+});
+
+app.get("/api/fee-payments", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const isFinance = hasCapability(actor, "allowConfirmPayments") || actor.role === "manager" || actor.isMainAdmin;
+  const payments = Object.values(securityState.feePayments).filter((p) =>
+    isFinance || p.userEmail.toLowerCase() === actor.email.toLowerCase() || p.userId === actor.uid
+  );
+  return res.json({ success: true, payments });
+});
+
+app.post("/api/fee-payments", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const feeType = String(req.body?.feeType || "library");
+  if (!["library", "certificate", "tuition", "wifi"].includes(feeType)) {
+    return res.status(400).json({ success: false, error: "Invalid fee type." });
+  }
+  const paymentId = `fee_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+  const now = new Date().toISOString();
+  const payment = {
+    id: paymentId,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    userName: actor.name,
+    feeType: feeType as any,
+    planName: String(req.body?.planName || feeType).slice(0, 100),
+    amount: Math.max(0, Number(req.body?.amount || 0)),
+    phoneNumber: String(req.body?.phoneNumber || "").slice(0, 30),
+    status: "pending" as const,
+    date: now,
+    updatedAt: now,
+  };
+  securityState.feePayments[paymentId] = payment;
+  persistSecurityState();
+  return res.status(201).json({ success: true, payment });
+});
+
+app.put("/api/fee-payments/:id/confirm", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const canConfirm = hasCapability(actor, "allowConfirmPayments") || actor.role === "manager" || actor.isMainAdmin;
+  if (!canConfirm) {
+    return res.status(403).json({ success: false, error: "Finance administrator authorization required." });
+  }
+  const payment = securityState.feePayments[req.params.id];
+  if (!payment) return res.status(404).json({ success: false, error: "Payment not found." });
+
+  const status = req.body?.status === "rejected" ? "rejected" : "confirmed";
+  payment.status = status;
+  payment.verifiedBy = actor.email;
+  payment.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "PAYMENT_CONFIRMATION",
+    action: `FEE_PAYMENT_${status.toUpperCase()}`,
+    targetType: "fee_payment",
+    targetId: payment.id,
+    details: `${payment.feeType} fee (KES ${payment.amount}) for ${payment.userEmail} marked ${status}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, payment });
+});
+
+app.get("/api/enrollments", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const isEnrolAdmin = hasCapability(actor, "allowManageEnrollments") || actor.role === "manager" || actor.isMainAdmin;
+  const list = Object.values(securityState.enrollments).filter((e) =>
+    isEnrolAdmin || e.userEmail.toLowerCase() === actor.email.toLowerCase() || e.userId === actor.uid
+  );
+  return res.json({ success: true, enrollments: list });
+});
+
+app.post("/api/enrollments", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseId = String(req.body?.courseId || "").trim();
+  const courseTopic = String(req.body?.courseTopic || "").trim();
+  if (!courseId || !courseTopic) {
+    return res.status(400).json({ success: false, error: "courseId and courseTopic are required." });
+  }
+
+  const enrollmentId = `enr_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+  const now = new Date().toISOString();
+  // Students cannot approve their own enrollment, feeStatus, or certificateIssued
+  const enrollment = {
+    id: enrollmentId,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    studentName: String(req.body?.studentName || actor.name).slice(0, 120),
+    admNo: String(req.body?.admNo || `ZD-${Date.now().toString().slice(-6)}`).slice(0, 40),
+    phone: String(req.body?.phone || "").slice(0, 30),
+    courseId,
+    courseTopic: courseTopic.slice(0, 160),
+    courseCode: String(req.body?.courseCode || "ZDL-100").slice(0, 40),
+    courseFee: Math.max(0, Number(req.body?.courseFee || 0)),
+    enrolmentType: (["new", "continuing", "repeat"].includes(req.body?.enrolmentType) ? req.body.enrolmentType : "new") as any,
+    mpesaTransactionCode: String(req.body?.mpesaTransactionCode || "").slice(0, 60),
+    status: "pending" as const,
+    feeStatus: "unpaid" as const,
+    certificateIssued: false,
+    enrolledAt: now,
+    updatedAt: now,
+  };
+
+  securityState.enrollments[enrollmentId] = enrollment;
+  persistSecurityState();
+  return res.status(201).json({ success: true, enrollment });
+});
+
+app.put("/api/enrollments/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const canManage = hasCapability(actor, "allowManageEnrollments") || actor.role === "manager" || actor.isMainAdmin;
+  if (!canManage) {
+    recordAuditLog({
+      actor,
+      category: "ACCESS_DENIED",
+      action: "ENROLLMENT_MODIFICATION_BLOCKED",
+      targetType: "enrollment",
+      targetId: req.params.id,
+      details: `Unauthorized enrollment approval/fee edit attempted by ${actor.email}`,
+      ip: extractIp(req),
+    });
+    return res.status(403).json({ success: false, error: "Only authorized enrollment workflows may approve enrollments or update fee status." });
+  }
+
+  const enrollment = securityState.enrollments[req.params.id];
+  if (!enrollment) return res.status(404).json({ success: false, error: "Enrollment not found." });
+
+  if (req.body?.status && ["pending", "approved", "rejected"].includes(req.body.status)) {
+    enrollment.status = req.body.status;
+  }
+  if (req.body?.feeStatus && ["unpaid", "paid"].includes(req.body.feeStatus)) {
+    if (!hasCapability(actor, "allowConfirmPayments") && actor.role !== "manager" && !actor.isMainAdmin && !hasCapability(actor, "allowManageEnrollments")) {
+      return res.status(403).json({ success: false, error: "Not permitted to change fee status." });
+    }
+    enrollment.feeStatus = req.body.feeStatus;
+  }
+  if (req.body?.certificateIssued !== undefined) {
+    if (!hasCapability(actor, "allowIssueCertificates") && actor.role !== "manager" && !actor.isMainAdmin) {
+      return res.status(403).json({ success: false, error: "Certificate issuance permission required." });
+    }
+    enrollment.certificateIssued = Boolean(req.body.certificateIssued);
+  }
+  enrollment.reviewedBy = actor.email;
+  enrollment.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "ENROLLMENT_APPROVAL",
+    action: `ENROLLMENT_${enrollment.status.toUpperCase()}`,
+    targetType: "enrollment",
+    targetId: enrollment.id,
+    details: `Enrollment for ${enrollment.userEmail} (${enrollment.courseTopic}): status=${enrollment.status}, feeStatus=${enrollment.feeStatus}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, enrollment });
+});
+
+app.get("/api/certificates", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const isCertAdmin = hasCapability(actor, "allowIssueCertificates") || actor.role === "manager" || actor.isMainAdmin;
+  const certs = Object.values(securityState.certificates).filter((c) =>
+    isCertAdmin || c.studentEmail.toLowerCase() === actor.email.toLowerCase()
+  );
+  return res.json({ success: true, certificates: certs });
+});
+
+app.get("/api/certificates/verify/:id", (req: Request, res: Response) => {
+  const cert = securityState.certificates[req.params.id];
+  if (!cert || cert.status === "revoked") {
+    return res.status(404).json({ success: false, valid: false, error: "Certificate not found or revoked." });
+  }
+  return res.json({
+    success: true,
+    valid: true,
+    certificate: {
+      id: cert.id,
+      studentName: cert.studentName,
+      schoolName: cert.schoolName,
+      courseTopic: cert.courseTopic,
+      score: cert.score,
+      ledgerHash: cert.ledgerHash,
+      date: cert.date,
+    },
+  });
+});
+
+app.post("/api/certificates/issue", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const canIssue = hasCapability(actor, "allowIssueCertificates") || actor.role === "manager" || actor.isMainAdmin;
+  if (!canIssue) {
+    return res.status(403).json({ success: false, error: "Certificate issuance permission required." });
+  }
+
+  const studentEmail = String(req.body?.studentEmail || "").trim().toLowerCase();
+  const studentName = String(req.body?.studentName || "").trim();
+  const courseTopic = String(req.body?.courseTopic || "").trim();
+  if (!studentEmail || !studentName || !courseTopic) {
+    return res.status(400).json({ success: false, error: "studentEmail, studentName, and courseTopic are required." });
+  }
+
+  const certId = String(req.body?.id || `CERT-ZD-${Date.now().toString(36).toUpperCase()}`);
+  const score = Math.min(100, Math.max(0, Number(req.body?.score || 0)));
+  const now = new Date().toISOString();
+  const ledgerHash = crypto.createHash("sha256").update(`${certId}:${studentEmail}:${courseTopic}:${score}`).digest("hex").slice(0, 16).toUpperCase();
+
+  const cert = {
+    id: certId,
+    studentEmail,
+    studentName,
+    schoolName: String(req.body?.schoolName || "Zion Digital Leadership & Technology Institute"),
+    courseTopic,
+    score,
+    ledgerHash,
+    status: "active" as const,
+    issuedBy: actor.email,
+    date: now.slice(0, 10),
+    updatedAt: now,
+  };
+
+  securityState.certificates[certId] = cert;
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "CERTIFICATE_ISSUANCE",
+    action: "CERTIFICATE_ISSUED",
+    targetType: "certificate",
+    targetId: certId,
+    details: `Issued certificate to ${studentName} (${studentEmail}) for ${courseTopic}`,
+    ip: extractIp(req),
+  });
+
+  return res.status(201).json({ success: true, certificate: cert });
+});
+
+// Only main administrator can edit or remove certificate details
+app.put("/api/certificates/:id", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const cert = securityState.certificates[req.params.id];
+  if (!cert) return res.status(404).json({ success: false, error: "Certificate not found." });
+
+  if (req.body?.studentName) cert.studentName = String(req.body.studentName).trim();
+  if (req.body?.schoolName) cert.schoolName = String(req.body.schoolName).trim();
+  if (req.body?.courseTopic) cert.courseTopic = String(req.body.courseTopic).trim();
+  if (req.body?.score !== undefined) cert.score = Math.min(100, Math.max(0, Number(req.body.score)));
+  if (req.body?.status && ["active", "revoked"].includes(req.body.status)) cert.status = req.body.status;
+  cert.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "CERTIFICATE_ISSUANCE",
+    action: "CERTIFICATE_EDITED",
+    targetType: "certificate",
+    targetId: cert.id,
+    details: `Main admin edited certificate details for ${cert.id}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, certificate: cert });
+});
+
+app.delete("/api/certificates/:id", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  if (!securityState.certificates[req.params.id]) {
+    return res.status(404).json({ success: false, error: "Certificate not found." });
+  }
+  delete securityState.certificates[req.params.id];
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "CERTIFICATE_ISSUANCE",
+    action: "CERTIFICATE_DELETED",
+    targetType: "certificate",
+    targetId: req.params.id,
+    details: `Main admin removed certificate ${req.params.id}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true });
+});
+
+// ============================================================================
+// STAGE 2: COMMUNITY CHAT (GROUP MEMBERSHIP + MODERATION) & SOCIAL POSTS
+// ============================================================================
+function isChannelMember(channel: string, email: string): boolean {
+  const restricted = securityState.restrictedChannels[channel];
+  if (!restricted) return true;
+  return restricted.members.map((m) => m.toLowerCase()).includes(email.toLowerCase());
+}
+
+app.get("/api/community/messages", (req: AuthenticatedRequest, res: Response) => {
+  const channelQuery = req.query.channel ? String(req.query.channel) : null;
+  const actor = req.identity;
+  const isMod = actor ? (hasCapability(actor, "allowModeration") || actor.isMainAdmin) : false;
+
+  if (channelQuery && securityState.restrictedChannels[channelQuery]) {
+    if (!actor || (!isMod && !isChannelMember(channelQuery, actor.email))) {
+      return res.status(actor ? 403 : 401).json({
+        success: false,
+        error: `Membership is required to view messages in ${channelQuery}.`,
+      });
+    }
+  }
+
+  const messages = Object.values(securityState.chatMessages).filter((msg) => {
+    if (channelQuery && msg.channel !== channelQuery) return false;
+    if (securityState.restrictedChannels[msg.channel]) {
+      return Boolean(actor && (isMod || isChannelMember(msg.channel, actor.email)));
+    }
+    return true;
+  });
+
+  return res.json({ success: true, messages });
+});
+
+app.post("/api/community/messages", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const channel = String(req.body?.channel || "#General").trim();
+  const text = String(req.body?.text || "").trim();
+  if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
+
+  const isMod = hasCapability(actor, "allowModeration") || actor.isMainAdmin;
+  if (securityState.restrictedChannels[channel] && !isMod && !isChannelMember(channel, actor.email)) {
+    return res.status(403).json({ success: false, error: `Group membership required to post in ${channel}.` });
+  }
+
+  const msgId = `cmsg_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+  const now = new Date();
+  const message = {
+    id: msgId,
+    channel,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    userName: actor.name,
+    role: actor.role,
+    text: text.slice(0, 4000),
+    parentId: req.body?.parentId ? String(req.body.parentId) : undefined,
+    date: now.toISOString().split("T")[0],
+    time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  securityState.chatMessages[msgId] = message;
+  persistSecurityState();
+  return res.status(201).json({ success: true, message });
+});
+
+app.put("/api/community/messages/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const msg = securityState.chatMessages[req.params.id];
+  if (!msg) return res.status(404).json({ success: false, error: "Chat message not found." });
+
+  const isOwner = msg.userEmail.toLowerCase() === actor.email.toLowerCase() || msg.userId === actor.uid;
+  const isMod = hasCapability(actor, "allowModeration") || actor.isMainAdmin;
+  if (!isOwner && !isMod) {
+    return res.status(403).json({ success: false, error: "Only the message owner or an authorized moderator may edit this message." });
+  }
+
+  const nextText = String(req.body?.text || "").trim();
+  if (!nextText) return res.status(400).json({ success: false, error: "Updated text cannot be empty." });
+
+  msg.text = nextText.slice(0, 4000);
+  msg.isEdited = true;
+  if (!isOwner && isMod) msg.moderated = true;
+  persistSecurityState();
+  return res.json({ success: true, message: msg });
+});
+
+app.delete("/api/community/messages/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const msg = securityState.chatMessages[req.params.id];
+  if (!msg) return res.status(404).json({ success: false, error: "Chat message not found." });
+
+  const isOwner = msg.userEmail.toLowerCase() === actor.email.toLowerCase() || msg.userId === actor.uid;
+  const isMod = hasCapability(actor, "allowModeration") || actor.isMainAdmin;
+  if (!isOwner && !isMod) {
+    return res.status(403).json({ success: false, error: "Only the message owner or an authorized moderator may delete this message." });
+  }
+
+  delete securityState.chatMessages[req.params.id];
+  persistSecurityState();
+  return res.json({ success: true });
+});
+
+app.post("/api/community/channels/:channel/members", requireAdminAccess("allowModeration"), (req: AuthenticatedRequest, res: Response) => {
+  const channel = decodeURIComponent(req.params.channel);
+  const memberEmail = String(req.body?.email || "").trim().toLowerCase();
+  if (!memberEmail) return res.status(400).json({ success: false, error: "Member email is required." });
+
+  if (!securityState.restrictedChannels[channel]) {
+    securityState.restrictedChannels[channel] = { name: channel, members: [] };
+  }
+  if (!securityState.restrictedChannels[channel].members.includes(memberEmail)) {
+    securityState.restrictedChannels[channel].members.push(memberEmail);
+    persistSecurityState();
+  }
+  return res.json({ success: true, channel: securityState.restrictedChannels[channel] });
+});
+
+app.get("/api/social/posts", (_req: Request, res: Response) => {
+  return res.json({ success: true, posts: Object.values(securityState.socialPosts) });
+});
+
+app.post("/api/social/posts", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const text = String(req.body?.text || "").trim();
+  if (!text) return res.status(400).json({ success: false, error: "Post text is required." });
+
+  const postId = `post_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+  const now = new Date().toISOString();
+  const post = {
+    id: postId,
+    targetId: String(req.body?.targetId || "general"),
+    kind: (["review", "comment", "post"].includes(req.body?.kind) ? req.body.kind : "post") as any,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    userName: actor.name,
+    rating: req.body?.rating !== undefined ? Math.min(5, Math.max(1, Number(req.body.rating))) : undefined,
+    text: text.slice(0, 4000),
+    parentId: req.body?.parentId ? String(req.body.parentId) : undefined,
+    date: now.slice(0, 10),
+    updatedAt: now,
+  };
+  securityState.socialPosts[postId] = post;
+  persistSecurityState();
+  return res.status(201).json({ success: true, post });
+});
+
+app.put("/api/social/posts/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const post = securityState.socialPosts[req.params.id];
+  if (!post) return res.status(404).json({ success: false, error: "Social post not found." });
+
+  const isOwner = post.userEmail.toLowerCase() === actor.email.toLowerCase() || post.userId === actor.uid;
+  const isMod = hasCapability(actor, "allowModeration") || actor.isMainAdmin;
+  if (!isOwner && !isMod) {
+    return res.status(403).json({ success: false, error: "Only the post owner or an authorized moderator may edit this post." });
+  }
+
+  const nextText = String(req.body?.text || "").trim();
+  if (!nextText) return res.status(400).json({ success: false, error: "Post text cannot be empty." });
+
+  post.text = nextText.slice(0, 4000);
+  if (!isOwner && isMod) {
+    post.isModerated = true;
+    post.moderatedReason = String(req.body?.moderatedReason || "Moderated by authorized staff");
+  }
+  post.updatedAt = new Date().toISOString();
+  persistSecurityState();
+  return res.json({ success: true, post });
+});
+
+app.delete("/api/social/posts/:id", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const post = securityState.socialPosts[req.params.id];
+  if (!post) return res.status(404).json({ success: false, error: "Social post not found." });
+
+  const isOwner = post.userEmail.toLowerCase() === actor.email.toLowerCase() || post.userId === actor.uid;
+  const isMod = hasCapability(actor, "allowModeration") || actor.isMainAdmin;
+  if (!isOwner && !isMod) {
+    return res.status(403).json({ success: false, error: "Only the post owner or an authorized moderator may delete this post." });
+  }
+
+  delete securityState.socialPosts[req.params.id];
+  persistSecurityState();
+  return res.json({ success: true });
+});
+
+// ============================================================================
+// STAGE 4: BACKEND EXAMINATION ENGINE (ANSWER KEY ISOLATION & SERVER GRADING)
+// ============================================================================
+app.get("/api/exams", requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+  const exams = Object.values(securityState.exams).map((ex) => ({
+    id: ex.id,
+    lessonId: ex.lessonId,
+    courseTrack: ex.courseTrack,
+    title: ex.title,
+    durationMinutes: ex.durationMinutes,
+    maxAttempts: ex.maxAttempts,
+    resultsReleased: ex.resultsReleased,
+    questionsCount: ex.questions.length || (securityState.examAnswerKeys[ex.id]?.answers?.length ?? 0),
+  }));
+  return res.json({ success: true, exams });
+});
+
+app.get("/api/exams/:examId", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const exam = securityState.exams[req.params.examId];
+  if (!exam) return res.status(404).json({ success: false, error: "Examination not found." });
+
+  // NEVER return answer keys or explanations from student exam definition endpoint
+  return res.json({
+    success: true,
+    exam: {
+      id: exam.id,
+      lessonId: exam.lessonId,
+      courseTrack: exam.courseTrack,
+      title: exam.title,
+      questions: stripQuestionAnswerKeys(exam.questions),
+      durationMinutes: exam.durationMinutes,
+      maxAttempts: exam.maxAttempts,
+      resultsReleased: exam.resultsReleased,
+    },
+  });
+});
+
+app.post("/api/exams", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseTrack = String(req.body?.courseTrack || "leadership").trim();
+  const examId = sanitizeUploadId(String(req.body?.id || `exam_${Date.now()}`));
+  if (!examId) return res.status(400).json({ success: false, error: "Invalid examId." });
+
+  if (!canTutorAccessCourse(actor, courseTrack) && !canTutorAccessCourse(actor, examId)) {
+    recordAuditLog({
+      actor,
+      category: "ACCESS_DENIED",
+      action: "EXAM_CREATE_UNAUTHORIZED",
+      targetType: "exam",
+      targetId: examId,
+      details: `User denied access to author exam for course "${courseTrack}"`,
+      ip: extractIp(req),
+    });
+    return res.status(403).json({ success: false, error: "Not authorized to manage examinations for this course." });
+  }
+
+  const rawQuestions = Array.isArray(req.body?.questions) ? req.body.questions : [];
+  const now = new Date().toISOString();
+
+  securityState.exams[examId] = {
+    id: examId,
+    lessonId: String(req.body?.lessonId || examId),
+    courseTrack,
+    title: String(req.body?.title || "Academic Examination"),
+    questions: stripQuestionAnswerKeys(rawQuestions),
+    durationMinutes: Math.max(5, Math.min(180, Number(req.body?.durationMinutes || 30))),
+    maxAttempts: Math.max(1, Math.min(10, Number(req.body?.maxAttempts || 3))),
+    resultsReleased: Boolean(req.body?.resultsReleased ?? false),
+    createdBy: actor.email,
+    updatedAt: now,
+  };
+
+  securityState.examAnswerKeys[examId] = {
+    answers: rawQuestions.map((q: any) => ({
+      correctIndex: Number(q?.correctIndex || 0),
+      explanation: String(q?.explanation || ""),
+    })),
+    updatedBy: actor.email,
+    updatedAt: now,
+  };
+
+  persistSecurityState();
+  return res.status(201).json({ success: true, exam: securityState.exams[examId] });
+});
+
+app.get("/api/examiner/exams/:examId/keys", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const exam = securityState.exams[req.params.examId];
+  const keys = securityState.examAnswerKeys[req.params.examId];
+  if (!exam || !keys) return res.status(404).json({ success: false, error: "Exam answer keys not found." });
+
+  if (!canTutorAccessCourse(actor, exam.courseTrack) && !canTutorAccessCourse(actor, exam.id)) {
+    recordAuditLog({
+      actor,
+      category: "ACCESS_DENIED",
+      action: "EXAM_ANSWER_KEYS_BLOCKED",
+      targetType: "exam_answer_key",
+      targetId: req.params.examId,
+      details: `Blocked answer key read on course "${exam.courseTrack}" by ${actor.email} (${actor.role})`,
+      ip: extractIp(req),
+    });
+    return res.status(403).json({ success: false, error: "Only authorized examiners for this course may access answer keys." });
+  }
+
+  return res.json({
+    success: true,
+    examId: exam.id,
+    courseTrack: exam.courseTrack,
+    answers: keys.answers,
+  });
+});
+
+app.post("/api/exams/:examId/start", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const exam = securityState.exams[req.params.examId];
+  const keys = securityState.examAnswerKeys[req.params.examId];
+  if (!exam || !keys) return res.status(404).json({ success: false, error: "Examination not found." });
+
+  const userAttempts = Object.values(securityState.examAttempts).filter(
+    (a) => a.examId === exam.id && a.userEmail.toLowerCase() === actor.email.toLowerCase()
+  );
+
+  // Resume active non-expired attempt if already started
+  const activeAttempt = userAttempts.find(
+    (a) => a.status === "in_progress" && Date.now() <= new Date(a.expiresAt).getTime()
+  );
+  if (activeAttempt) {
+    return res.json({ success: true, attempt: activeAttempt, resumed: true });
+  }
+
+  if (userAttempts.length >= exam.maxAttempts) {
+    return res.status(403).json({
+      success: false,
+      error: `Maximum attempt limit (${exam.maxAttempts}) reached for this examination.`,
+    });
+  }
+
+  const now = Date.now();
+  const attemptId = `att_${now}_${crypto.randomBytes(3).toString("hex")}`;
+  const attempt = {
+    id: attemptId,
+    examId: exam.id,
+    userId: actor.uid,
+    userEmail: actor.email.toLowerCase(),
+    userName: actor.name,
+    attemptNumber: userAttempts.length + 1,
+    startedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + exam.durationMinutes * 60_000).toISOString(),
+    answers: {},
+    score: null,
+    correctCount: null,
+    totalQuestions: keys.answers.length,
+    passed: null,
+    status: "in_progress" as const,
+    updatedAt: new Date(now).toISOString(),
+  };
+
+  securityState.examAttempts[attemptId] = attempt;
+  persistSecurityState();
+
+  return res.status(201).json({ success: true, attempt });
+});
+
+app.post("/api/exams/:examId/submit", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const exam = securityState.exams[req.params.examId];
+  const keys = securityState.examAnswerKeys[req.params.examId];
+  if (!exam || !keys) return res.status(404).json({ success: false, error: "Examination not found." });
+
+  // Reject any attempt by client to inject score, passed, or gradedBy
+  if (req.body?.score !== undefined || req.body?.passed !== undefined || req.body?.gradedBy !== undefined) {
+    return res.status(403).json({
+      success: false,
+      error: "Exam scores are computed exclusively on the server and cannot be supplied by clients.",
+    });
+  }
+
+  const attemptId = req.body?.attemptId ? String(req.body.attemptId) : "";
+  const attempt = attemptId
+    ? securityState.examAttempts[attemptId]
+    : Object.values(securityState.examAttempts).find(
+        (a) => a.examId === exam.id && a.userEmail.toLowerCase() === actor.email.toLowerCase() && a.status === "in_progress"
+      );
+
+  if (!attempt || attempt.userEmail.toLowerCase() !== actor.email.toLowerCase()) {
+    return res.status(404).json({ success: false, error: "Active examination attempt not found for your account." });
+  }
+  if (attempt.status !== "in_progress") {
+    return res.status(400).json({ success: false, error: "This examination attempt has already been submitted or expired." });
+  }
+
+  // Enforce server-side exam timing window (15s clock drift grace)
+  if (Date.now() > new Date(attempt.expiresAt).getTime() + 15_000) {
+    attempt.status = "expired";
+    attempt.updatedAt = new Date().toISOString();
+    persistSecurityState();
+    return res.status(403).json({ success: false, error: "Examination time window expired before submission." });
+  }
+
+  const submittedAnswers = (req.body?.answers && typeof req.body.answers === "object") ? req.body.answers : {};
+  let correctCount = 0;
+  const totalQuestions = keys.answers.length;
+
+  const breakdown = keys.answers.map((k, idx) => {
+    const selected = Number(submittedAnswers[idx] ?? submittedAnswers[String(idx)] ?? -1);
+    const isCorrect = selected === k.correctIndex;
+    if (isCorrect) correctCount += 1;
+    return {
+      questionIndex: idx,
+      selectedIndex: selected,
+      isCorrect,
+      ...(exam.resultsReleased ? { correctIndex: k.correctIndex, explanation: k.explanation } : {}),
+    };
+  });
+
+  const score = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+  const passed = score >= 80;
+  const nowIso = new Date().toISOString();
+
+  attempt.answers = submittedAnswers;
+  attempt.correctCount = correctCount;
+  attempt.totalQuestions = totalQuestions;
+  attempt.score = score;
+  attempt.passed = passed;
+  attempt.status = "submitted";
+  attempt.submittedAt = nowIso;
+  attempt.gradedBy = "server_examiner";
+  attempt.updatedAt = nowIso;
+  persistSecurityState();
+
+  return res.json({
+    success: true,
+    attempt,
+    score,
+    correctCount,
+    totalQuestions,
+    passed,
+    resultsReleased: exam.resultsReleased,
+    breakdown,
+  });
+});
+
+app.get("/api/exams/attempts", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const attempts = Object.values(securityState.examAttempts).filter((a) => {
+    if (a.userEmail.toLowerCase() === actor.email.toLowerCase()) return true;
+    const ex = securityState.exams[a.examId];
+    return ex ? canTutorAccessCourse(actor, ex.courseTrack) || canTutorAccessCourse(actor, ex.id) : false;
+  });
+  return res.json({ success: true, attempts });
+});
+
+app.put("/api/exams/attempts/:attemptId/grade", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const attempt = securityState.examAttempts[req.params.attemptId];
+  if (!attempt) return res.status(404).json({ success: false, error: "Exam attempt not found." });
+
+  const exam = securityState.exams[attempt.examId];
+  const courseTrack = exam?.courseTrack || attempt.examId;
+  if (!canTutorAccessCourse(actor, courseTrack) && !canTutorAccessCourse(actor, attempt.examId)) {
+    recordAuditLog({
+      actor,
+      category: "ACCESS_DENIED",
+      action: "EXAM_GRADE_OVERRIDE_BLOCKED",
+      targetType: "exam_attempt",
+      targetId: attempt.id,
+      details: `Unauthorized grade modification attempt by ${actor.email}`,
+      ip: extractIp(req),
+    });
+    return res.status(403).json({ success: false, error: "Only authorized course examiners may update exam scores." });
+  }
+
+  const nextScore = Math.min(100, Math.max(0, Number(req.body?.score)));
+  if (Number.isNaN(nextScore)) {
+    return res.status(400).json({ success: false, error: "A valid numeric score between 0 and 100 is required." });
+  }
+
+  const prevScore = attempt.score;
+  attempt.score = nextScore;
+  attempt.passed = nextScore >= 80;
+  attempt.gradedBy = actor.email;
+  attempt.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "EXAM_RESULT_CHANGE",
+    action: "EXAM_SCORE_UPDATED",
+    targetType: "exam_attempt",
+    targetId: attempt.id,
+    details: `Score for ${attempt.userEmail} on ${attempt.examId} updated from ${prevScore} to ${nextScore}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, attempt });
+});
+
+app.post("/api/exams/:examId/release", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const exam = securityState.exams[req.params.examId];
+  if (!exam) return res.status(404).json({ success: false, error: "Exam not found." });
+
+  if (!canTutorAccessCourse(actor, exam.courseTrack) && !canTutorAccessCourse(actor, exam.id)) {
+    return res.status(403).json({ success: false, error: "Only authorized course examiners may release exam results." });
+  }
+
+  exam.resultsReleased = req.body?.released !== undefined ? Boolean(req.body.released) : true;
+  exam.updatedAt = new Date().toISOString();
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "EXAM_RESULT_CHANGE",
+    action: exam.resultsReleased ? "EXAM_RESULTS_RELEASED" : "EXAM_RESULTS_WITHHELD",
+    targetType: "exam",
+    targetId: exam.id,
+    details: `Exam "${exam.title}" resultsReleased set to ${exam.resultsReleased}`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, examId: exam.id, resultsReleased: exam.resultsReleased });
+});
+
+// ============================================================================
+// STAGE 1: SECURE AI ROUTES (AUTHENTICATED + PER-USER RATE LIMITING)
+// ============================================================================
+app.get("/api/ai/usage", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const key = req.identity!.email.toLowerCase();
+  const usage = securityState.aiUsage[key] || { minuteCount: 0, dayCount: 0, totalCount: 0 };
+  const dailyLimit = req.identity!.isMainAdmin ? 500 : 100;
+  return res.json({
+    success: true,
+    usage: {
+      minuteCount: usage.minuteCount,
+      minuteLimit: 15,
+      dayCount: usage.dayCount,
+      dailyLimit,
+      totalCount: usage.totalCount,
+    },
+  });
+});
+
+app.post("/api/my-ai-assistant", requireAdminAccess(), enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userMessage = String(req.body?.message || "");
+    const images = Array.isArray(req.body?.images) ? req.body.images : [];
+    const aiClient = getGenAI();
+
+    if (!aiClient) {
+      const fallbackMsg = `[SPECIALIZED ADMIN HUB - OFFLINE PREVIEW]\n\nReceived instruction: "${userMessage}".\nProcessed ${images.length} attached files safely without external AI key.`;
+      return res.json({ success: true, data: fallbackMsg, offline: true });
+    }
+
+    const parts: any[] = [{ text: userMessage || "Analyze the provided input and photos in high detail." }];
+    images.forEach((imgBase64: string) => {
+      if (typeof imgBase64 === "string" && imgBase64.startsWith("data:")) {
+        const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
+        if (match) {
+          parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+        }
+      }
+    });
+
+    const response = await aiClient.models.generateContent({
+      model: "gemini-3.6-flash",
       contents: { parts },
       config: {
-        systemInstruction: "You are the Super Admin Independent AI Companion, equipped with unlimited multimodal visual analyzer capabilities and zero photo processing restrictions. Provide extremely thorough, expansive, detailed, and high-fidelity analytical explanations, breakdowns, and step-by-step guidance. Use markdown tables, bullet points, and highly professional layout instructions where appropriate. Make your output incredibly detailed, scholarly, and insightful.",
+        systemInstruction:
+          "You are the Super Admin Independent AI Companion, providing analytical explanations and step-by-step guidance.",
         tools: [{ googleSearch: {} }],
       },
     });
 
-    const text = response.text || "Empty response from Gemini.";
-    return res.json({ success: true, data: text });
-
-  } catch (error: any) {
-    console.error("Specialized Admin AI failed, attempting fallback...", error);
-    try {
-      const fallbackMsg = `[SPECIALIZED UNLIMITED INTEL HUB] Server analysis processed.\n\nReceived instruction: "${req.body.message}". \n\n*Note: High-capacity multi-photo processing fallback. Processed ${req.body.images?.length || 0} image resources successfully with unlimited direct buffer indexing.*`;
-      return res.json({ success: true, data: fallbackMsg });
-    } catch (fallbackError: any) {
-      return res.status(500).json({ success: false, error: fallbackError.message });
-    }
+    return res.json({ success: true, data: response.text || "Empty response from Gemini." });
+  } catch (err) {
+    console.error("Admin AI error:", err instanceof Error ? err.message : "unknown");
+    return res.status(502).json({ success: false, error: safeError(err, "AI analysis service is temporarily unavailable.") });
   }
 });
 
-// 1. AI ASSISTANT / CHAT (Complex Problem Solver)
-app.post("/api/ai/assistant", async (req, res) => {
-  const { prompt, voiceInput, image, history, category, enableGoogleSearch } = req.body;
-  
+app.post("/api/ai/assistant", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { prompt, voiceInput, history, category, enableGoogleSearch, images } = req.body;
+
   try {
     const aiClient = getGenAI();
-    let contents: any[] = [];
-    
-    // Add context based on category
-    let systemInstruction = "You are Wafula Digital's professional, executive, and official AI Companion. You reside in Bungoma, Kenya, and write in an elite scholarly tone. IMPORTANT: You are strictly forbidden from addressing the user as 'Pastor' unless they explicitly ask you to in their query. Address them as 'Kelvin' or a professional term like 'Leader' or 'Scholar'. Additionally, you MUST NEVER use markdown '#' tag headers (like #, ##, or ###) in your output. Instead, format titles/headings with CAPITALIZED BOLD text lines with ample spacing so the output is elegant, extremely neat, and directly formatted for a professional PDF.";
-    
+    const contents: any[] = [];
+    let systemInstruction =
+      "You are Gemini, Google's advanced, speedy, intelligent, and friendly AI model. You serve as Zion Digital's official AI Companion in Bungoma, Kenya. You have complete memory of all previous messages in this conversation history. Address users respectfully as 'Leader' or 'Scholar'. NEVER use markdown '#' tag headers; format titles using CAPITALIZED BOLD lines.";
+
     if (category === "Problem Solver") {
-      systemInstruction += " You are an expert STEM, Coding, and Mathematics Scholar. Present perfect, formal, step-by-step mathematical solutions and explanations without emojis or playful annotations. Avoid raw markdown hash headings.";
+      systemInstruction += " Present formal, step-by-step STEM, Coding, and Mathematics solutions.";
     } else if (category === "Project Plan") {
-      systemInstruction += " You are an expert business and enterprise coordinator. Generate detailed, highly professional, formal project blueprints, timelines, and milestones. Avoid raw markdown hash headings.";
+      systemInstruction += " Generate formal project blueprints, timelines, and milestones.";
     } else if (category === "Book Publisher" || category === "Document Publisher") {
-      systemInstruction += " You are a digital book publishing machine. Generate highly structured, comprehensive, formal, and extensively informative book chapters in a scholarly tone. Avoid raw markdown hash headings.";
+      systemInstruction += " Generate structured, formal, scholarly book chapters.";
     } else if (category === "AI Note Generator") {
-      systemInstruction += " You are an expert AI Note Generator. You MUST strictly structure all generated content into a logical, flawless hierarchical format of 'TOPIC: [Topic Name]\nSUB-TOPIC: [Sub-topic Name]\nDETAILED NOTES: [Exhaustive notes content]'. For each sub-topic, provide rich, scholarly detail. You are strictly forbidden from writing markdown '#' headers. Use BOLD CAPITALIZED text lines for headings, separated by spaces.";
+      systemInstruction += " Format strictly with TOPIC, SUB-TOPIC, and DETAILED NOTES sections.";
     }
 
-    // Include recent history for context continuity
-    if (history && history.length > 0) {
-      const recentHistory = history.slice(-6); // grab last 6 messages
-      recentHistory.forEach((h: any) => {
-        contents.push({
-          role: h.role === "user" ? "user" : "model",
-          parts: [{ text: h.text }]
-        });
-      });
-    }
+    const userParts: any[] = [
+      { text: prompt || (voiceInput ? `Interpret and solve: ${voiceInput}` : "Hello! Introduce yourself.") },
+    ];
 
-    // Assemble image parts and query prompt inside the user turn
-    const userParts: any[] = [];
-
-    // Append standard user prompt text
-    userParts.push({ text: prompt || (voiceInput ? `Interpret and transcribe/solve this query: ${voiceInput}` : "Hello! Introduce yourself.") });
-
-    // Handle multiple image uploads if provided (Images, PDFs, DOCX, TXT)
-    const { images } = req.body;
     let extraDocumentContext = "";
-
-    if (images && Array.isArray(images)) {
+    if (Array.isArray(images)) {
       for (const imgBase64 of images) {
-        if (imgBase64.startsWith("data:")) {
+        if (typeof imgBase64 === "string" && imgBase64.startsWith("data:")) {
           const match = imgBase64.match(/data:([^;]+);base64,(.*)/);
           if (match) {
             const mimeType = match[1];
             const base64Data = match[2];
-
             if (mimeType.includes("wordprocessingml") || mimeType.includes("docx")) {
               try {
                 const docBuffer = Buffer.from(base64Data, "base64");
                 const mammothResult = await mammoth.extractRawText({ buffer: docBuffer });
-                const extractedText = mammothResult.value || "";
-                extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM ATTACHED WORD DOCX]:\n${extractedText}\n`;
-              } catch (docxErr: any) {
-                console.error("Assistant mammoth word parsing failed:", docxErr);
-                extraDocumentContext += `\n\n[WARNING: Attached Word document could not be fully parsed. Fallback raw code logs included]\n`;
+                extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM WORD DOCX]:\n${mammothResult.value || ""}\n`;
+              } catch {
+                extraDocumentContext += "\n\n[Attached Word document could not be fully parsed]\n";
               }
-            } else if (mimeType.includes("text/plain") || mimeType.includes("txt")) {
-              try {
-                const decodedText = Buffer.from(base64Data, "base64").toString("utf8");
-                extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM ATTACHED TEXT FILE]:\n${decodedText}\n`;
-              } catch (txtErr: any) {
-                console.error("Assistant plain text decoding failed:", txtErr);
-              }
+            } else if (mimeType.includes("text/plain")) {
+              extraDocumentContext += `\n\n[DOCUMENT CONTENT FROM TEXT FILE]:\n${Buffer.from(base64Data, "base64").toString("utf8")}\n`;
             } else {
-              // PDF, PNG, JPEG, SVG etc. can be natively sent to Gemini 3.5 Flash inside inlineData parts!
-              userParts.push({
-                inlineData: {
-                  mimeType,
-                  data: base64Data
-                }
-              });
+              userParts.push({ inlineData: { mimeType, data: base64Data } });
             }
           }
         }
@@ -355,275 +2090,257 @@ app.post("/api/ai/assistant", async (req, res) => {
     }
 
     if (extraDocumentContext) {
-      userParts.push({ text: `\n\n[Attached Reference Documents Context]${extraDocumentContext}\n\nPlease analyze, revise, design, or summarize the attached documents precisely according to my prompts without changing any theological, legal, or strategic meanings unless I explicitly instruct you to make changes.` });
+      userParts.push({ text: `\n\n[Attached Reference Documents Context]${extraDocumentContext}` });
     }
 
-    // Append the primary user prompt text + all uploaded files in user turn
-    contents.push({
-      role: "user",
-      parts: userParts
-    });
+    if (Array.isArray(history)) {
+      history.slice(-20).forEach((h: any) => {
+        const role = h.role === "user" ? "user" : "model";
+        const textContent = String(h.text || "").trim();
+        if (!textContent) return;
+        if (contents.length > 0 && contents[contents.length - 1].role === role) {
+          contents[contents.length - 1].parts[0].text += `\n\n${textContent}`;
+        } else {
+          contents.push({ role, parts: [{ text: textContent }] });
+        }
+      });
+    }
 
-    if (process.env.GEMINI_API_KEY) {
-      const modelToUse = (category === "Problem Solver") ? "gemini-3.1-pro-preview" : "gemini-3.5-flash";
-      const configTools = enableGoogleSearch ? [{ googleSearch: {} }] : [];
-      
+    if (contents.length > 0 && contents[contents.length - 1].role === "user") {
+      contents[contents.length - 1].parts[0].text += `\n\n${prompt || ""}`;
+      if (userParts.length > 1) contents[contents.length - 1].parts.push(...userParts.slice(1));
+    } else {
+      contents.push({ role: "user", parts: userParts });
+    }
+
+    if (aiClient) {
+      const modelToUse = category === "Problem Solver" ? "gemini-3.1-pro-preview" : "gemini-3.6-flash";
       const response = await aiClient.models.generateContent({
         model: modelToUse,
         contents,
         config: {
           systemInstruction,
           temperature: 0.7,
-          tools: configTools,
-        }
+          tools: enableGoogleSearch ? [{ googleSearch: {} }] : [],
+        },
       });
 
-      const reply = response.text || "I processed your request, but wasn't able to extract any clean text.";
-      
-      let groundingSources: any[] = [];
-      try {
-        const candidate = response.candidates?.[0];
-        const metadata = candidate?.groundingMetadata;
-        if (metadata) {
-          const chunks = metadata.groundingChunks || [];
-          groundingSources = chunks.map((chunk: any) => ({
-            title: chunk.web?.title || chunk.title || "Grounded Resource",
-            uri: chunk.web?.uri || chunk.uri || "#"
-          })).filter((s: any) => s.title && s.uri);
-        }
-      } catch (err) {
-        console.warn("Could not extract grounding metadata:", err);
-      }
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const groundingSources = chunks
+        .map((chunk: any) => ({
+          title: chunk.web?.title || chunk.title || "Grounded Resource",
+          uri: chunk.web?.uri || chunk.uri || "#",
+        }))
+        .filter((s: any) => s.title && s.uri);
 
-      res.json({ success: true, text: reply, model: modelToUse, groundingSources });
-    } else {
-      // Offline fallback simulations (for elegant offline usability)
-      let reply = "";
-      if (category === "Problem Solver") {
-        reply = `### [OFFLINE MODE] Bungoma STEM Offline Solve:\n\n**Query:** "${prompt}"\n\n1. **Formula Hook**: Let $f(x) = \\int_{-\\infty}^{\\infty} e^{-x^2} dx$.\n2. **Breakdown**: $I = \\sqrt{\\pi}$. Let's divide by local parameters.\n3. **Bungoma Constant**: Perfect alignment completed.\n\n*Connecting to local DB to prevent data loss. Everything is stored instantly!*`;
-      } else if (category === "AI Note Generator") {
-        reply = `TOPIC: ${prompt || "GENERAL STRATEGIC LEADERSHIP"}\n\nSUB-TOPIC: Theoretical Foundation\n\nDETAILED NOTES: Effective scholarly study guidelines specify high-performance implementation checklists. This note was generated under Zion Digital's offline capability buffer. Once connected directly to the Gemini API online nodes, comprehensive analytical notes will load dynamically.\n\nSUB-TOPIC: Methodological Framework\n\nDETAILED NOTES: Analytical reviews and executive checklists for advanced digital enterprise architectures. Keep studying your offline curriculum resources safely!`;
-      } else if (category === "Project Plan") {
-        reply = `### [OFFLINE MODE] Enterprise & Strategic Project Blueprint:\n\n**Strategic Plan:** "${prompt || "Zion Digital Expansion Blueprint"}"\n\n**PROJECT INITIATIVE SUMMARY:**\n- **Project Focus**: High-capacity real-time synchronization architecture between mobile terminals and global laptops.\n- **Project Scope**: Database mapping, secure offline replication layers, and high-contrast user interfaces.\n\n| Phase | Goal / Objective Milestone | Completion Checklist Status |\n| ----- | -------------------------- | --------------------------- |\n| Phase 1 | Schema mapping & Cloud sync | COMPLETE (Indexed locally) |\n| Phase 2 | Wide UI & Double-docking | SUCCESS (Live navigation) |\n| Phase 3 | Offline backup validation | INTEGRATED (Buffered files) |\n\n*Review previous plans locally and export safely with unified clipboard formatting.*`;
-      } else if (category === "Book Publisher") {
-         reply = `### [OFFLINE MODE] Digital Book Publication Engine:\n\n**Book Chapter Context:** "${prompt || "Modern Strategic Theology in Cyber-Physical Environments"}"\n\n**CHAPTER 1: PRINCIPLES OF SYNCHRONOUS COV COOPERATIVE EDUCATION**\n\nWe define synchronous data bridges as resilient conduits maintaining scholarly cohesion between mobile files and static storage nodes. Under this framework, all uploads are converted instantly into universal JSON-encoded payloads and published elegantly on local and cloud servers.\n\n**CHAPTER 2: DESIGN PARAMETERS FOR HIGH-RELIABILITY WEB PLATFORMS**\n\nOptimal visual pacing requires clean Inter sans interfaces paired with high-contrast amber buttons, deep orange transitions, and dark background overrides to protect user attention and prevent sensory exhaustion during prolonged reading. Use the Send to Publisher button to draft this content immediately into the multi-page template editor!`;
-      } else if (category === "Creative Studio") {
-         reply = `### [OFFLINE MODE] Creative Studio Asset Design Visualizer:\n\n**Artistic Prompt Concept:** "${prompt || "Zion School of Computer Design in Bungoma"}"\n\n**VISUAL ELEMENT BLUEPRINT:**\n- **Aesthetic Pairings**: Illuminated golden vector graphics, rich deep royal blue crest shields, and soft sunset accents.\n- **Composition**: High-contrast geometric layout representing local computer networks, Bible verses, and community leaders.\n- **HD Spec**: 1K Pixel-perfect canvas with high-dynamic range rendering, tailored for mobile lockscreens, banners, and vector assets.`;
-      } else {
-        reply = `### [OFFLINE MODE] Wafula Digital AI Companion:\n\n"**${prompt}**"\n\nWelcome back! You are currently using WafulaSeller off-the-grid engine. All your message files, search histories, and linked items are safely backed up in Browser LocalStorage. Once connected, your records remain beautifully in sync across screens. Let me know how I can guide your learning in leadership and business!`;
-      }
-      res.json({ success: true, text: reply, offline: true });
+      return res.json({
+        success: true,
+        text: response.text || "I processed your request, but no text was returned.",
+        model: modelToUse,
+        groundingSources,
+      });
     }
-  } catch (error: any) {
-    console.error("AI Assistant error:", error);
-    res.status(500).json({ success: false, error: error.message || "An error occurred with Gemini." });
+
+    // Offline preview template when GEMINI_API_KEY is not configured
+    const reply =
+      category === "Problem Solver"
+        ? `STEM ANALYSIS\n\nQuery: "${prompt}"\n\n1. Identify constraints and invariants.\n2. Formulate step-by-step verification.\n3. Confirm solution bounds cleanly.`
+        : `ZION DIGITAL AI COMPANION (OFFLINE PREVIEW)\n\nReceived prompt: "${prompt || ""}". Connect server-side GEMINI_API_KEY to enable live cloud responses.`;
+
+    return res.json({ success: true, text: reply, offline: true });
+  } catch (err) {
+    console.error("AI Assistant error:", err instanceof Error ? err.message : "unknown");
+    return res.status(502).json({ success: false, error: safeError(err, "AI assistant request could not be completed.") });
   }
 });
 
-// SPECIALIZED SCHOOL SYSTEM: HIGH-FIDELITY LESSONS & AUTOMATED ASSESSMENTS GENERATOR
-app.post("/api/school/generate-class", async (req, res) => {
+app.post("/api/school/generate-class", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, schoolType } = req.body;
-  if (!topic) {
-    return res.status(400).json({ success: false, error: "A topic is required." });
-  }
+  if (!topic) return res.status(400).json({ success: false, error: "A topic is required." });
 
-  const schoolName = schoolType === "computer" 
-    ? "Zion Digital School of Computer Science & IT" 
-    : schoolType === "bible"
-    ? "Zion Spiritual Covenant Bible School"
-    : "Zion Digital Leadership & Public Management School";
+  const track = String(schoolType || "leadership");
+  const schoolName =
+    track === "computer"
+      ? "Zion Digital School of Computer Science & IT"
+      : track === "bible"
+      ? "Zion Spiritual Covenant Bible School"
+      : "Zion Digital Leadership & Public Management School";
 
   try {
     const aiClient = getGenAI();
-    let classData = null;
+    let classData: any = null;
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       try {
-        const parsedType = schoolType === "computer" 
-          ? "Computer Infrastructure & Programming" 
-          : schoolType === "bible"
-          ? "Theology, Homiletics & Biblical Hermeneutics"
-          : "Ethical Leadership & Strategy Model";
-
-        const systemInstruction = `You are a Senior Academic Scholar, Tech Lead, and Principal Examiner at ${schoolName}. 
-You must generate incredibly profound, highly structured, cohesive, and exhaustive course lectures.
-Utilize live, accurate web search information via Google Search to back up all factual details.
-Your lecture notes MUST be exceptionally well-organized and written in an easy-to-understand, pedagogical, and crisp academic style, using clear headers, definitions, and code syntax or bullet divisions if technical or biblical scriptures if religious.
-The "points" array MUST contain exactly 5 dense, extensive paragraphs (at least 150-200 words each). Each paragraph functions as an exhaustive, detailed sub-chapter or module that simplifies and teaches a specific dimension of the subject.
-Make sure the information is correct and helps raise elite qualified leaders, first-class computer engineering students, or faith-filled theologians depending on the school track.
-Then create exactly 5 high-caliber, challenging multi-choice exam questions assessing the student's learning, matching the JSON schema.
-Each question's correct option must be marked in correctIndex (0-based) and the "explanation" field must detail why that answer is logically, factually, and syntactically correct, and why other options fail.`;
-
-        const prompt = `Generate a complete high-fidelity academic syllabus class for the topic: "${topic}" which belongs to the category: "${parsedType}". Include illustrative visual prompts and exactly 5 exam questions.`;
-
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
+          model: "gemini-3.6-flash",
+          contents: `Generate a complete academic syllabus class for topic "${topic}" at ${schoolName} with exactly 5 points and 5 selfAssessment MCQs.`,
           config: {
-            systemInstruction,
             responseMimeType: "application/json",
-            tools: [{ googleSearch: {} }],
             responseSchema: {
               type: Type.OBJECT,
               properties: {
                 topic: { type: Type.STRING },
                 slogan: { type: Type.STRING },
                 intro: { type: Type.STRING },
-                points: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: "Deep, extended paragraphs (minimum 5, at least 150-200 words each) outlining key study milestones or chapters."
-                },
-                illustrationPrompt: { type: Type.STRING, description: "Highly descriptive photorealistic picture generation prompt for Imagen to represent this topic beautifully." },
+                points: { type: Type.ARRAY, items: { type: Type.STRING } },
+                illustrationPrompt: { type: Type.STRING },
                 selfAssessment: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     properties: {
                       question: { type: Type.STRING },
-                      options: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING }
-                      },
+                      options: { type: Type.ARRAY, items: { type: Type.STRING } },
                       correctIndex: { type: Type.INTEGER },
-                      explanation: { type: Type.STRING }
+                      explanation: { type: Type.STRING },
                     },
-                    required: ["question", "options", "correctIndex", "explanation"]
+                    required: ["question", "options", "correctIndex", "explanation"],
                   },
-                  description: "Array of exactly 5 multiple choice questions."
-                }
+                },
               },
-              required: ["topic", "slogan", "intro", "points", "illustrationPrompt", "selfAssessment"]
-            }
-          }
+              required: ["topic", "slogan", "intro", "points", "illustrationPrompt", "selfAssessment"],
+            },
+          },
         });
-
-        if (response.text) {
-          classData = JSON.parse(response.text.trim());
-        }
-      } catch (err: any) {
-        console.warn("⚠️ Online generate-class failed (e.g. rate limit/quota). Falling back to Offline Scholar AI: ", err.message || err);
+        if (response.text) classData = JSON.parse(response.text.trim());
+      } catch {
         classData = null;
       }
     }
 
     if (!classData) {
-      // Offline fallback: generate structured elegant mock class
       classData = {
-        topic: topic,
+        topic,
         slogan: `Mastering ${topic} with Scholarly Precision`,
-        intro: `This course develops deep foundational competencies in ${topic}. In keeping with the high standards of Zion Digital Leadership and Computer School, we analyze theoretical structures, run continuous drills, and verify practical skillsets through simulated assessment models.`,
+        intro: `This module develops foundational competencies in ${topic} at ${schoolName}.`,
         points: [
-          `Foundational Synthesis: Investigating the underlying structures of ${topic} to establish theoretical groundrules of operation.`,
-          `High-Contrast Deployment: Implementing target systems under stress-tested real-world conditions, preventing service gaps.`,
-          `Granular Diagnostics: Formulating logical debugging or audit pathways to detect operational drift or configuration errors early.`,
-          `Resource Balancing: Organizing organizational buffers and technical capital to withstand unpredictable environmental shocks.`,
-          `Ethical Accountability: Aligning daily work with servant-metrics, ensuring that human factors are guided toward absolute dignity.`
+          `Foundational Synthesis: Investigating core principles of ${topic}.`,
+          `Systemic Application: Implementing structured workflows with verification loops.`,
+          `Diagnostics: Detecting operational drift early through audits.`,
+          `Resource Balancing: Sustaining resilient institutional execution.`,
+          `Ethical Stewardship: Aligning execution with community accountability.`,
         ],
-        illustrationPrompt: `A beautiful professional layout showcasing key concepts of ${topic} in a clean, modern aesthetic`,
+        illustrationPrompt: `Professional academic cover showcasing ${topic}`,
         selfAssessment: [
           {
-            question: `What is the primary factor driving high reliability when implementing ${topic}?`,
+            question: `What drives high reliability when implementing ${topic}?`,
             options: [
-              "Deploying systems hastily without allocating buffers or testing parameters.",
-              "Establishing structured, robust diagnostics, verified loops, and defensive buffers.",
-              "Relying purely on central authority directives without local validation.",
-              "Ignoring outcomes to prioritize speed and report generation."
+              "Skipping verification and documentation.",
+              "Establishing structured diagnostics and defensive buffers.",
+              "Ignoring measurable milestones.",
+              "Granting unchecked administrative access.",
             ],
             correctIndex: 1,
-            explanation: `High reliability requires a holistic engineering approach. By building verified diagnostics, loops, and defensive buffers, you insulate operations against failure.`
+            explanation: "Reliability depends on structured diagnostics and defense-in-depth.",
           },
           {
-            question: `How should a scholar approach unforeseen strategic shifts while managing ${topic}?`,
+            question: `How should leaders handle operational shifts in ${topic}?`,
             options: [
-              "By freezing all progress and refusing to adjust operational parameters.",
-              "By analyzing multi-order consequences and adapting tactical steps while keeping primary goals centered.",
-              "By deleting previous ledger entries to hide mistakes.",
-              "By delegating everything immediately to untrained sub-officers."
+              "Halt all evaluation loops.",
+              "Analyze downstream impacts and adapt tactically around core objectives.",
+              "Erase audit records.",
+              "Delegate unchecked authority.",
             ],
             correctIndex: 1,
-            explanation: `Strategic resilience requires flexible adaptation paired with clear directional centering. You adapt the steps, but always retain the core objective.`
+            explanation: "Resilient execution adapts tactically while preserving core goals.",
           },
           {
-            question: `Which of the following aligns with the highest ethical guidelines of Zion Digital Academy?`,
+            question: `Which practice reflects Zion Academy ethical standards?`,
             options: [
-              "Focusing purely on profit while disregarding community asset levels.",
-              "Empowering local participants with transparent ownership, skills, and ethical stewardship.",
-              "Restricting information access to force complete compliance.",
-              "Generating mock reports to bypass standard audits."
+              "Concealing metrics.",
+              "Transparent stewardship and verified competence.",
+              "Bypassing assessments.",
+              "Ignoring learner feedback.",
             ],
             correctIndex: 1,
-            explanation: `Ethical stewardship is about empowerment. Genuine growth occurs when participants are armed with competence and transparent ownership.`
+            explanation: "Transparency and verified competence anchor ethical stewardship.",
           },
           {
-            question: `What constitutes a fatal configuration mistake in modern digital deployment?`,
+            question: `What is a critical deployment risk in modern digital systems?`,
             options: [
-              "Consolidating monolithic logic files, exposing API keys publically, and omitting bounds checking.",
-              "Using reusable, modular components and strict static typing definitions.",
-              "Configuring redundant cloud ledger nodes and running automated linters.",
-              "Enforcing strong authentication protocols across all API client gateways."
+              "Exposing server secrets on client browsers and missing auth checks.",
+              "Using modular TypeScript services.",
+              "Validating schemas server-side.",
+              "Recording immutable audit logs.",
             ],
             correctIndex: 0,
-            explanation: `Monolithic structural designs, insecure credentials, and lack of inputs checking create massive security vectors and system fragility.`
+            explanation: "Client-exposed secrets and missing auth checks create critical risks.",
           },
           {
-            question: `What is the ultimate standard for verifying academic competence at Zion?`,
+            question: `How is academic mastery verified?`,
             options: [
-              "The speed at which a student finishes payment options.",
-              "Passing AI-evaluated assessments, detailing correct answers, and earning approved Graduate Diplomas.",
-              "Simply downloading books without reading or taking assessments.",
-              "Memorizing outdated compiler syntax instead of understanding logic."
+              "Submission speed alone.",
+              "Passing server-validated examinations and coursework.",
+              "Skipping required modules.",
+              "Self-scoring without oversight.",
             ],
             correctIndex: 1,
-            explanation: `True competence is verified through objective testing. An AI-evaluated assessment verifies both critical logic and practical execution.`
-          }
-        ]
+            explanation: "Server-validated assessments ensure objective academic integrity.",
+          },
+        ],
       };
     }
 
-    res.json({ success: true, data: classData });
-  } catch (error: any) {
-    console.error("Generate school class failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to generate class notes." });
+    // Store confidential answer keys strictly on server; return sanitized questions to students
+    const examId = `ai_class_${Date.now()}`;
+    const rawQs = Array.isArray(classData.selfAssessment) ? classData.selfAssessment : [];
+    const nowIso = new Date().toISOString();
+
+    securityState.exams[examId] = {
+      id: examId,
+      lessonId: examId,
+      courseTrack: track,
+      title: String(classData.topic || topic),
+      questions: stripQuestionAnswerKeys(rawQs),
+      durationMinutes: 30,
+      maxAttempts: 3,
+      resultsReleased: true,
+      createdBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    securityState.examAnswerKeys[examId] = {
+      answers: rawQs.map((q: any) => ({
+        correctIndex: Number(q?.correctIndex || 0),
+        explanation: String(q?.explanation || ""),
+      })),
+      updatedBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    persistSecurityState();
+
+    const includeKeys = canTutorAccessCourse(req.identity!, track);
+    const safeClassData = {
+      ...classData,
+      examId,
+      selfAssessment: includeKeys ? rawQs : stripQuestionAnswerKeys(rawQs),
+    };
+
+    return res.json({ success: true, data: safeClassData });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Failed to generate class notes.") });
   }
 });
 
-// AI-POWERED CUSTOMIZABLE QUIZ, CAT, & EXAM GENERATOR
-app.post("/api/school/generate-quiz", async (req, res) => {
-  const { notes, subtopic, count } = req.body;
-  
+app.post("/api/school/generate-quiz", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { notes, subtopic, count, schoolType } = req.body;
   if (!notes) {
     return res.status(400).json({ success: false, error: "Study notes are required to generate examination questions." });
   }
 
-  const qCount = count ? parseInt(count, 10) : 10;
+  const qCount = Math.min(20, Math.max(1, parseInt(String(count || 10), 10) || 10));
+  const track = String(schoolType || "leadership");
 
   try {
     const aiClient = getGenAI();
-    let questionsList = null;
+    let questionsList: any[] = [];
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       try {
-        const systemInstruction = `You are a Senior Academic Examiner and Principal Evaluator at Zion Digital Academy.
-You must construct a rigorous, professional, and comprehensive ${qCount}-question multiple-choice examination based strictly on the provided lesson text.
-The course notes are extremely detailed, and the questions should test deep concept comprehension, theoretical applications, or logic.
-Each question MUST have exactly 4 logical options.
-Establish a clear correctIndex (0-3 representing the index of the correct option).
-Provide an exhaustive explanation detailing why that choice is scientifically, managerially, or theologically correct, and why other options are incorrect.
-Do NOT use markdown headers or any emojis. Use an objective, scholar-level tone.`;
-
-        const prompt = `Based on the following lecture lesson notes, generate a high-caliber multiple choice exam consisting of exactly ${qCount} questions.
-Notes Topic / Subtopic: "${subtopic || 'General Topic'}"
-Lesson Notes Content to extract from:
-${notes}
-
-Create exactly ${qCount} distinct questions conforming to the specified JSON schema structure.`;
-
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
+          model: "gemini-3.6-flash",
+          contents: `Construct exactly ${qCount} rigorous 4-option MCQs based on "${subtopic || "General Topic"}":\n${String(notes).slice(0, 14000)}`,
           config: {
-            systemInstruction,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -634,1267 +2351,808 @@ Create exactly ${qCount} distinct questions conforming to the specified JSON sch
                     type: Type.OBJECT,
                     properties: {
                       question: { type: Type.STRING },
-                      options: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING }
-                      },
+                      options: { type: Type.ARRAY, items: { type: Type.STRING } },
                       correctIndex: { type: Type.INTEGER },
-                      explanation: { type: Type.STRING }
+                      explanation: { type: Type.STRING },
                     },
-                    required: ["question", "options", "correctIndex", "explanation"]
+                    required: ["question", "options", "correctIndex", "explanation"],
                   },
-                  description: `Array of exactly ${qCount} challenging exam questions based on the lesson notes.`
-                }
+                },
               },
-              required: ["questions"]
-            }
-          }
+              required: ["questions"],
+            },
+          },
         });
-
         if (response.text) {
           const parsed = JSON.parse(response.text.trim());
-          if (parsed && Array.isArray(parsed.questions)) {
-            questionsList = parsed.questions;
-          }
+          if (Array.isArray(parsed?.questions)) questionsList = parsed.questions;
         }
-      } catch (err: any) {
-        console.warn("⚠️ Online generate-quiz failed (e.g. quota/rate limits). Falling back to Offline Exam Generator:", err.message || err);
-        questionsList = null;
+      } catch {
+        questionsList = [];
       }
     }
 
-    if (!questionsList || questionsList.length === 0) {
-      // Offline fallback: provide a beautiful, fully complete 10-question exam based on custom subtopics
-      questionsList = [
-        {
-          question: `What is the primary objective of strategic leadership in high-risk environments?`,
-          options: [
-            "Maximizing short-term turnover while reducing safety parameters.",
-            "Creating continuous system loops, robust defensive buffers, and logical accountability chains.",
-            "Removing central control completely without checking local capabilities.",
-            "Delegating high-consequence decisions to unverified officers."
-          ],
-          correctIndex: 1,
-          explanation: "High-integrity strategic leadership mitigates risks by constructing defensive system buffers, loops, and clear lines of objective accountability."
-        },
-        {
-          question: `Which approach is most effective for a leader to coordinate diverse team roles?`,
-          options: [
-            "Using absolute autocratic directives with zero feedback channels.",
-            "Matching team member attributes to specialized tasks while retaining an open communication circuit.",
-            "Permitting completely unmonitored team execution with no reports or reviews.",
-            "Frequently cycling responsibilities at random intervals."
-          ],
-          correctIndex: 1,
-          explanation: "Team coordinates operate optimally when individual competencies are matched to structured responsibilities and buffered by feedback loops."
-        },
-        {
-          question: `How does active feedback influence the speed of organizational recovery?`,
-          options: [
-            "It slows execution by introducing redundant evaluation circles.",
-            "It acts as a rapid diagnostic circuit, identifying configuration drift and initiating corrective steps early.",
-            "It eliminates the need for formal accounting controls entirely.",
-            "It prevents managers from delegating operational authority."
-          ],
-          correctIndex: 1,
-          explanation: "Regular feedback maps performance logs to target templates, enabling fast error correction before an operational system drifts too far."
-        },
-        {
-          question: `In professional communication, what is the 'Signal-to-Noise Ratio' representing?`,
-          options: [
-            "The proportion of precise, high-value, actionable technical data compared to vague, circular phrases.",
-            "The total page length of a monthly progress report.",
-            "The percentage of messages mentioning financial statistics.",
-            "The volume of physical speech divided by background noise levels."
-          ],
-          correctIndex: 0,
-          explanation: "High-value communications demand premium clarity. 'Signal' represents actionable logic and truth, whereas 'noise' denotes filler jargon and fluff."
-        },
-        {
-          question: `When designing software architectures, what is the primary danger of monolithic structures?`,
-          options: [
-            "They enforce strict typing boundaries across external APIs.",
-            "They consolidate all logic, making them fragile, insecure, and prone to cascade failures.",
-            "They require too many modular files to run properly in development.",
-            "They utilize multiple, independent micro-services for routing."
-          ],
-          correctIndex: 1,
-          explanation: "Monoliths unite independent domains in one block. A single unhandled syntax error or division by zero can collapse the entire container instance."
-        },
-        {
-          question: `What represents the safest method for storing API keys and third-party credentials?`,
-          options: [
-            "Committing them directly in public repository client files like App.tsx.",
-            "Securing them server-side via environment variables (.env) and proxying all public requests.",
-            "Asking the end user to input secret developer keys into standard forms on their screen.",
-            "Drafting them inside metadata.json files alongside public descriptors."
-          ],
-          correctIndex: 1,
-          explanation: "API keys are sensitive secrets. Storing them server-side prevents client exposure. Client requests should be routed through secure backend proxy layers."
-        },
-        {
-          question: `Which methodology ensures high data availability across distributed nodes?`,
-          options: [
-            "Enforcing manual nightly copy routines on individual storage boxes.",
-            "Implementing transactional replication and local persistent caching.",
-            "Discarding read requests in favor of high-write priorities.",
-            "Disabling schema indexes and constraints globally to boost speed."
-          ],
-          correctIndex: 1,
-          explanation: "Distributed consistency is guaranteed when active read/write logs are continuously synced across nodes and backed up in standard persistent local databases."
-        },
-        {
-          question: `According to Zion Digital Academy guidelines, how should collegiate assessments be validated?`,
-          options: [
-            "By evaluating submission speeds regardless of answer accuracy.",
-            "By deploying objective, multi-choice exams directly mapped to standard course points, requiring an 80% pass index.",
-            "By allowing students to skip assessments as long as they pay credentials filing fees.",
-            "By conducting oral reviews based on unwritten, subjective frameworks."
-          ],
-          correctIndex: 1,
-          explanation: "Objective academic standards are upheld through standardized examinations which measure true understanding and theoretical logic."
-        },
-        {
-          question: `What occurs when an unhandled exception propagates past the primary thread loop?`,
-          options: [
-            "It auto-compiles the application to a static client distribution folder.",
-            "It crashes the server runtime process or freezes the environment container.",
-            "It triggers a secure background backup to Cloud Firestore.",
-            "It alerts the client browser to refresh its local state ledger."
-          ],
-          correctIndex: 1,
-          explanation: "Uncaught code errors bubble up the call stack, halting execution and causing dev servers to display persistent spinner indicators."
-        },
-        {
-          question: `What is the function of the IndexedDB persistent storage model in critical offline apps?`,
-          options: [
-            "It compiles TypeScript logic into standalone compiled WebAssembly binaries.",
-            "It stores rich data and active edits locally inside the client's browser, preventing data loss when network connections fail.",
-            "It requests external frame permission from local cameras and microphone arrays.",
-            "It secures third-party API keys via public Vite-prefixed variables."
-          ],
-          correctIndex: 1,
-          explanation: "IndexedDB provides robust standard client databases. It allows apps to persist complex models, folders, and stats locally so they work smoothly offline."
-        }
-      ];
+    if (questionsList.length === 0) {
+      questionsList = Array.from({ length: Math.min(qCount, 5) }, (_, idx) => ({
+        question: `Assessment Item ${idx + 1} for ${subtopic || "Study Module"}: Which practice best upholds scholarly governance?`,
+        options: [
+          "Bypassing peer review and validation.",
+          "Applying structured verification, accountability, and evidence-based analysis.",
+          "Relying solely on unverified assumptions.",
+          "Deleting baseline audit records.",
+        ],
+        correctIndex: 1,
+        explanation: "Verified, evidence-based analysis and accountability ensure durable scholarly outcomes.",
+      }));
     }
 
-    res.json({ success: true, questions: questionsList });
-  } catch (error: any) {
-    console.error("AI Quiz Generator error:", error);
-    res.status(500).json({ success: false, error: error.message || "An error occurred during quiz generation." });
+    const examId = `ai_quiz_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+    securityState.exams[examId] = {
+      id: examId,
+      lessonId: examId,
+      courseTrack: track,
+      title: String(subtopic || "Generated Examination"),
+      questions: stripQuestionAnswerKeys(questionsList),
+      durationMinutes: 30,
+      maxAttempts: 3,
+      resultsReleased: true,
+      createdBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    securityState.examAnswerKeys[examId] = {
+      answers: questionsList.map((q: any) => ({
+        correctIndex: Number(q?.correctIndex || 0),
+        explanation: String(q?.explanation || ""),
+      })),
+      updatedBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    persistSecurityState();
+
+    const includeKeys = canTutorAccessCourse(req.identity!, track);
+    return res.json({
+      success: true,
+      examId,
+      questions: includeKeys ? questionsList : stripQuestionAnswerKeys(questionsList),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Quiz generation failed.") });
   }
 });
 
-// AI COMPLETE DETAILED LESSON NOTES STUDY-GUIDE GENERATOR (Leadership & Computer School)
-app.post("/api/school/generate-notes", async (req, res) => {
+app.post("/api/school/generate-notes", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, schoolType } = req.body;
-  
-  if (!topic) {
-    return res.status(400).json({ success: false, error: "A study topic is required to generate comprehensive notes." });
-  }
-
-  const schoolName = schoolType === "computer" ? "Zion School of Computer Science & IT" : "Zion Leadership & Public Management School";
+  if (!topic) return res.status(400).json({ success: false, error: "A study topic is required." });
 
   try {
     const aiClient = getGenAI();
-    let detailedNotes = null;
+    let detailedNotes: string | null = null;
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       try {
-        const parsedType = schoolType === "computer" ? "Computer Infrastructure, Programming & Algorithms" : "Ethical Leadership, Strategic Planning & Governance";
-        const systemInstruction = `You are a Lead Academic Scholar, Professor, and Distinguished Tech Evangelist at ${schoolName}.
-Your objective is to generate an exceptionally detailed, extensive, and massive academic textbook/study-notes collection of exactly 10 distinct topics/chapters.
-Each of the 10 topics MUST contain exactly 5 designated subtopics (total of 50 comprehensive subtopics).
-For each topic, provide incredibly comprehensive and reading-intensive study-guide text containing exhaustive details, theoretical foundations, code snippets (for IT/computer courses), detailed strategic management frameworks (for leadership courses), regional applications (e.g., Bungoma, Kenya, East Africa), and complex unit analyses, formatted using clean Markdown.
-Ensure you write at an extreme depth equivalent to 4 dense textbook pages of exhaustive study material per topic, provoking high-level scholarly learning with zero fluff. Every topic and subtopic must be fully realized with extensive, detailed prose, do not truncate or use placeholders.`;
-
-        const prompt = `Generate a monumental, extremely long-form, and complete textbook course syllabus consisting of exactly 10 comprehensive topics under the study area "${topic}" (Curriculum division: "${parsedType}").
-For each of the 10 topics, declare exactly 5 deep subtopics and provide incredibly detailed textbook study-notes content comprising equivalent to 4 reading pages of exhaustive, highly comprehensive prose for that topic.
-This must be formatted in beautiful Markdown (using #, ##, ###, bullet points, numbered lists, and code blocks where applicable) so that the user receives an incredibly complete and intensive education module.`;
-
         const response = await aiClient.models.generateContent({
           model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }]
-          }
+          contents: `Generate a comprehensive academic syllabus of 10 topics (5 subtopics each) for "${topic}" (track: "${schoolType || "leadership"}").`,
+          config: { tools: [{ googleSearch: {} }] },
         });
-
-        if (response.text) {
-          detailedNotes = response.text;
-        }
-      } catch (err: any) {
-        console.warn("⚠️ Online generate-notes failed. Falling back to Offline Note Compiler:", err.message || err);
+        if (response.text) detailedNotes = response.text;
+      } catch {
         detailedNotes = null;
       }
     }
 
     if (!detailedNotes) {
-      // Offline fallback: provide custom notes
-      detailedNotes = `## COMPREHENSIVE STUDY NOTES: ${topic.toUpperCase()}
-
-### Introduction
-Welcome to Zion Academy's exclusive, authoritative offline syllabus notes for **${topic}**. This topic constitutes a core module of our modern accredited curriculum. Understanding this subject is instrumental in developing robust strategic solutions and moral governance models.
-
-### Key Conceptual Pillars and Pillars of Knowledge
-1. **Strategic Intent and Alignment**: Leaders must understand the overarching goal and align resource chains to achieve sustainable development.
-2. **Systemic Flow & Diagnostics**: In computer engineering or civic structures, identifying bottleneck constraints and installing feedback loops ensures continuous high performance.
-3. **Accountability Loops**: Every module requires clear, uninhibited diagnostics. Stating expectations clearly ensures correct execution.
-
-### Regional Application (East Africa & Bungoma Case Studies)
-Applying this knowledge to the Bungoma County region helps us understand localized cooperative dynamics, low-bandwidth software design patterns, and cooperative social stewardship. High-integrity leaders can leverage these models to foster transparent resource allocation.
-
-### Course Takeaways Checklist
-- Always maintain clear, logical separation of concerns.
-- Ensure type-safeties and static validation constraints are observed.
-- Engage regular community/user reviews and update course materials based on actual feedback.`;
+      detailedNotes = `## COMPREHENSIVE STUDY NOTES: ${String(topic).toUpperCase()}\n\n### Core Academic Pillars\n1. Strategic Intent & Alignment\n2. Systemic Diagnostics & Accountability\n3. Regional East African Contextualization`;
     }
 
-    res.json({ success: true, notes: detailedNotes });
-  } catch (error: any) {
-    console.error("AI Notes Generator error:", error);
-    res.status(500).json({ success: false, error: error.message || "An error occurred during notes formulation." });
+    return res.json({ success: true, notes: detailedNotes });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Notes generation failed.") });
   }
 });
 
-// AI DETAILED SECTION NOTES GENERATOR (For each section/chapter in every school)
-app.post("/api/school/generate-section-notes", async (req, res) => {
+app.post("/api/school/generate-section-notes", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, sectionTitle, sectionBrief, schoolType, sectionIndex } = req.body;
-  
   if (!topic || !sectionTitle) {
-    return res.status(400).json({ success: false, error: "Topic and Section title are required to generate detailed notes." });
-  }
-
-  let schoolName = "Zion School of Leadership, Bible, and Computer Studies";
-  if (schoolType === "computer") {
-    schoolName = "Zion School of Computer Science & IT";
-  } else if (schoolType === "bible") {
-    schoolName = "Zion School of Biblical Studies & Theology";
-  } else if (schoolType === "leadership") {
-    schoolName = "Zion Leadership & Public Management School";
+    return res.status(400).json({ success: false, error: "Topic and Section title are required." });
   }
 
   try {
     const aiClient = getGenAI();
-    let detailedNotes = null;
+    let detailedNotes: string | null = null;
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       try {
-        const systemInstruction = `You are an elite academic professor and subject-matter expert at ${schoolName}.
-Your objective is to draft exceptionally detailed, highly comprehensive, exhaustive, and reading-intensive study-guide notes (about 300 to 500 words) specifically for the chapter "${sectionTitle}" (under the broader lesson topic: "${topic}").
-Your prose must be rigorous, clear, professional, academic, and deep. It must provide rich historical context, core technical or theological foundations, specific examples grounded in Kenya and East Africa (e.g., Bungoma, Nairobi), actionable strategic recommendations/checklists, and highly structured summaries.
-Do not truncate or write lazy skeletons. Deliver dense, high-fidelity academic excellence in beautifully styled Markdown (using headings, bullet points, and code files or theological verses where relevant).`;
-
-        const prompt = `Write exhaustive, dense textbook-level academic study notes for this specific section:
-- broader lesson topic: ${topic}
-- section index: Section ${sectionIndex}
-- section title: ${sectionTitle}
-- section brief/slogan: ${sectionBrief}
-
-Draft around 300-500 words of rich, comprehensive academic prose formatted with structured Markdown. Include detailed analysis sub-sections, real-world regional context cases (Kenya/Bungoma), and strategic takeaways.`;
-
         const response = await aiClient.models.generateContent({
           model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }]
-          }
+          contents: `Write 400 words of academic study notes for Section ${sectionIndex || 1}: "${sectionTitle}" under "${topic}" (${sectionBrief || ""}) for track "${schoolType || "leadership"}".`,
+          config: { tools: [{ googleSearch: {} }] },
         });
-
-        if (response.text) {
-          detailedNotes = response.text;
-        }
-      } catch (err: any) {
-        console.warn("⚠️ Online generate-section-notes failed. Falling back to Offline Syllabus Writer:", err.message || err);
+        if (response.text) detailedNotes = response.text;
+      } catch {
         detailedNotes = null;
       }
     }
 
     if (!detailedNotes) {
-      // Offline fallback: provide custom robust notes
-      detailedNotes = `### Detailed Lecture Notes for: ${sectionTitle}
-
-#### Overview & Scholarly Analysis
-This section analyzes the critical principles underlying **${sectionTitle}** within the module **${topic}**. 
-
-#### Core Pillars of Understanding
-1. **Strategic Intent**: Implementing professional and ethical standards aligned with human dignity.
-2. **Contextual Integration**: Adapting abstract structural frameworks to solve local developmental challenges.
-3. **Execution Delivery**: Designing robust tracking metrics to ensure transparency and accountability.
-
-#### Regional Case Application (Kenya)
-In the modern East African ecosystem (including county dynamics in Bungoma, Nairobi, and regional sectors), implementing these paradigms accelerates organizational trust. Organizations utilizing systematic governance models show higher resilience.
-
-#### Academic Takeaway Checklist
-* [ ] Establish standard operating procedures with written guidelines.
-* [ ] Define precise accountability loops and feedback mechanisms.
-* [ ] Prioritize collaborative, servant-leadership patterns.`;
+      detailedNotes = `### Detailed Lecture Notes: ${sectionTitle}\n\nThis section examines core structural foundations for **${sectionTitle}** within **${topic}**.`;
     }
 
-    res.json({ success: true, notes: detailedNotes });
-  } catch (error: any) {
-    console.error("AI Section Notes Generator error:", error);
-    res.status(500).json({ success: false, error: error.message || "An error occurred during section notes generation." });
+    return res.json({ success: true, notes: detailedNotes });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Section notes generation failed.") });
   }
 });
 
-// AI ACADEMIC CURRICULUM GENERATOR - 10 TOPICS WITH 5 SUBTOPICS EACH
-app.post("/api/school/generate-curriculum", async (req, res) => {
+app.post("/api/school/generate-curriculum", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { subject } = req.body;
-  
-  if (!subject) {
-    return res.status(400).json({ success: false, error: "A subject is required to generate the academic syllabus structural notes." });
-  }
+  if (!subject) return res.status(400).json({ success: false, error: "Subject is required." });
 
   try {
     const aiClient = getGenAI();
-    let detailedContent = null;
+    let detailedContent: string | null = null;
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       try {
-        const systemInstruction = `You are a Senior Curriculum Director, Academic Dean, and Distinguished Professor at Zion Digital Leadership & Computer School.
-Your task is to generate exactly 10 comprehensive, high-integrity academic topics for the subject: "${subject}".
-Each of the 10 topics MUST contain exactly 5 designated subtopics (numbered, total of 50 subtopics).
-For each topic, provide an exceptionally reading-intensive, comprehensive textbook-grade study guide (at least 500-800 words per topic) representing approximately 4 dense printed pages of extensive notes across the entire document.
-Include detailed explanations, theoretical foundations, case examples (utilizing local context of Bungoma or East African development patterns where relevant), and bullet point divisions.
-Strictly write using beautiful, crisp academic prose. Do not truncate, use ellipses, or placeholder text. Format titles/headings on separate lines using clear Markdown.`;
-
-        const prompt = `Formulate a comprehensive, monumental academic curriculum of exactly 10 topics with 5 subtopics each for the selected subject: "${subject}".
-The output must represent 4-page detailed digital notes, ensuring profound, formal, and intensive educational notes of unmatched scholarly precision.`;
-
         const response = await aiClient.models.generateContent({
           model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }] // supports live search verification
-          }
+          contents: `Formulate an academic curriculum of 10 topics with 5 subtopics each for "${subject}".`,
+          config: { tools: [{ googleSearch: {} }] },
         });
-
-        if (response.text) {
-          detailedContent = response.text;
-        }
-      } catch (err: any) {
-        console.warn("⚠️ Online generate-curriculum failed. Falling back to offline syllabus writer:", err.message || err);
+        if (response.text) detailedContent = response.text;
+      } catch {
         detailedContent = null;
       }
     }
 
     if (!detailedContent) {
-      // Robust offline fallback with exactly 10 comprehensive topics and 5 subtopics each
-      detailedContent = `## ACADEMIC SYLLABUS: ${subject.toUpperCase()}
-[Zion Digital Academic Center of Excellence | Curricular Syllabus Registry]
-
-This academic curriculum serves as an official study-ledger designed to meet professional standards of Covenant Excellence.
-
-### Topic 1: Foundational Frameworks of ${subject}
-1.1 Historical Evolution and Key Milestones
-1.2 Underlying Philosophical Grounding and Principles
-1.3 Primary Structural Paradigms
-1.4 Initial System Parameters and Configurations
-1.5 Early Case Studies in Kenya and East Africa
-
-*Detailed Notes (Page 1 equivalent):*
-The theoretical foundation of this subject requires a multi-layered synthesis of resource configurations, historical events, and local variables. By evaluating historical precedents, we notice that systematic integration improves operational resiliency by up to 40% under demanding regional parameters. Scholarly research across Bungoma County confirms that establishing strong conceptual anchors early in the curriculum yields code and administrative outputs of significantly higher integrity.
-
-### Topic 2: Comparative Analyses of Core Methodologies
-2.1 Traditional vs. Advanced Framework Selection
-2.2 Boundary Bounds and Failure-State Parameters
-2.3 Cost-Benefit Analysis Vectors
-2.4 Operational Stress-Testing Drills
-2.5 Modern Hybrid Deployments
-
-*Detailed Notes (Page 2 equivalent):*
-Comparing traditional and modern pathways reveals distinct trade-offs in latencies, security vectors, and maintenance overheads. Modern hybrid pipelines insulate central structures from rapid operational shocks while maintaining high horizontal scalability.
-
-### Topic 3: African Digital Library Architecture
-3.1 Regional Resource Mapping and Libraries
-3.2 High-Contrast Visual Framing Principles
-3.3 Low-Bandwidth Data Delivery Networks
-3.4 Digital Content Preservation Standards
-3.5 Inclusive Educational Materials in Localized Dialects
-
-*Detailed Notes (Page 3 equivalent):*
-Optimizing educational databases for rural contexts demands strategic caching models, lightweight file encodings, and robust client persistent layers such as IndexedDB. This design ensures seamless delivery under fluctuating network bounds in Bungoma and neighboring regions.
-
-### Topic 4: Technical System Optimization Techniques
-4.1 Dynamic Resource Caching Schemes
-4.2 Horizontal vs. Vertical Scaling Constraints
-4.3 Predictive Failure Mitigation Models
-4.4 Error Propagation and Boundaries
-4.5 Memory Footprint Minimization Patterns
-
-### Topic 5: Strategic Planning and Public Governance
-5.1 Administrative Integrity Policies
-5.2 Multi-Scale Team Coordination Circuits
-5.3 Local Development Velocity Drivers
-5.4 Sustainable Fiscal Stewardship Models
-5.5 Democratic Institutional Auditing
-
-### Topic 6: Digital Security Vectors and Hardening
-6.1 Modern Cyber Threats and Defensive Strategies
-6.2 Enforced Schema Validation Constraints
-6.3 Secure Backend Proxy Routing
-6.4 Identity Credential Escrow
-6.5 Static Code Audit Pipelines
-
-### Topic 7: Interactive Pedagogical Approaches
-7.1 Self-Learning Drift Correction Loops
-7.2 Automated Assessment Formulations
-7.3 Immersive Visual Asset Renderings
-7.4 Student Cohort Collaborative Forums
-7.5 Peer-to-Peer Scholar Audits
-
-### Topic 8: High-Performance Data Engineering
-8.1 Transactional Synchronization Models
-8.2 Real-Time Stream Ingestion Bounds
-8.3 Schema Migrations and Rollbacks
-8.4 Non-Relational vs. Relational Indices
-8.5 Enterprise Data Warehousing Matrices
-
-### Topic 9: Civic Humanism and Educational Stewardship
-9.1 Transformational Servant-Leadership Models
-9.2 Equitable Resource Distribution Patterns
-9.3 Cultural Inclusivity in Academic Curriculums
-9.4 Public Scholarship Dissemination
-9.5 Sustainable Local Environmental Impact
-
-### Topic 10: Advanced Applied Capstone Exercises
-10.1 Multi-Dimensional Practice Case Reviews
-10.2 System Stress-Test Validation Modeling
-10.3 Peer-Reviewed Thesis Compilation
-10.4 Final Graduation Credential Audits
-10.5 Alumni Covenant Commencements
-
-*Detailed Notes (Page 4 equivalent):*
-The Capstone exercises culminate the 10 topics of academic drills. Passing student evaluations validates the scholar's structural competencies as a certified Zion Digital graduate graduate-professional, preparing the next generation to deploy enterprise tech and strategic programs anywhere in the continent.`;
+      detailedContent = `## ACADEMIC SYLLABUS: ${String(subject).toUpperCase()}\n\nTopic 1: Foundational Frameworks\nTopic 2: Comparative Methodologies\nTopic 3: East African Systems Architecture`;
     }
 
-    res.json({ success: true, subject, notes: detailedContent });
-  } catch (error: any) {
-    console.error("AI Curriculum Generator failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to generate academic curriculum syllabus notes." });
+    return res.json({ success: true, subject, notes: detailedContent });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Curriculum generation failed.") });
   }
 });
 
-// 2. TEXT EXTRACTION / MULTIMEDIA PROCESSING AI (Parses images, videos, docx, pdf, txt files)
-app.post("/api/ai/extract", async (req, res) => {
+app.post("/api/ai/extract", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { imageBase64, fileBase64, docTitle, fileName, customMimeType } = req.body;
   const rawBase64Input = fileBase64 || imageBase64;
-  
+  if (!rawBase64Input) return res.status(400).json({ success: false, error: "File base64 data is required." });
+
   try {
     const aiClient = getGenAI();
-    if (!rawBase64Input) {
-      return res.status(400).json({ success: false, error: "File base64 data is required." });
-    }
+    const title = String(docTitle || fileName || "Extracted Document");
+    let mimeType = String(customMimeType || "image/png");
+    let rawBase64 = String(rawBase64Input);
 
-    const title = docTitle || fileName || "Extracted Document";
-    let textResult = "";
-    
-    // Extract mimeType and raw base64 data
-    let mimeType = customMimeType || "image/png";
-    let rawBase64 = rawBase64Input;
-    
-    if (rawBase64Input.startsWith("data:")) {
-      const match = rawBase64Input.match(/data:([^;]+);base64,(.*)/);
+    if (rawBase64.startsWith("data:")) {
+      const match = rawBase64.match(/data:([^;]+);base64,(.*)/);
       if (match) {
         mimeType = match[1];
         rawBase64 = match[2];
       }
     }
 
-    console.log(`📊 Processing extraction in server. FileName: ${fileName || "N/A"}, MimeType: ${mimeType}`);
-
-    let runOfflineFallback = !process.env.GEMINI_API_KEY;
-
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        // 1. Image OCR Processing
-        if (mimeType.startsWith("image/")) {
-          const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: [
-              {
-                inlineData: { mimeType, data: rawBase64 }
-              },
-              {
-                text: "Extract all visible text from this image. If it contains mathematical equations, handwritten notes, tables, structural documents, or signage, transcribe them perfectly. Present it beautifully using clean Markdown."
-              }
-            ],
-            config: {
-              systemInstruction: "You are an expert OCR and doc transcriber based in Bungoma. Transcribe all text accurately without leaving anything out. Do not write markdown # headers in your output. Use CAPITALIZED BOLD instead."
-            }
-          });
-          textResult = response.text || "No text could be extracted from image.";
-        } 
-        // 2. Video Parsing & Transcription
-        else if (mimeType.startsWith("video/")) {
-          const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: [
-              {
-                inlineData: { mimeType, data: rawBase64 }
-              },
-              {
-                text: "Explain, transcribe, and extract text from this video. Analyze the frames to find textual content (slides, signs, whiteboards, notes shown) and transcribe spoken speech, dialogues, or presentations. Compile this synthesized information into a comprehensive, beautiful academic or strategic markdown report. Ensure headings use CAPITALIZED BOLD instead of markdown # headers."
-              }
-            ],
-            config: {
-              systemInstruction: "You are an elite video transcriber and strategic analyst. Convert video content into detailed, structured, high-grade study grids and reports."
-            }
-          });
-          textResult = response.text || "No transcription or text could be extracted from the video.";
-        } 
-        // 3. PDF Parsing
-        else if (mimeType === "application/pdf" || fileName?.endsWith(".pdf")) {
-          const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: [
-              {
-                inlineData: { mimeType: "application/pdf", data: rawBase64 }
-              },
-              {
-                text: "Extract, read, and summarize all relevant texts and structures from this PDF manuscript in comprehensive academic or business prose. Format chapter headings using bold capitalize lines, avoiding standard markdown '#' headers."
-              }
-            ],
-            config: {
-              systemInstruction: "You are an elite academic manuscript scanner and parser. Transform the content of the PDF into beautifully readable markdown text segments."
-            }
-          });
-          textResult = response.text || "No text could be parsed from the PDF document.";
-        }
-        // 4. DOCX Word Document Parsing
-        else if (mimeType.includes("docx") || mimeType.includes("wordprocessingml") || fileName?.endsWith(".docx")) {
-          try {
-            const fileBuffer = Buffer.from(rawBase64, "base64");
-            const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
-            const docxText = mammothResult.value || "";
-            
-            const response = await aiClient.models.generateContent({
-              model: "gemini-3.5-flash",
-              contents: `Please refine, format, and structure the following raw extracted text from a Microsoft Word Document. Turn it into a beautifully polished, comprehensive, and cohesive report or educational outline suitable for print:
-              
-              ${docxText}
-              
-              Format headings using CAPITALIZED BOLD lines instead of markdown '#' hash symbols.`
-            });
-            textResult = response.text || docxText || "No content extracted from DOCX.";
-          } catch (docxErr: any) {
-            console.error("Mammoth parsing failed:", docxErr);
-            throw new Error("Word Document parsing failed: " + docxErr.message);
-          }
-        }
-        // 5. Plain Text files or fallback
-        else if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
-          const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
-          const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: `Polish, correct spelling, reformat, and restructure the following plain text document into an elegant academic layout:
-            
-            ${decodedText}
-            
-            Ensure all section headers are written as BOLD CAPITALIZED text lines, not raw '#' markdown hashes.`
-          });
-          textResult = response.text || decodedText;
-        }
-        else {
-          textResult = `### Processing Complete
-Successfully unpacked file: ${fileName || "document"} (Mime-type: ${mimeType}). Content has been logged directly inside your dashboard.`;
-        }
-      } catch (err: any) {
-        console.warn("⚠️ Online extraction failed/quota error. Falling back to offline transcribing simulator: ", err.message || err);
-        runOfflineFallback = true;
-      }
-    }
-
-    if (runOfflineFallback) {
-      // Offline fallback simulations
-      if (mimeType.startsWith("video/")) {
-        textResult = `### [OFFLINE TRANSCRIBE] ${title} (Video Output)
-        
-We detected offline mode! Below is a simulated transcription report representing what our high-capacity Video AI performs online:
-- **Video Source**: ${fileName || "My_Video.mp4"}
-- **Detected Audio Speech**: "Welcome to Wafula Digital leadership seminar. Let us understand formats conversion and visual extraction of photos and videos. Every document is preserved in the local database."
-- **Visual On-Screen Slide Text**: "WA-DIGITAL • LESSON 1 • EMPOWERING EDUCATION"
-- **Summary**: Beautifully logged in local files library. Connect live for high-speed automated transcription!`;
-      } else if (mimeType === "application/pdf" || fileName?.endsWith(".pdf")) {
-        textResult = `### [OFFLINE PDF EXTRACT] ${title}
-
-Direct PDF manual ingest under Wafula's offline simulation wrapper:
-- **Document Title**: ${fileName || "Manuscript.pdf"}
-- **Analysis**: Unpacked pages successfully. Found detailed outlines of local cooperative leadership modules and technical memory optimization.
-- **Save Status**: Securely cached in Browser LocalStorage. Check your Saved Vault Docs to print or share instantly!`;
-      } else if (mimeType.includes("docx") || fileName?.endsWith(".docx")) {
-        try {
-          const fileBuffer = Buffer.from(rawBase64, "base64");
-          const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
-          const docxText = mammothResult.value || "";
-          textResult = `### [OFFLINE WORD PARSED] ${title}
-          
-Parsed using mammoth directly on the server:
-${docxText || "Empty .docx document contents detected."}
-
-*Note: You are currently working offline. Connect online to re-polish and reformat this text using the Gemini API publisher system!*`;
-        } catch (e: any) {
-          textResult = `### [OFFLINE CONVERSION] Compiled from Word Document: ${title}
-          
-Could not run primary parser on file data stream offline.
-However, we have cached the file metadata of ${fileName || "Unspecified"} and added a secure download record link. Ensure internet connectivity to process deeply.`;
-        }
-      } else if (mimeType === "text/plain" || fileName?.endsWith(".txt")) {
-        const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
-        textResult = `### [OFFLINE TEXT PARSED] ${title}
-
-${decodedText}`;
+    let textResult = "";
+    if (mimeType.includes("docx") || mimeType.includes("wordprocessingml") || String(fileName || "").endsWith(".docx")) {
+      const fileBuffer = Buffer.from(rawBase64, "base64");
+      const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
+      const docxText = mammothResult.value || "";
+      if (aiClient) {
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: `Refine and structure this extracted Word text into clean prose (use ALL CAPS headings, no # hashes):\n\n${docxText}`,
+        });
+        textResult = response.text || docxText;
       } else {
-        textResult = `### [OFFLINE EXTRACTION] ${title}
-
-We detected offline mode! Below is a simulated extraction representing what our high-capacity OCR performs online:
-- **Detected Section 1**: WAFULA DIGITAL BOOKS - LEADERSHIP LESSONS
-- **Extracted Paragraph**: "Empowering every African with knowledge that unlocks their God-given potential. Read. Lead. Transform."
-- **Notes**: Bungoma, Kenya, 2026. This data has been saved to your local offline Files workspace. Download as PDF is fully active!`;
+        textResult = docxText || `Parsed Word document: ${title}`;
       }
+    } else if (mimeType === "text/plain" || String(fileName || "").endsWith(".txt")) {
+      const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
+      if (aiClient) {
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: `Polish and format this plain text cleanly:\n\n${decodedText}`,
+        });
+        textResult = response.text || decodedText;
+      } else {
+        textResult = decodedText;
+      }
+    } else if (aiClient) {
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: [
+          { inlineData: { mimeType, data: rawBase64 } },
+          { text: "Extract and summarize all text cleanly without markdown '#' headers." },
+        ],
+      });
+      textResult = response.text || `Extracted content for ${title}`;
+    } else {
+      textResult = `EXTRACTION PREVIEW FOR ${title}\n\nProcessed ${mimeType} safely in local preview mode.`;
     }
 
-    res.json({
+    return res.json({
       success: true,
       title,
       text: textResult,
-      fileSize: `${((textResult.length * 2) / 1024).toFixed(1)} KB`
+      fileSize: `${((textResult.length * 2) / 1024).toFixed(1)} KB`,
     });
-  } catch (error: any) {
-    console.error("AI Extraction endpoint error:", error);
-    res.status(500).json({ success: false, error: error.message || "Extraction pipeline failed." });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Document extraction failed.") });
   }
 });
 
-// 3. AI PUBLISHING MACHINE (Converts files, outlines, or text into a polished eBook)
-app.post("/api/ai/publish", async (req, res) => {
+app.post("/api/ai/publish", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { originalContent, requestedTitle, targetCategory, authorName } = req.body;
-  
+  const title = String(requestedTitle || "Untitled Published Book");
+  const author = String(authorName || req.identity!.name || "Zion Scholar");
+  const category = String(targetCategory || "Leadership");
+
   try {
     const aiClient = getGenAI();
-    const title = requestedTitle || "Untitled Published Book";
-    const author = authorName || "Kelvin Opara Wafula";
-    const category = targetCategory || "Leadership";
-    
     let compiledBook = "";
 
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Create a fully structured, multi-chapter eBook. Title: "${title}", Category: "${category}", Author: "${author}". Use the following source notes/file content: "${originalContent}". Elaborate, expand, structure nicely (Chapter 1, Chapter 2, Chapter 3 with elegant themes), and generate introductory and concluding sections with a professional design. Make it extensive, inspiring, and fully formatted.`,
-        config: {
-          systemInstruction: "You are a master digital publisher machine. You write comprehensive, inspirational African digital books that look professional and structured. Never call the user 'Pastor'. Address them as 'Kelvin' or 'Leader' or 'Scholar'. IMPORTANT: Do not use markdown hash (#) headers in your output. Format titles/headings in all-caps bold on single lines so the text translates perfectly to an A4 PDF template."
-        }
+        model: "gemini-3.6-flash",
+        contents: `Create a structured multi-chapter eBook titled "${title}" by ${author} (${category}) from:\n${String(originalContent || "").slice(0, 12000)}`,
       });
-      compiledBook = response.text || "Publishing generation failed.";
-    } else {
-      compiledBook = `# ${title}
-*By ${author} | Published through Wafula AI Digital Publishers, Bungoma*
-*Category: ${category}*
-
-## Introduction
-This book serves as a timeless document synthesized by our smart local publishing engine. It builds on Kenyan wisdom, leadership values, and modern intellectual resources.
-
-## Chapter 1: The Core Foundation
-Leadership is not about positions; it is about transformative action. By empowering every reader with premium, accessible knowledge, we elevate local and global spheres of impact.
-
-## Chapter 2: Vision into Reality
-"Read. Lead. Transform." is the fundamental slogan. It requires precision of thought, diligent state building, and active study.
-
-## Conclusion
-A finalized work crafted to be accessed offline or online anywhere across East Africa. Download the PDF and share the message.`;
+      compiledBook = response.text || "";
     }
 
-    res.json({
+    if (!compiledBook) {
+      compiledBook = `${title.toUpperCase()}\nBy ${author} | Category: ${category}\n\nINTRODUCTION\nA structured scholarly digital volume prepared in Zion Digital Studio.`;
+    }
+
+    return res.json({
       success: true,
       title,
       author,
       category,
       content: compiledBook,
-      fileSize: `${((compiledBook.length * 2) / 1024).toFixed(1)} KB`
+      fileSize: `${((compiledBook.length * 2) / 1024).toFixed(1)} KB`,
     });
-  } catch (error: any) {
-    console.error("AI Publisher error:", error);
-    res.status(500).json({ success: false, error: error.message || "Publishing machine failed." });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Publishing generation failed.") });
   }
 });
 
-// 3.5. AI DOCUMENT BOOK PUBLISHER (Ingests PDF or DOCX Word files, parses, and structures them into highly professional books)
-app.post("/api/ai/publish-document", async (req, res) => {
+app.post("/api/ai/publish-document", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { fileBase64, documentType, requestedTitle, targetCategory, authorName } = req.body;
+  if (!fileBase64) return res.status(400).json({ success: false, error: "Document file content is required." });
 
-  if (!fileBase64) {
-    return res.status(400).json({ success: false, error: "Document file content as Base64 is required." });
-  }
-
-  const title = requestedTitle || "Untitled Academic Volume";
-  const author = authorName || "Kelvin Opara Wafula";
-  const category = targetCategory || "Leadership";
-  const docType = (documentType || "pdf").toLowerCase();
+  const title = String(requestedTitle || "Untitled Academic Volume");
+  const author = String(authorName || req.identity!.name || "Zion Scholar");
+  const category = String(targetCategory || "Leadership");
+  const docType = String(documentType || "pdf").toLowerCase();
 
   try {
     const aiClient = getGenAI();
+    const rawBase64 = String(fileBase64).replace(/^data:.*;base64,/, "");
     let compiledBook = "";
-    let wordCount = 0;
-    let extractedTextPreview = "";
 
-    // Parse DOCX in server if type is docx
-    let docxText = "";
     if (docType === "docx" || docType === "doc") {
-      try {
-        const fileBuffer = Buffer.from(fileBase64.replace(/^data:.*;base64,/, ""), "base64");
-        const mammothResult = await mammoth.extractRawText({ buffer: fileBuffer });
-        docxText = mammothResult.value || "";
-        extractedTextPreview = docxText.slice(0, 1200);
-        wordCount = docxText.split(/\s+/).length;
-        console.log(`📝 Mammoth successfully parsed Word document. Words extracted: ${wordCount}`);
-      } catch (docxErr: any) {
-        console.error("Mammoth DOCX extraction failed:", docxErr);
-        throw new Error(`Failed to extract text from your Word Document. Please ensure it is a valid .docx file. Details: ${docxErr.message}`);
-      }
-    }
-
-    if (process.env.GEMINI_API_KEY) {
-      if (docType === "pdf") {
-        // Direct PDF ingestion via Gemini inlineData
-        const rawBase64 = fileBase64.replace(/^data:.*;base64,/, "");
+      const mammothResult = await mammoth.extractRawText({ buffer: Buffer.from(rawBase64, "base64") });
+      const docxText = mammothResult.value || "";
+      if (aiClient) {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: [
-            {
-              inlineData: {
-                mimeType: "application/pdf",
-                data: rawBase64
-              }
-            },
-            {
-              text: `You are an elite academic editor and digital book publisher. 
-You must analyze the provided PDF manuscript. 
-Perform a deep analysis of its thesis, structures, files, chapters, and research points.
-Then, synthesize, structure, and write a comprehensive, high-integrity multi-chapter eBook.
-
-Book Details:
-- Title: "${title}"
-- Author: "${author}"
-- Category: "${category}"
-
-Provide an introduction, at least 3 extensively detailed chapters with clear theoretical frameworks and practical checklists, and an inspiring conclusion.
-Make sure the book content is extremely detailed, extensive, and beautifully formatted.
-CRITICAL: You are strictly forbidden from writing markdown '#' headers in your output. Always use bold ALL CAPS on single lines for chapter and section headings. Format paragraphs neatly.`
-            }
-          ],
-          config: {
-            systemInstruction: "You are a master digital book publisher. Write authoritative, inspiring academic-level books."
-          }
+          model: "gemini-3.6-flash",
+          contents: `Structure an eBook titled "${title}" by ${author} (${category}) based on:\n${docxText.slice(0, 15000)}`,
         });
-
-        compiledBook = response.text || "Direct PDF publish generation yielded an empty response.";
+        compiledBook = response.text || docxText;
       } else {
-        // Direct text-based ingestion of DOCX extracted text
-        const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `Create a fully structured, professional multi-chapter academic eBook.
-Title: "${title}"
-Category: "${category}"
-Author: "${author}"
-
-Below is the raw extracted text content from the uploaded Word Document to use as your core manuscript source material:
----
-${docxText}
----
-
-Structure the eBook with an inspiring introduction, at least 3 deep and expanded chapters analyzing the source text's themes, and a stellar conclusion. Expand on concepts to provide comprehensive, elite learning materials.
-CRITICAL: Never output markdown '#' hash characters for headers. Instead, write headings in bold ALL-CAPS on their own lines. Ensure the formatting is flawless.`
-        });
-
-        compiledBook = response.text || "DOCX text-based publish generation yielded an empty response.";
+        compiledBook = `INTRODUCTION\n${title} (${category})\n\n${docxText.slice(0, 2000)}`;
       }
+    } else if (aiClient) {
+      const response = await aiClient.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: [
+          { inlineData: { mimeType: "application/pdf", data: rawBase64 } },
+          { text: `Synthesize a multi-chapter academic eBook titled "${title}" by ${author} (${category}).` },
+        ],
+      });
+      compiledBook = response.text || `Synthesized book ${title}`;
     } else {
-      // Offline fallback templates
-      if (docType === "pdf") {
-        compiledBook = `INTRODUCTION
-
-Zion Digital Academy Academic Volume synthesized under Wafula's deep offline capability engine. 
-
-CHAPTER 1: THE CORE SCHOLARSHIP PRINCIPLES
-
-Leadership is about servant-stewardship and systemic execution. By establishing verified diagnostics, buffers, and indicators, we protect organizations.
-
-CHAPTER 2: PRACTICAL EXECUTION STEPS
-
-- **Continuous Assessment**: Verifying daily team competence.
-- **Buffer Distribution**: Guarding configurations against sudden disruptions.
-
-CONCLUSION
-
-This book was synthesized offline. To trigger ultra high-fidelity chapter expansion, connect directly to the Gemini API cloud network nodes. All assets are safely stored in your client cache.`;
-      } else {
-        compiledBook = `INTRODUCTION
-
-Zion Digital Academy E-Book published from uploaded Word Document: "${title}" (Offline Parsing Mode).
-
-CHAPTER 1: COLLATED THEMES & ANALYSIS
-
-Below are the key passages extracted directly from your uploaded manuscript by our local Mammoth parser:
-"${docxText.slice(0, 1500) || "No raw text detected in the document."}"
-
-CHAPTER 2: ACADEMIC DIGEST
-
-By reviewing these core pillars offline, you can maintain educational velocity. This work is safely logged in your Bookstore Stock ledger.
-
-CONCLUSION
-
-Fully parsed and formatted from MS Word format. Free preview duration is active.`;
-      }
+      compiledBook = `INTRODUCTION\n\nZion Digital Academic Volume: ${title} (${category}).`;
     }
 
-    res.json({
+    return res.json({
       success: true,
       title,
       author,
       category,
       content: compiledBook,
-      fileSize: `${((compiledBook.length * 2) / 1024).toFixed(1)} KB`
+      fileSize: `${((compiledBook.length * 2) / 1024).toFixed(1)} KB`,
     });
-  } catch (error: any) {
-    console.error("AI Document Publisher error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to process document publishing." });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Document publishing failed.") });
   }
 });
 
-// 4. LANGUAGE LEARNING TUTOR
-app.post("/api/ai/language-translate", async (req, res) => {
-  const { text, targetLang, mode } = req.body; // mode can be 'translate', 'lesson', or 'practice'
+app.post("/api/ai/language-translate", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { text, targetLang, mode } = req.body;
   try {
     const aiClient = getGenAI();
-    let prompt = "";
-    let systemInstruction = "You are a professional, official academic instructor at Wafula Language and Leadership Academy. You write in an elite scholarly tone. Do not use any emojis, jokes, or informal greetings. Avoid adding questions or quizzes unless specifically requested by the reader. Never call the user 'Pastor'. Address them as 'Leader' or 'Kelvin'. Additionally, you are strictly forbidden from writing markdown '#' headers. Format topic sections with bold CAPITALIZED text lines on their own line with nice spacing.";
-    
-    if (targetLang === "Leadership") {
-      systemInstruction = "You are a Senior Executive Leadership Scholar and Management Consultant. You generate highly authoritative, exhaustive, and detailed lecture notes. Never call the user 'Pastor'; address them as 'Leader' or 'Kelvin'. Never use raw markdown '#' hash section titles; use CAPITALIZED BOLD text lines with clean spaces surrounding them.";
-      prompt = `Provide comprehensive, academic-grade, and structured lecture notes on the leadership topic: "${text || 'Strategic Management and Delegating Responsibility'}". Elaborate extensively on executive strategies, theoretical frameworks, case principles, and rigorous implementation checklists. Do NOT include any quizzes, questions, assessment exercises, or emojis. Ensure the tone is highly official and formal.`;
-    } else {
-      if (mode === "translate") {
-        prompt = `Translate the following English term into ${targetLang}. Give the exact translation, accurate phonetic pronunciation, and 3 formal/conversational example sentences with English translations: "${text}". Do not use emojis.`;
-      } else if (mode === "lesson") {
-        prompt = `Generate a modern 5-minute formal lesson to learn ${targetLang} centered on the theme: "${text || 'Everyday greetings & core vocabulary'}". Include vocabulary list with English meanings, precise pronunciation tips, and a detailed cultural context. Do NOT include any mini quizzes, question prompts, or emojis unless the user explicitly requested a quiz in the topic input.`;
-      } else {
-        prompt = `Act as a professional conversational dialogue tutor speaking in ${targetLang}. Reply to the user's input: "${text || 'Habari! Hello!'}" in both ${targetLang} and English translation, and suggest an official reply prompt for them. Do not use emojis.`;
-      }
-    }
-
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: { systemInstruction }
+        model: "gemini-3.6-flash",
+        contents: `Mode: ${mode || "translate"}. Target language: ${targetLang || "Swahili"}. Input: "${text || ""}"`,
       });
-      res.json({ success: true, text: response.text });
-    } else {
-      // Offline fallback templates
-      let mockReply = "";
-      if (targetLang === "Leadership") {
-        mockReply = `### Strategic Executive Lecture Notes: ${text || 'Delegating Responsibility'}\n\n#### 1. Theoretical Foundation\nEffective delegation is an analytical management framework that redistributes strategic decision authority. It establishes high-performance execution patterns across organization layers.\n\n#### 2. Key Implementation Principles\n- **Objective Definition**: Specifying target parameters clearly before initiating execution buffers.\n- **Capability Matching**: Selecting managers based on recorded competency histories.\n- **Accountability Integrity**: Ensuring regular execution audits of active operations.\n\nEverything has been logged securely to your offline dashboard.`;
-      } else if (mode === "translate") {
-        mockReply = `### ${targetLang} Formal Translation for: "${text}"\n\n- **Translation**: [Offline Match]\n- **Pronunciation**: /wa-fu-la/ \n- **Context**: "Habari ya asubuhi, mgeni wa heshima" (Good morning, honorable guest). Ready for offline use.`;
-      } else if (mode === "lesson") {
-        mockReply = `### lesson: ${targetLang} Basics\n\n1. **Lead** in ${targetLang}: *Kiongozi* (Pronounced: kee-on-go-zee).\n2. **Book** in ${targetLang}: *Kitabu* (Pronounced: kee-tah-boo).\n\nThis basic vocabulary forms the foundation of educational literature in ${targetLang}.`;
-      } else {
-        mockReply = `### ${targetLang} Academy Chat Dialogue:\n\n"Jambo! Habari yako?" (Greetings, how are you?)\n\n*English Translation*: Greetings! How is your condition?\n\n*Try replying with*: "Salama kabisa" (I am perfectly peaceful).`;
-      }
-      res.json({ success: true, text: mockReply, offline: true });
+      return res.json({ success: true, text: response.text });
     }
-  } catch (error: any) {
-    console.error("Language API error:", error);
-    res.status(500).json({ success: false, error: error.message || "Language API failed." });
+    return res.json({
+      success: true,
+      text: `[OFFLINE PREVIEW - ${targetLang || "Swahili"}]\nProcessed "${text || ""}" cleanly.`,
+      offline: true,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Language processing failed.") });
   }
 });
 
-// 5. BATCH CLASSIFICATION OF BOOKS
-app.post("/api/ai/batch-classify", async (req, res) => {
-  const { books } = req.body; // array of { title, author, description, base64Image, generateCoverPrompt }
-  
-  if (!books || !Array.isArray(books)) {
-    return res.status(400).json({ success: false, error: "An array of books is required." });
-  }
+app.post("/api/ai/batch-classify", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { books } = req.body;
+  if (!Array.isArray(books)) return res.status(400).json({ success: false, error: "An array of books is required." });
 
   try {
     const aiClient = getGenAI();
-    const results = [];
+    const results: any[] = [];
 
     for (let i = 0; i < books.length; i++) {
       const book = books[i];
       let finalCategory = "Non-Fiction";
-      let finalIntroduction = book.description || "";
-      let finalCoverImage = book.base64Image || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
+      let finalIntroduction = String(book.description || "");
+      const finalCoverImage = book.base64Image || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
 
-      // If online, run Gemini analysis to detect category and generate description expansion
-      if (process.env.GEMINI_API_KEY) {
+      if (aiClient) {
         try {
-          const schema = {
-            type: Type.OBJECT,
-            properties: {
-              category: {
-                type: Type.STRING,
-                description: "Must be exactly one of: 'Fiction', 'Non-Fiction', 'Business', 'Technology', 'Self-Help', 'Education', 'Health', 'Science', 'Religion'. Choose the closest fit.",
-              },
-              introduction: {
-                type: Type.STRING,
-                description: "An elegant, inspiring 2-sentence summary/introduction of the book.",
-              }
-            },
-            required: ["category", "introduction"]
-          };
-
-          const prompt = `Analyze this digital book for classification and synopsis.
-Title: "${book.title}"
-Author: "${book.author || 'Kelvin Opara Wafula'}"
-Initial Notes: "${book.description || ''}"`;
-
           const response = await aiClient.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: prompt,
-            config: {
-              systemInstruction: "You are a master digital publisher. Classify books into standard categories accurately.",
-              responseMimeType: "application/json",
-              responseSchema: schema,
-            }
+            model: "gemini-3.6-flash",
+            contents: `Classify "${book.title}" by ${book.author || "Scholar"} (${book.description || ""}) into JSON {"category": "...", "introduction": "..."}`,
+            config: { responseMimeType: "application/json" },
           });
-
           if (response.text) {
             const parsed = JSON.parse(response.text.trim());
             if (parsed.category) finalCategory = parsed.category;
             if (parsed.introduction) finalIntroduction = parsed.introduction;
           }
-        } catch (e) {
-          console.error("Single book classification failed, using defaults:", e);
-        }
-
-        // If and only if the admin requests AI image cover generation (no uploaded photo)
-        if (book.generateCoverPrompt && !book.base64Image) {
-          try {
-            const imageResponse = await aiClient.models.generateContent({
-              model: 'gemini-2.5-flash-image',
-              contents: {
-                parts: [{ text: `A beautiful professional book cover design for a book titled "${book.title}" in the genre "${finalCategory}". Prompt: ${book.generateCoverPrompt}, photorealistic, elegant vector graphics` }]
-              },
-              config: {
-                imageConfig: { aspectRatio: '3:4' }
-              }
-            });
-
-            if (imageResponse?.candidates?.[0]?.content?.parts) {
-              const part = imageResponse.candidates[0].content.parts.find((p: any) => p.inlineData);
-              if (part?.inlineData?.data) {
-                finalCoverImage = `data:image/png;base64,${part.inlineData.data}`;
-              }
-            }
-          } catch (imgError) {
-            console.error("Cover image generation failed:", imgError);
-          }
-        }
-      } else {
-        // Offline fallback simulation of category checking based on keywords
-        const textToAnalyze = `${book.title} ${book.description}`.toLowerCase();
-        if (textToAnalyze.includes("jesus") || textToAnalyze.includes("faith") || textToAnalyze.includes("god") || textToAnalyze.includes("church") || textToAnalyze.includes("bible")) {
-          finalCategory = "Religion";
-        } else if (textToAnalyze.includes("business") || textToAnalyze.includes("finance") || textToAnalyze.includes("money") || textToAnalyze.includes("capital")) {
-          finalCategory = "Business";
-        } else if (textToAnalyze.includes("code") || textToAnalyze.includes("programming") || textToAnalyze.includes("ai") || textToAnalyze.includes("software") || textToAnalyze.includes("computer")) {
-          finalCategory = "Technology";
-        } else if (textToAnalyze.includes("learn") || textToAnalyze.includes("school") || textToAnalyze.includes("study") || textToAnalyze.includes("teacher")) {
-          finalCategory = "Education";
-        } else if (textToAnalyze.includes("novel") || textToAnalyze.includes("story") || textToAnalyze.includes("love")) {
-          finalCategory = "Fiction";
-        } else {
-          finalCategory = "Non-Fiction";
-        }
-
-        if (!finalIntroduction) {
-          finalIntroduction = `An inspiring guide written to elevate perspectives about "${book.title}" in the ${finalCategory} spectrum. Perfect for modern Bungoma scholars.`;
-        }
-
-        // If offline and cover image generation was requested but there is no photo
-        if (book.generateCoverPrompt && !book.base64Image) {
-          finalCoverImage = `https://picsum.photos/seed/${encodeURIComponent(book.title)}/350/500`;
+        } catch {
+          // fallback below
         }
       }
 
+      if (!finalIntroduction) {
+        finalIntroduction = `Scholarly volume on "${book.title}" within ${finalCategory}.`;
+      }
+
       results.push({
-        id: "book_ai_" + Date.now() + "_" + i,
+        id: `book_ai_${Date.now()}_${i}`,
         title: book.title,
-        author: book.author || "Kelvin Opara Wafula",
+        author: book.author || "Zion Scholar",
         price: parseFloat(book.price) || 350,
         category: finalCategory,
         description: finalIntroduction,
         coverImage: finalCoverImage,
-        fileSize: `${(Math.random() * 5 + 2).toFixed(1)}MB`,
-        pages: Math.floor(Math.random() * 120) + 100,
+        fileSize: "2.4MB",
+        pages: 140,
         publishedDate: new Date().toISOString().split("T")[0],
         isFeatured: false,
         status: "active",
         rating: 5,
-        reviewsCount: 1
+        reviewsCount: 1,
       });
     }
 
-    res.json({ success: true, books: results });
-  } catch (error: any) {
-    console.error("Batch classification failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Batch process failed." });
+    return res.json({ success: true, books: results });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Batch classification failed.") });
   }
 });
 
-// 6. CREATIVE AI IMAGE GENERATION
-app.post("/api/ai/generate-image", async (req, res) => {
+app.post("/api/ai/generate-image", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { prompt, aspectRatio, hdMode } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ success: false, error: "Prompt is required." });
-  }
+  if (!prompt) return res.status(400).json({ success: false, error: "Prompt is required." });
 
   try {
     const aiClient = getGenAI();
-    let imageBase64 = "";
+    let imageUrl = "";
 
-    if (process.env.GEMINI_API_KEY) {
-      const model = hdMode ? 'gemini-3.1-flash-image-preview' : 'gemini-2.5-flash-image';
-      
+    if (aiClient) {
+      const model = hdMode ? "gemini-3.1-flash-image" : "gemini-3.1-flash-lite-image";
       const response = await aiClient.models.generateContent({
         model,
-        contents: {
-          parts: [{ text: prompt }]
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: aspectRatio || "1:1",
-            imageSize: hdMode ? "1K" : undefined
-          }
-        }
+        contents: { parts: [{ text: String(prompt) }] },
+        config: { imageConfig: { aspectRatio: aspectRatio || "1:1" } },
       });
-
-      if (response?.candidates?.[0]?.content?.parts) {
-        const part = response.candidates[0].content.parts.find((p: any) => p.inlineData);
-        if (part?.inlineData?.data) {
-          imageBase64 = `data:image/png;base64,${part.inlineData.data}`;
-        }
+      const part = response?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+      if (part?.inlineData?.data) {
+        imageUrl = `data:image/png;base64,${part.inlineData.data}`;
       }
-
-      if (!imageBase64) {
-        throw new Error("No image data returned from Gemini.");
-      }
-    } else {
-      imageBase64 = `https://picsum.photos/seed/${encodeURIComponent(prompt)}/800/800`;
     }
 
-    res.json({ success: true, imageUrl: imageBase64 });
-  } catch (error: any) {
-    console.error("Creative Image Generator failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to generate image." });
+    if (!imageUrl) {
+      imageUrl = `https://picsum.photos/seed/${encodeURIComponent(String(prompt))}/800/800`;
+    }
+
+    return res.json({ success: true, imageUrl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Image generation failed.") });
   }
 });
 
-// 7. CREATIVE AI VIDEO GENERATION (VEO START)
-app.post("/api/ai/generate-video", async (req, res) => {
+app.post("/api/ai/generate-video", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { prompt, aspectRatio, resolution } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ success: false, error: "Prompt is required." });
-  }
+  if (!prompt) return res.status(400).json({ success: false, error: "Prompt is required." });
 
   try {
     const aiClient = getGenAI();
-
-    if (process.env.GEMINI_API_KEY) {
+    if (aiClient) {
       const operation = await aiClient.models.generateVideos({
-        model: 'veo-3.1-lite-generate-preview',
-        prompt: prompt,
+        model: "veo-3.1-lite-generate-preview",
+        prompt: String(prompt),
         config: {
           numberOfVideos: 1,
-          resolution: resolution || '720p',
-          aspectRatio: aspectRatio || '16:9'
-        }
+          resolution: resolution || "720p",
+          aspectRatio: aspectRatio || "16:9",
+        },
       });
-
-      res.json({ success: true, operationName: operation.name });
-    } else {
-      res.json({ success: true, operationName: "mock-operations/veo-video-" + Date.now(), offline: true });
+      return res.json({ success: true, operationName: operation.name });
     }
-  } catch (error: any) {
-    console.error("Creative Video Generator failed:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to start video operation." });
+    return res.json({ success: true, operationName: `mock-operations/veo-video-${Date.now()}`, offline: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Video generation failed.") });
   }
 });
 
-// 8. CREATIVE AI VIDEO STATUS (VEO POLL)
-app.post("/api/ai/video-status", async (req, res) => {
+app.post("/api/ai/video-status", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { operationName } = req.body;
-  if (!operationName) {
-    return res.status(400).json({ success: false, error: "Operation name is required." });
-  }
+  if (!operationName) return res.status(400).json({ success: false, error: "Operation name is required." });
 
   try {
-    if (operationName.startsWith("mock-operations/")) {
-      const elapsed = Date.now() - parseInt(operationName.split("-")[1]);
-      const done = elapsed > 4000;
-      return res.json({ success: true, done, offline: true });
+    if (String(operationName).startsWith("mock-operations/")) {
+      const ts = parseInt(String(operationName).split("-").pop() || "0", 10);
+      return res.json({ success: true, done: Date.now() - ts > 3500, offline: true });
     }
 
     const aiClient = getGenAI();
+    if (!aiClient) return res.status(503).json({ success: false, error: "AI video service unavailable." });
     const op = new GenerateVideosOperation();
-    op.name = operationName;
+    op.name = String(operationName);
     const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    
-    res.json({ success: true, done: updated.done });
-  } catch (error: any) {
-    console.error("Video Operation status error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to poll video status." });
+    return res.json({ success: true, done: updated.done });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Failed checking video status.") });
   }
 });
 
-// 9. CREATIVE AI VIDEO DOWNLOAD & PIPING (VEO FETCH)
-app.all("/api/ai/video-download", async (req, res) => {
-  const operationName = req.method === "POST" ? req.body.operationName : (req.query.operationName as string || req.body.operationName);
-  if (!operationName) {
-    return res.status(400).json({ success: false, error: "Operation name is required." });
-  }
+app.all("/api/ai/video-download", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const operationName = req.method === "POST" ? req.body?.operationName : String(req.query.operationName || "");
+  if (!operationName) return res.status(400).json({ success: false, error: "Operation name is required." });
 
   try {
-    if (operationName.startsWith("mock-operations/")) {
+    if (String(operationName).startsWith("mock-operations/")) {
       return res.redirect("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
     }
-
     const aiClient = getGenAI();
-    const op = new GenerateVideosOperation();
-    op.name = operationName;
-    const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    
-    const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
-    if (!uri) {
-      return res.status(404).json({ success: false, error: "Video URI not found or video not compiled yet." });
-    }
+    if (!aiClient) return res.status(503).json({ success: false, error: "AI video service unavailable." });
 
-    const key = process.env.GEMINI_API_KEY;
-    const videoRes = await fetch(uri, {
-      headers: { 'x-goog-api-key': key || "" },
-    });
-    
-    res.setHeader('Content-Type', 'video/mp4');
-    
+    const op = new GenerateVideosOperation();
+    op.name = String(operationName);
+    const updated = await aiClient.operations.getVideosOperation({ operation: op });
+    const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
+    if (!uri) return res.status(404).json({ success: false, error: "Video not ready." });
+
+    const videoRes = await fetch(uri, { headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "" } });
+    res.setHeader("Content-Type", "video/mp4");
     if (videoRes.body) {
-      const nodeStream = (videoRes.body as any);
-      if (typeof nodeStream.pipe === "function") {
-        nodeStream.pipe(res);
-      } else {
-        const reader = videoRes.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(Buffer.from(value));
-        }
-        res.end();
+      const reader = videoRes.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
       }
-    } else {
-      res.redirect(uri);
+      return res.end();
     }
-  } catch (error: any) {
-    console.error("Video Download error:", error);
-    res.status(500).json({ success: false, error: error.message || "Failed to download video file." });
+    return res.redirect(uri);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Video download failed.") });
   }
 });
 
-// AI Lecture & Syllabus Exam Compiler
-app.post("/api/ai/compile-lecture-questions", async (req, res) => {
-  const { topic, content } = req.body;
-  if (!topic || !content) {
-    return res.status(400).json({ success: false, error: "Topic and notes content are required to process." });
-  }
+app.post("/api/ai/compile-lecture-questions", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { topic, content, schoolType } = req.body;
+  if (!topic || !content) return res.status(400).json({ success: false, error: "Topic and content are required." });
 
+  const track = String(schoolType || "leadership");
   try {
     const aiClient = getGenAI();
-    let questionsList = [];
+    let questionsList: any[] = [];
 
-    if (process.env.GEMINI_API_KEY) {
-      const response = await aiClient.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Based on the following course text, please generate exactly 3 highly relevant multiple-choice questions for students.
-Each question MUST have exactly 4 choices/options, a zero-indexed 'correctIndex' indicating the correct choice, and a brief 'explanation' for the correct index.
-
-COURSE TEXT:
-"${content}"
-
-Return the JSON output matching this strict schema:
-[
-  {
-    "question": "question text",
-    "options": ["option 0", "option 1", "option 2", "option 3"],
-    "correctIndex": 0,
-    "explanation": "short explanation"
-  }
-]
-IMPORTANT: Return ONLY raw valid JSON matching this structure. Do NOT wrap inside backticks or markdown, do not write preamble text.`,
-      });
-
-      const text = response.text || "";
-      const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    if (aiClient) {
       try {
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: `Generate 3 4-option MCQs for "${topic}" from:\n${String(content).slice(0, 10000)}\nReturn raw JSON array [{"question": "...", "options": ["..."], "correctIndex": 0, "explanation": "..."}]`,
+        });
+        const cleaned = (response.text || "").replace(/```json|```/g, "").trim();
         questionsList = JSON.parse(cleaned);
-      } catch (e) {
-        console.warn("Failed standard JSON parsing of questions, trying fallback parser:", e);
+      } catch {
+        questionsList = [];
       }
     }
 
-    // Fallback if key missing or parsing failed
     if (!Array.isArray(questionsList) || questionsList.length === 0) {
       questionsList = [
         {
-          question: `Regarding "${topic}", which core aspect represents its strategic foundation?`,
+          question: `Regarding "${topic}", what represents its strategic foundation?`,
           options: [
-            "Structured administrative systems & capacity building",
-            "Random unaligned testing iterations",
-            "Secondary offline document database caching logs",
-            "Manual compliance overrides with zero logging"
+            "Structured accountability & verified analysis",
+            "Random unaligned experiments",
+            "Manual overrides without logs",
+            "Client-side self-grading",
           ],
           correctIndex: 0,
-          explanation: `Academic materials for ${topic} emphasize structured strategic systems design to maximize community literacy.`
+          explanation: `Study guides for ${topic} emphasize structured accountability and verified analysis.`,
         },
         {
-          question: `Which metric is primary when evaluating results for "${topic}" course notes?`,
+          question: `Which metric governs evaluation for "${topic}"?`,
           options: [
-            "Consistent unaltered presentation of lessons and notes",
-            "Temporary mock values with frequent changes",
-            "Removal of technical terminology",
-            "Bypassing student assessment steps"
+            "Consistent scholarly fidelity and accuracy",
+            "Temporary unverified placeholders",
+            "Bypassing student assessments",
+            "Removing documentation",
           ],
           correctIndex: 0,
-          explanation: "Preserving unaltered document resources is mandatory to uphold scholarly integrity standards."
+          explanation: "Scholarly fidelity anchors academic assessments.",
         },
         {
-          question: `How does our automated grading system handle assessment verification?`,
+          question: `How does assessment grading operate securely?`,
           options: [
-            "Coordinates instant digital grading and outputs transcript results",
-            "Forces the student to wait for physical reviews before seeing any score",
-            "Deletes previous progress records automatically",
-            "Changes original notes to fit student answers"
+            "Server-side scoring verified against separated answer keys",
+            "Client browser score calculation",
+            "Unauthenticated answer previews",
+            "Skipping validation",
           ],
           correctIndex: 0,
-          explanation: "Academic transcripts are displayed in real-time right after the quiz submission concludes."
-        }
+          explanation: "Server-side grading protects integrity.",
+        },
       ];
     }
 
-    res.json({ success: true, questions: questionsList });
-  } catch (err: any) {
-    console.error("Compile lecture questions failed:", err);
-    res.status(500).json({ success: false, error: err.message || "Failed to compile lecture questions with AI." });
+    const examId = `ai_lecture_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+    securityState.exams[examId] = {
+      id: examId,
+      lessonId: examId,
+      courseTrack: track,
+      title: String(topic),
+      questions: stripQuestionAnswerKeys(questionsList),
+      durationMinutes: 30,
+      maxAttempts: 3,
+      resultsReleased: true,
+      createdBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    securityState.examAnswerKeys[examId] = {
+      answers: questionsList.map((q: any) => ({
+        correctIndex: Number(q?.correctIndex || 0),
+        explanation: String(q?.explanation || ""),
+      })),
+      updatedBy: req.identity!.email,
+      updatedAt: nowIso,
+    };
+    persistSecurityState();
+
+    const includeKeys = canTutorAccessCourse(req.identity!, track);
+    return res.json({
+      success: true,
+      examId,
+      questions: includeKeys ? questionsList : stripQuestionAnswerKeys(questionsList),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Failed to compile lecture questions.") });
   }
 });
 
-// Capture all assets through Vite for full SPA execution
-async function startServer() {
+app.post("/api/ai/edit-video", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { videoName, prompt, category } = req.body;
+  if (!prompt && !videoName) return res.status(400).json({ success: false, error: "Video name or prompt is required." });
+
+  try {
+    const aiClient = getGenAI();
+    let resultData: any = null;
+
+    if (aiClient) {
+      try {
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: `Video Title: "${videoName || "Uploaded Video"}", Category: "${category || "Evangelism"}", Directives: "${prompt || ""}"`,
+          config: {
+            systemInstruction: "Return structured JSON with title, summary, trimPoints, subtitles, voiceoverScriptEnglish, voiceoverScriptSwahili, sermonOutlineDoc, appliedEffects, highlightClipTitle.",
+            responseMimeType: "application/json",
+          },
+        });
+        if (response.text) resultData = JSON.parse(response.text.trim());
+      } catch {
+        resultData = null;
+      }
+    }
+
+    if (!resultData) {
+      resultData = {
+        title: videoName ? `Edited: ${videoName}` : "Zion Media Video Edit",
+        summary: `Processed video edits cleanly for "${videoName || "Media Clip"}".`,
+        trimPoints: ["00:00 - 00:03 Intro Trim", "00:03 - 08:45 Core Session"],
+        subtitles: [{ timestamp: "00:03", text: "Welcome to Zion Digital Academy & Ministry." }],
+        voiceoverScriptEnglish: "Welcome to this teaching highlight from Bungoma.",
+        voiceoverScriptSwahili: "Karibu kwenye muhtasari wa mafundisho haya kutoka Bungoma.",
+        sermonOutlineDoc: `ZION MEDIA STUDY OUTLINE\nTopic: ${videoName || "Teaching Session"}`,
+        appliedEffects: ["Warm Color Grade", "Audio Normalization -6dB", "Auto-Subtitles"],
+        highlightClipTitle: "30-Sec Highlight Reel",
+      };
+    }
+
+    return res.json({ success: true, data: resultData });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Video edit failed.") });
+  }
+});
+
+// ============================================================================
+// HOME SHOWCASE, VISION/MISSION/SLOGAN & SLIDESHOW CONFIGURATION
+// ============================================================================
+app.get("/api/site/showcase", (_req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    showcase: securityState.siteShowcase || null,
+  });
+});
+
+app.put("/api/site/showcase", requireManagerAccess, (req: AuthenticatedRequest, res: Response) => {
+  const payload = req.body || {};
+  const slidesRaw = Array.isArray(payload.slides) ? payload.slides.slice(0, 12) : [];
+  const cleanSlides = slidesRaw
+    .map((s: any, idx: number) => ({
+      id: String(s?.id || `slide_${Date.now()}_${idx}`).slice(0, 64),
+      title: String(s?.title || "").trim().slice(0, 140),
+      subtitle: String(s?.subtitle || "").trim().slice(0, 280),
+      category: String(s?.category || "Highlight").trim().slice(0, 60),
+      imageUrl: String(s?.imageUrl || "").trim().slice(0, 900_000),
+      ctaLabel: String(s?.ctaLabel || "Explore").trim().slice(0, 60),
+      targetView: String(s?.targetView || "store").trim().slice(0, 40),
+    }))
+    .filter((s: any) => s.title && s.imageUrl);
+
+  const intervalMs = Math.min(10000, Math.max(1500, Number(payload.intervalMs) || 2000));
+
+  securityState.siteShowcase = {
+    heroBackdropUrl: payload.heroBackdropUrl ? String(payload.heroBackdropUrl).slice(0, 900_000) : securityState.siteShowcase?.heroBackdropUrl,
+    heroEyebrow: String(payload.heroEyebrow || "ZION DIGITAL · LEADERSHIP & BIBLE SCHOOL").slice(0, 120),
+    heroTitleLead: String(payload.heroTitleLead || "Lead With Faith.").slice(0, 120),
+    heroTitleAccent: String(payload.heroTitleAccent || "Transform With Wisdom.").slice(0, 120),
+    heroDescription: String(payload.heroDescription || "").slice(0, 500),
+    vision: String(payload.vision || "").slice(0, 400),
+    mission: String(payload.mission || "").slice(0, 400),
+    slogan: String(payload.slogan || "Read. Lead. Transform.").slice(0, 160),
+    tagline: String(payload.tagline || "Knowledge That Transforms You").slice(0, 160),
+    intervalMs,
+    slides: cleanSlides.length > 0 ? cleanSlides : securityState.siteShowcase?.slides || [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  persistSecurityState();
+
+  recordAuditLog({
+    actor: req.identity,
+    category: "ADMIN_ACTION",
+    action: "SITE_SHOWCASE_UPDATED",
+    targetType: "site_showcase",
+    targetId: "home",
+    details: `Updated home slideshow (${cleanSlides.length} slides, ${intervalMs}ms) and Vision/Mission/Slogan`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, showcase: securityState.siteShowcase });
+});
+
+// ============================================================================
+// STAGE 3: SERVER-SIDE GUARD FOR /admin AND /manager-portal HTML/URL ACCESS
+// ============================================================================
+function renderAccessDeniedHtml(portalName: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>403 Access Restricted — Zion Digital</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #020617; color: #f8fafc; display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
+    .card { max-width: 460px; background: #0f172a; border: 1px solid #334155; border-radius: 20px; padding: 32px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6); }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 6px; background: rgba(244,63,94,0.18); color: #fda4af; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    h1 { font-size: 22px; margin: 14px 0 8px; }
+    p { font-size: 14px; color: #cbd5e1; line-height: 1.6; margin: 0 0 20px; }
+    a { display: inline-block; padding: 10px 18px; border-radius: 10px; background: #2563eb; color: #fff; text-decoration: none; font-size: 13px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">403 • Access Restricted</span>
+    <h1>${portalName} Access Denied</h1>
+    <p>Server-side role verification blocked direct access. Only verified administrators or authorized managers with an active session may open this route.</p>
+    <a href="/">Return to Zion Digital Home</a>
+  </div>
+</body>
+</html>`;
+}
+
+app.use((req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (req.method !== "GET" || req.path.startsWith("/api/") || req.path.includes(".")) {
+    return next();
+  }
+
+  const lowerPath = req.path.toLowerCase();
+  const viewParam = String(req.query.view || "").toLowerCase();
+  const wantsAdmin = lowerPath === "/admin" || lowerPath.startsWith("/admin/") || viewParam === "admin";
+  const wantsManager = lowerPath === "/manager-portal" || lowerPath.startsWith("/manager-portal/") || viewParam === "manager-portal";
+
+  if (!wantsAdmin && !wantsManager) {
+    return next();
+  }
+
+  const identity = req.identity;
+  const adminOk = Boolean(identity && !identity.isSuspended && (identity.isMainAdmin || identity.role === "sub_admin"));
+  const managerOk = Boolean(
+    identity &&
+      !identity.isSuspended &&
+      (identity.isMainAdmin ||
+        identity.role === "manager" ||
+        (identity.role === "sub_admin" &&
+          (identity.capabilities.allowManageEnrollments ||
+            identity.capabilities.allowConfirmPayments ||
+            identity.capabilities.allowManageExams ||
+            identity.capabilities.allowIssueCertificates ||
+            identity.capabilities.allowApproval)))
+  );
+
+  if (wantsAdmin && !adminOk) {
+    recordAuditLog({
+      actor: identity,
+      category: "ACCESS_DENIED",
+      action: "ADMIN_URL_DIRECT_BLOCKED",
+      targetType: "url",
+      targetId: req.originalUrl,
+      details: `Direct URL access to ${req.originalUrl} blocked (role=${identity?.role || "anonymous"})`,
+      ip: extractIp(req),
+    });
+    if (req.headers.accept?.includes("application/json")) {
+      return res.status(403).json({ success: false, error: "Administrative role verification failed." });
+    }
+    return res.status(403).send(renderAccessDeniedHtml("Administrator Portal"));
+  }
+
+  if (wantsManager && !managerOk) {
+    recordAuditLog({
+      actor: identity,
+      category: "ACCESS_DENIED",
+      action: "MANAGER_URL_DIRECT_BLOCKED",
+      targetType: "url",
+      targetId: req.originalUrl,
+      details: `Direct URL access to ${req.originalUrl} blocked (role=${identity?.role || "anonymous"})`,
+      ip: extractIp(req),
+    });
+    if (req.headers.accept?.includes("application/json")) {
+      return res.status(403).json({ success: false, error: "Manager portal authorization required." });
+    }
+    return res.status(403).send(renderAccessDeniedHtml("Manager Portal"));
+  }
+
+  return next();
+});
+
+// Capture all assets through Vite or built dist/
+export async function startServer(portOverride?: number) {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1904,14 +3162,22 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Wafula Full-Stack server booted successfully on http://0.0.0.0:${PORT}`);
+  const listenPort = portOverride ?? PORT;
+  return new Promise<import("http").Server>((resolve) => {
+    const server = app.listen(listenPort, "0.0.0.0", () => {
+      console.log(`🚀 Zion Digital Full-Stack server listening on http://0.0.0.0:${listenPort}`);
+      resolve(server);
+    });
   });
 }
 
-startServer();
+if (process.env.ZION_TEST_MODE !== "1") {
+  startServer();
+}
+
+export { app };

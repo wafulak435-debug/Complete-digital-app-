@@ -13,6 +13,8 @@ import { db } from "../lib/firebase";
 import { generateAccreditedCertificatePdf } from "../utils/pdfGenerator";
 import { QRCodeGenerator } from "../utils/qrCode";
 import AIChat from "./AIChat";
+import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import zionLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 
 
 interface LeadershipSchoolProps {
@@ -61,44 +63,25 @@ export default function LeadershipSchool({
   const [isProcessingLibraryPayment, setIsProcessingLibraryPayment] = useState(false);
   const [libraryPhone, setLibraryPhone] = useState("");
 
-  // Faculty Roles & Permission gates
-  const isUserTeacher = (currentUser?.role as any) === "teacher" || currentUser?.email?.toLowerCase().includes("teacher") || currentUser?.name?.toLowerCase().includes("teacher");
-  const isUserAdmin = currentUser?.role === "admin" || currentUser?.email === "wafulak435@gmail.com";
+  // Faculty Roles & Strict Permission Gates
+  const userRoleLower = (currentUser?.role || "").toLowerCase();
+  const isUserTeacher = ["tutor", "faculty", "professor", "teacher"].includes(userRoleLower);
+  const isUserAdmin =
+    ["main_admin", "admin", "sub_admin", "manager"].includes(userRoleLower) ||
+    Boolean(currentUser?.isMainAdmin);
   const isAuthorizedTeacher = isUserTeacher || isUserAdmin;
+  const isUserAdminOrSeniorTeacher =
+    isUserAdmin || ["faculty", "professor"].includes(userRoleLower);
 
-  const isUserAdminOrSeniorTeacher = (() => {
-    if (!currentUser) return false;
-    const role = currentUser.role?.toLowerCase() || "";
-    const email = currentUser.email?.toLowerCase() || "";
-    const name = currentUser.name?.toLowerCase() || "";
-    
-    if (role === "admin" || email === "wafulak435@gmail.com") return true;
-    
-    if (role === "teacher" || role === "faculty" || role === "professor") {
-      if (
-        email.includes("head") || 
-        email.includes("chancellor") || 
-        email.includes("vc") || 
-        email.includes("principal") ||
-        name.includes("head teacher") || 
-        name.includes("chancellor") || 
-        name.includes("vc") || 
-        name.includes("muliro")
-      ) {
-        return true;
-      }
-    }
-    return false;
-  })();
-
-  // Teacher Syllabus Workshop Editor states
+  // Teacher Syllabus Workshop Editor states (confidential keys kept separate from public AssessmentQuestion)
   const [teacherSelectedMode, setTeacherSelectedMode] = useState<"create" | "update">("create");
   const [teacherSelectedLessonId, setTeacherSelectedLessonId] = useState<string>("");
   const [teacherLessonTopic, setTeacherLessonTopic] = useState("");
   const [teacherLessonSlogan, setTeacherLessonSlogan] = useState("");
   const [teacherLessonTrack, setTeacherLessonTrack] = useState<"leadership" | "computer" | "bible">("leadership");
   const [teacherLessonNotes, setTeacherLessonNotes] = useState("");
-  const [teacherCustomQuestions, setTeacherCustomQuestions] = useState<any[]>([]);
+  const [teacherCustomQuestions, setTeacherCustomQuestions] = useState<AssessmentQuestion[]>([]);
+  const [teacherDraftAnswerKeys, setTeacherDraftAnswerKeys] = useState<Record<number, { correctIndex: number; explanation?: string }>>({});
   const [isCompilingAILesson, setIsCompilingAILesson] = useState(false);
 
   const handleSelectLessonToUpdate = (lessonId: string) => {
@@ -109,6 +92,7 @@ export default function LeadershipSchool({
       setTeacherLessonSlogan("");
       setTeacherLessonNotes("");
       setTeacherCustomQuestions([]);
+      setTeacherDraftAnswerKeys({});
       return;
     }
     
@@ -123,7 +107,15 @@ export default function LeadershipSchool({
       
       const contentText = found.lectures?.[0]?.content || found.points?.join("\n\n") || "";
       setTeacherLessonNotes(contentText);
-      setTeacherCustomQuestions(found.selfAssessment || []);
+      const rawQs = Array.isArray(found.selfAssessment) ? found.selfAssessment : [];
+      setTeacherCustomQuestions(rawQs.map((q: any) => ({ question: q.question, options: q.options || [] })));
+      const keysMap: Record<number, { correctIndex: number; explanation?: string }> = {};
+      rawQs.forEach((q: any, idx: number) => {
+        if (typeof q.correctIndex === "number") {
+          keysMap[idx] = { correctIndex: q.correctIndex, explanation: q.explanation };
+        }
+      });
+      setTeacherDraftAnswerKeys(keysMap);
     }
   };
 
@@ -134,18 +126,25 @@ export default function LeadershipSchool({
     }
     setIsCompilingAILesson(true);
     try {
-      const resp = await fetch("/api/ai/compile-lecture-questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: teacherLessonTopic,
-          content: teacherLessonNotes
-        })
+      const data = await invokeGeminiAction("compile-lecture-questions", "/api/ai/compile-lecture-questions", {
+        topic: teacherLessonTopic,
+        content: teacherLessonNotes
       });
-      const data = await resp.json();
       if (data.success && Array.isArray(data.questions)) {
-        setTeacherCustomQuestions(data.questions);
-        alert("✨ SUCCESS! AI has analyzed the lecture text and compiled exactly 3 highly relevant quiz questions!");
+        const sanitized: AssessmentQuestion[] = data.questions.map((q: any) => ({
+          question: String(q.question || ""),
+          options: Array.isArray(q.options) ? q.options.map(String) : [],
+        }));
+        const keyMap: Record<number, { correctIndex: number; explanation?: string }> = {};
+        data.questions.forEach((q: any, i: number) => {
+          keyMap[i] = {
+            correctIndex: typeof q.correctIndex === "number" ? q.correctIndex : 0,
+            explanation: typeof q.explanation === "string" ? q.explanation : undefined,
+          };
+        });
+        setTeacherCustomQuestions(sanitized);
+        setTeacherDraftAnswerKeys(keyMap);
+        alert("Success: Compiled 3 quiz questions for this lecture draft.");
       } else {
         alert("Could not automatically compile quiz questions. Falling back to default assessments.");
       }
@@ -165,14 +164,14 @@ export default function LeadershipSchool({
 
     const points = teacherLessonNotes.split("\n\n").filter(p => p.trim());
     
-    const finalQuestions = teacherCustomQuestions.length > 0 ? teacherCustomQuestions : [
-      {
-        question: `Which fundamental aspect is highlighted under this custom lesson topic of "${teacherLessonTopic}"?`,
-        options: ["Strategic integration", "Secondary validation rules", "Unverified random processes", "Complete bypass metrics"],
-        correctIndex: 0,
-        explanation: "This chapter focuses on structured academic integration and consistent master verification."
-      }
-    ];
+    const finalQuestions: AssessmentQuestion[] = teacherCustomQuestions.length > 0
+      ? teacherCustomQuestions
+      : [
+          {
+            question: `Which fundamental aspect is highlighted under this custom lesson topic of "${teacherLessonTopic}"?`,
+            options: ["Strategic integration", "Secondary validation rules", "Unverified random processes", "Complete bypass metrics"],
+          }
+        ];
 
     const targetLessonId = teacherSelectedMode === "update" && teacherSelectedLessonId
       ? teacherSelectedLessonId
@@ -211,12 +210,13 @@ export default function LeadershipSchool({
 
     localStorage.setItem("ZION_CUSTOM_TEACHER_LESSONS", JSON.stringify(storedList));
     
-    alert(`🎉 SYSTEM CONFIRMED! "${teacherLessonTopic}" has been successfully published to the ${teacherLessonTrack.toUpperCase()} database!`);
+    alert(`Published "${teacherLessonTopic}" to the ${teacherLessonTrack.toUpperCase()} syllabus.`);
     
     setTeacherLessonTopic("");
     setTeacherLessonSlogan("");
     setTeacherLessonNotes("");
     setTeacherCustomQuestions([]);
+    setTeacherDraftAnswerKeys({});
     setTeacherSelectedLessonId("");
     setTeacherSelectedMode("create");
     
@@ -332,14 +332,31 @@ export default function LeadershipSchool({
   const [aiTeacherAnswer, setAiTeacherAnswer] = useState("");
   const [isAskingAi, setIsAskingAi] = useState(false);
 
-  // Multi-question assessment state
+  // Multi-question assessment state (Server-graded, timing enforced)
   const [studentAnswers, setStudentAnswers] = useState<{ [key: number]: number }>({});
   const [showAssessment, setShowAssessment] = useState(false);
+  const [examAttemptId, setExamAttemptId] = useState<string | null>(null);
+  const [examSecondsLeft, setExamSecondsLeft] = useState<number | null>(null);
+  const [isStartingExam, setIsStartingExam] = useState(false);
+  const [isSubmittingExam, setIsSubmittingExam] = useState(false);
   const [assessmentResult, setAssessmentResult] = useState<{
     score: number;
     passed: boolean;
     gradedFeedbackString: string;
+    correctCount?: number;
+    totalQuestions?: number;
+    resultsReleased?: boolean;
+    breakdown?: Record<number, { selectedIndex: number; correctIndex: number; isCorrect: boolean; explanation?: string }>;
   } | null>(null);
+
+  useEffect(() => {
+    if (!showAssessment || assessmentResult !== null || examSecondsLeft === null) return;
+    if (examSecondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setExamSecondsLeft((prev) => (prev !== null && prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [showAssessment, assessmentResult, examSecondsLeft]);
 
   // Course Enrolment form states (Continuing / Repeat Enrolment Form)
   const [showEnrolmentModal, setShowEnrolmentModal] = useState(false);
@@ -389,11 +406,10 @@ export default function LeadershipSchool({
     return localStorage.getItem("WAFULA_LS_CERT_PAID") === "true";
   });
   const [certStatus, setCertStatus] = useState<"none" | "pending" | "approved">(() => {
-    if (currentUser?.role === "admin") return "approved";
     const userMail = currentUser?.email || "guest@wafula.com";
     const status = localStorage.getItem(`WAFULA_CERT_STATUS_${userMail}`);
-    if (status) return status as "none" | "pending" | "approved";
-    return localStorage.getItem("WAFULA_LS_CERT_PAID") === "true" ? "approved" : "none";
+    if (status === "approved" || status === "pending") return status;
+    return "none";
   });
   const [certificateFee, setCertificateFee] = useState<number>(() => {
     const fee = localStorage.getItem("WAFULA_CERT_FEE");
@@ -688,7 +704,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       studentName: enrolmentStudentName,
       admNo: computedAdmNo,
       phone: enrolmentPhone,
-      email: enrolmentEmail || "student@zion.ac.ke",
+      email: enrolmentEmail || currentUser?.email || "student@zion.ac.ke",
       courseId: enrolmentSelectedCourseId,
       courseTopic: selectedCourse.topic,
       courseCode: selectedCourse.courseCode || "ZIO01/001/26",
@@ -696,8 +712,15 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       duration: selectedCourse.duration || "4 Months",
       enrolmentType,
       mpesaTransactionCode: mpesa,
+      status: "pending",
       enrolledAt: new Date().toISOString()
     };
+
+    secureApiFetch("/api/enrollments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newEnrolment),
+    }).catch(() => {});
 
     setTimeout(() => {
       const updatedList = [newEnrolment, ...enrolmentList];
@@ -707,7 +730,6 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       // real-time Firestore synchronization
       try {
         addDoc(collection(db, "enrollments"), newEnrolment)
-          .then(() => console.log("Success: Zion Academy enrolment synced directly with Firebase!"))
           .catch(e => console.warn("Firebase collection sync issue:", e));
       } catch (e) {
         console.warn("Firestore collection handler missing or blocked:", e);
@@ -745,15 +767,10 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     const targetSchool = activeSchool;
 
     try {
-      const response = await fetch("/api/school/generate-class", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: customTopic.trim(),
-          schoolType: targetSchool
-        })
+      const data = await invokeGeminiAction("generate-class", "/api/school/generate-class", {
+        topic: customTopic.trim(),
+        schoolType: targetSchool
       });
-      const data = await response.json();
       if (data.success && data.data) {
         const generated: Lesson = {
           id: "ai_class_" + Date.now(),
@@ -772,16 +789,11 @@ Prepare for your master certifications by reviewing the definitions of absolute 
         if (generated.illustrationPrompt) {
           setIsGeneratingIllustration(true);
           try {
-            const imgResponse = await fetch("/api/ai/generate-image", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt: generated.illustrationPrompt,
-                aspectRatio: "16:9",
-                hdMode: false
-              })
+            const imgData = await invokeGeminiAction("generate-image", "/api/ai/generate-image", {
+              prompt: generated.illustrationPrompt,
+              aspectRatio: "16:9",
+              hdMode: false
             });
-            const imgData = await imgResponse.json();
             if (imgData.success && imgData.imageUrl) {
               setSelectedLesson(prev => {
                 if (prev && prev.id === generated.id) {
@@ -814,16 +826,19 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     setDetailedStudyNotes(null);
 
     try {
-      const response = await fetch("/api/school/generate-notes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "generate-notes",
+        "/api/school/generate-notes",
+        {
           topic: selectedLesson.topic,
           schoolType: activeSchool
-        })
-      });
-
-      const data = await response.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `School Notes: ${selectedLesson.topic}`,
+          historyCategory: "Leadership & Bible School",
+        }
+      );
       if (data.success && data.notes) {
         setDetailedStudyNotes(data.notes);
       } else {
@@ -847,19 +862,13 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     const sectionBrief = pt.split(":").slice(1).join(":") || pt;
 
     try {
-      const response = await fetch("/api/school/generate-section-notes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: selectedLesson.topic,
-          sectionTitle,
-          sectionBrief,
-          schoolType: activeSchool,
-          sectionIndex: idx + 1
-        })
+      const data = await invokeGeminiAction("generate-section-notes", "/api/school/generate-section-notes", {
+        topic: selectedLesson.topic,
+        sectionTitle,
+        sectionBrief,
+        schoolType: activeSchool,
+        sectionIndex: idx + 1
       });
-
-      const data = await response.json();
       if (data.success && data.notes) {
         setGeneratedSectionNotes(prev => ({
           ...prev,
@@ -940,15 +949,19 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     setAiTeacherAnswer("");
 
     try {
-      const response = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: aiTeacherQuestion,
           category: "Problem Solver"
-        })
-      });
-      const data = await response.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `School Q&A: ${aiTeacherQuestion.slice(0, 60)}`,
+          historyCategory: "Leadership & Bible School",
+        }
+      );
       if (data.success) {
         setAiTeacherAnswer(data.text);
       }
@@ -960,124 +973,132 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     }
   };
 
-  // 3. Mark Assessment worksheet automatically on-the-spot
-  const handleSubmitAssessment = () => {
+  // 3. Server-verified Exam Attempt Start & Grading Submission
+  const handleBeginAssessment = async () => {
     if (!selectedLesson) return;
-    
-    const questions = selectedLesson.selfAssessment;
-    let correctCount = 0;
-
-    questions.forEach((q, idx) => {
-      if (studentAnswers[idx] === q.correctIndex) {
-        correctCount++;
+    setStudentAnswers({});
+    setAssessmentResult(null);
+    setExamAttemptId(null);
+    setExamSecondsLeft(null);
+    setIsStartingExam(true);
+    try {
+      const res = await secureApiFetch(`/api/exams/${encodeURIComponent(selectedLesson.id)}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ examTitle: selectedLesson.topic }),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.attemptId) setExamAttemptId(data.attemptId);
+        if (data.expiresAt) {
+          const secs = Math.max(60, Math.round((new Date(data.expiresAt).getTime() - Date.now()) / 1000));
+          setExamSecondsLeft(secs);
+        }
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          setSelectedLesson((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  selfAssessment: data.questions.map((q: any) => ({
+                    question: q.question,
+                    options: q.options || [],
+                  })),
+                }
+              : prev
+          );
+        }
       }
-    });
+    } catch {
+      // Allow starting offline/custom topic assessment cleanly
+    } finally {
+      setIsStartingExam(false);
+      setShowAssessment(true);
+    }
+  };
 
-    const scorePct = Math.round((correctCount / questions.length) * 100);
-    const passed = scorePct >= 80;
+  const handleSubmitAssessment = async () => {
+    if (!selectedLesson || isSubmittingExam) return;
+    if (!currentUser) {
+      onLogIn();
+      return;
+    }
 
-    // Save learning progress and scores to local student grades database
-    if (currentUser) {
+    setIsSubmittingExam(true);
+    try {
+      const res = await secureApiFetch(`/api/exams/${encodeURIComponent(selectedLesson.id)}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attemptId: examAttemptId,
+          answers: studentAnswers,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(data?.error || "Could not verify exam submission on server. Please sign in and retry.");
+        return;
+      }
+
+      const scorePct = typeof data.score === "number" ? data.score : 0;
+      const passed = Boolean(data.passed);
+      const totalQ = typeof data.totalQuestions === "number" ? data.totalQuestions : selectedLesson.selfAssessment.length;
+      const correctCount = typeof data.correctCount === "number" ? data.correctCount : Math.round((scorePct / 100) * totalQ);
+      const breakdownMap: Record<number, { selectedIndex: number; correctIndex: number; isCorrect: boolean; explanation?: string }> = {};
+      if (Array.isArray(data.breakdown)) {
+        data.breakdown.forEach((entry: any, idx: number) => {
+          const qIndex = typeof entry.questionIndex === "number" ? entry.questionIndex : idx;
+          breakdownMap[qIndex] = {
+            selectedIndex: entry.selectedIndex,
+            correctIndex: entry.correctIndex,
+            isCorrect: Boolean(entry.isCorrect),
+            explanation: entry.explanation,
+          };
+        });
+      }
+
       const userMail = currentUser.email;
       const gradesKey = `WAFULA_STUDENT_GRADES_${userMail}`;
       const existingGradesStr = localStorage.getItem(gradesKey);
       let grades: Record<string, { lessonId: string; topic: string; score: number; passed: boolean; completed: boolean; completedAt: string }> = {};
-      
       if (existingGradesStr) {
         try {
           grades = JSON.parse(existingGradesStr);
         } catch (_) {}
       }
-      
       grades[selectedLesson.id] = {
         lessonId: selectedLesson.id,
         topic: selectedLesson.topic,
         score: scorePct,
         passed,
         completed: true,
-        completedAt: new Date().toISOString()
+        completedAt: new Date().toISOString(),
       };
-      
       localStorage.setItem(gradesKey, JSON.stringify(grades));
-    }
 
-    const handleDownloadCertificatePdf = (forcedScore?: number) => {
-      const isComp = activeSchool === "computer";
-      const studentName = currentUser?.name || "The Academic Scholar";
-      const studentEmail = currentUser?.email || "scholar@student.zion.ac.ke";
-      const schoolName = isComp ? "Zion School of Computer Science & IT" : "Zion School of Leadership & Public Values";
-      const courseTopic = isComp 
-        ? "School of Computer Science & IT Syllabus" 
-        : "School of Leadership & Public Values Syllabus";
-      
-      const parsedScore = forcedScore !== undefined ? forcedScore : (assessmentResult?.score || 90);
-      const dateStr = new Date().toISOString().split("T")[0];
-      const dlId = `dl_${Date.now()}`;
-      const ledgerHash = `${studentName.substring(0, 3).toUpperCase()}-94A3B8-${Date.now().toString().slice(-4)}`;
+      if (passed) {
+        onUnlockBadge("badge_3");
+      }
 
-      const verifyUrl = `${window.location.origin}/?view=verify&certId=${dlId}`;
+      setCongratsScore(scorePct);
+      setShowCongratsModal(true);
 
-      // 1. Generate core PDF
-      generateAccreditedCertificatePdf({
-        studentName,
-        studentEmail,
-        schoolName,
-        courseTopic,
-        score: parsedScore,
-        ledgerHash,
-        date: dateStr,
-        verificationUrl: verifyUrl
+      setAssessmentResult({
+        score: scorePct,
+        passed,
+        correctCount,
+        totalQuestions: totalQ,
+        resultsReleased: Boolean(data.resultsReleased),
+        breakdown: breakdownMap,
+        gradedFeedbackString: passed
+          ? `Outstanding Success! Verified server score: ${scorePct}% (${correctCount}/${totalQ}). You have passed Zion Digital academic standards and may request your accredited Graduate Diploma.`
+          : `Verified score: ${scorePct}% (${correctCount}/${totalQ}). Zion Digital mandates a minimum of 80% to pass. Review the course syllabus and re-attempt.`
       });
-
-      // 2. Register download event in system WAFULA_CERT_DOWNLOADS (local cache)
-      let currentDls: any[] = [];
-      try {
-        currentDls = JSON.parse(localStorage.getItem("WAFULA_CERT_DOWNLOADS") || "[]");
-      } catch (_) {}
-
-      const newDl = {
-        id: dlId,
-        name: studentName,
-        email: studentEmail,
-        schoolName,
-        courseTopic,
-        score: parsedScore,
-        ledgerHash,
-        date: dateStr,
-        downloadedAt: new Date().toISOString()
-      };
-
-      currentDls.push(newDl);
-      localStorage.setItem("WAFULA_CERT_DOWNLOADS", JSON.stringify(currentDls));
-
-      // 3. Sync download event with Firestore "certificate_downloads" in real time!
-      try {
-        addDoc(collection(db, "certificate_downloads"), newDl).catch(e => console.warn("Firestore sync failed for certificate download logs:", e));
-      } catch (e) {
-        console.warn("Firestore collection sync warning:", e);
-      }
-    };
-
-    if (passed) {
-      onUnlockBadge("badge_3");
-      // Instant auto-approval cache for admins
-      if (currentUser?.role === "admin") {
-        setCertStatus("approved");
-        localStorage.setItem(`WAFULA_CERT_STATUS_${currentUser.email || "guest@wafula.com"}`, "approved");
-      }
+    } catch {
+      alert("Unable to reach exam grading server. Please check your connection and retry.");
+    } finally {
+      setIsSubmittingExam(false);
     }
-
-    // Set Congrats Modal states
-    setCongratsScore(scorePct);
-    setShowCongratsModal(true);
-
-    setAssessmentResult({
-      score: scorePct,
-      passed,
-      gradedFeedbackString: passed
-        ? `Outstanding Success! You scored ${scorePct}% (${correctCount}/${questions.length}). You have passed the Zion Digital rigorous academic standards. You are now fully entitled to request your accredited Graduate Diploma.`
-        : `Score achieved: ${scorePct}% (${correctCount}/${questions.length}). The Zion academic senate mandates a minimum of 80% to pass. Review the detailed course notes above and take this topic assessment again to refine your qualifications.`
-    });
   };
 
   // AI-Powered Quiz Generator (Creates dense 10-Question Master Assessment)
@@ -1088,15 +1109,10 @@ Prepare for your master certifications by reviewing the definitions of absolute 
     setAssessmentResult(null);
 
     try {
-      const response = await fetch("/api/school/generate-quiz", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: selectedLesson.topic,
-          notes: JSON.stringify(selectedLesson.points)
-        })
+      const data = await invokeGeminiAction("generate-quiz", "/api/school/generate-quiz", {
+        topic: selectedLesson.topic,
+        notes: JSON.stringify(selectedLesson.points)
       });
-      const data = await response.json();
       if (data.success && data.questions) {
         setSelectedLesson(prev => {
           if (prev) {
@@ -1165,16 +1181,15 @@ Prepare for your master certifications by reviewing the definitions of absolute 
         <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-850 rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row transition-colors">
           
           {/* Cover Logo & Info Panel */}
-          <div className="bg-red-950 text-white p-8 md:w-1/2 flex flex-col justify-between text-left relative overflow-hidden">
-            <div className="absolute inset-0 bg-radial-gradient from-red-900 to-red-955 opacity-90" />
+          <div className="bg-[#2C241E] text-white p-8 md:w-1/2 flex flex-col justify-between text-left relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-[#3B2E25] to-[#1F1B18] opacity-90" />
             
             <div className="relative z-10 space-y-6">
               <div className="flex flex-col sm:flex-row items-center gap-4 mb-2">
                 <img 
-                  src="/src/assets/images/zion_digital_logo_1781070536038.png" 
-                  alt="Zion Digital Golden Seal" 
-                  className="h-24 w-24 object-contain rounded-full border-2 border-amber-500/80 shadow-[0_0_20px_rgba(245,158,11,0.4)] bg-stone-950" 
-                  referrerPolicy="no-referrer"
+                  src={zionLogo}
+                  alt="Zion Digital Seal" 
+                  className="h-24 w-24 object-contain rounded-full border-2 border-[#A8421B] shadow-md bg-[#FAF8F4] p-1" 
                 />
                 <div className="text-center sm:text-left">
                   <span className="text-[10px] font-mono tracking-widest text-amber-500 uppercase block font-bold">OFFICIAL ACADEMY SEAL</span>
@@ -2014,22 +2029,19 @@ Prepare for your master certifications by reviewing the definitions of absolute 
 
               {/* EXAM MODULE BUTTON / VIEW TRIGGER */}
               {!showAssessment ? (
-                <div className="p-5 rounded-2xl bg-gradient-to-r from-red-950 to-red-900 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="p-5 rounded-2xl bg-[#2C241E] text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-[#E7E1D8]">
                   <div className="flex-1 text-left">
-                    <h4 className="font-bold text-sm uppercase">AI-Evaluated Scholarly Assessment</h4>
-                    <p className="text-[11px] text-red-100 mt-1 max-w-md">Challenge yourself with the automated multiple choice test representing this topic's key chapters.</p>
+                    <h4 className="font-bold text-sm uppercase">Faculty-Evaluated Scholarly Assessment</h4>
+                    <p className="text-[11px] text-[#E7E1D8] mt-1 max-w-md">Challenge yourself with the timed multiple choice test verified by our server grading engine.</p>
                   </div>
                   
                   <div className="flex flex-wrap gap-2.5 shrink-0">
                     <button
-                      onClick={() => {
-                        setStudentAnswers({});
-                        setAssessmentResult(null);
-                        setShowAssessment(true);
-                      }}
-                      className="bg-white hover:bg-stone-100 text-red-950 font-black text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-xl transition cursor-pointer shadow"
+                      onClick={handleBeginAssessment}
+                      disabled={isStartingExam}
+                      className="bg-[#A8421B] hover:bg-[#8F3614] text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-xl transition cursor-pointer shadow disabled:opacity-50"
                     >
-                      Start Regular Test ({selectedLesson.selfAssessment.length} Qs)
+                      {isStartingExam ? "Starting Exam..." : `Start Regular Test (${selectedLesson.selfAssessment.length} Qs)`}
                     </button>
 
                     <button
@@ -2096,20 +2108,23 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                           ))}
                         </div>
 
-                        {/* If marked/submitted, show immediate diagnostic validation explanations */}
-                        {assessmentResult && (
-                          <div className={`mt-3 p-3.5 rounded-xl text-[11px] leading-relaxed border ${
-                            studentAnswers[qIdx] === q.correctIndex
-                              ? "bg-green-50/50 dark:bg-green-950/15 border-green-200/40 text-green-900 dark:text-green-300"
-                              : "bg-red-50/50 dark:bg-red-950/15 border-red-200/40 text-red-900 dark:text-red-300"
-                          }`}>
-                            <span className="font-bold block mb-1">
-                              {studentAnswers[qIdx] === q.correctIndex ? "✅ Correct Option" : "❌ Discrepancy Found"}
-                            </span>
-                            <p className="mb-2 italic">Correct Choice: {String.fromCharCode(65 + q.correctIndex)}. Approved reasoning:</p>
-                            <p className="font-sans leading-normal">{q.explanation}</p>
-                          </div>
-                        )}
+                        {/* Show diagnostic validation only after authorized server result release */}
+                        {assessmentResult && assessmentResult.resultsReleased && assessmentResult.breakdown?.[qIdx] && (() => {
+                          const detail = assessmentResult.breakdown![qIdx];
+                          return (
+                            <div className={`mt-3 p-3.5 rounded-xl text-[11px] leading-relaxed border ${
+                              detail.isCorrect
+                                ? "bg-green-50/50 dark:bg-green-950/15 border-green-200/40 text-green-900 dark:text-green-300"
+                                : "bg-red-50/50 dark:bg-red-950/15 border-red-200/40 text-red-900 dark:text-red-300"
+                            }`}>
+                              <span className="font-bold block mb-1">
+                                {detail.isCorrect ? "Correct Option" : "Discrepancy Found"}
+                              </span>
+                              <p className="mb-1 italic">Approved Choice: {String.fromCharCode(65 + detail.correctIndex)}</p>
+                              {detail.explanation && <p className="font-sans leading-normal">{detail.explanation}</p>}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -2282,8 +2297,8 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                       <div className="md:col-span-7 space-y-4 text-left">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b pb-2.5 gap-2">
                           <div>
-                            <h4 className="font-extrabold text-xs text-stone-900 dark:text-stone-100 uppercase tracking-wide">✍️ Syllabus Workshop & AI Exam Compiler</h4>
-                            <p className="text-[10px] text-stone-500">Tutors can author courses, customize notes, and auto-formulate test questions with AI.</p>
+                            <h4 className="font-extrabold text-xs text-stone-900 dark:text-stone-100 uppercase tracking-wide">✍️ Syllabus Workshop & Exam Compiler</h4>
+                            <p className="text-[10px] text-stone-500">Employed tutors and faculty deans author courses, customize notes, and formulate test questions.</p>
                           </div>
                           <span className="text-[9px] font-mono font-bold bg-amber-50 text-amber-700 dark:bg-amber-400/20 dark:text-amber-300 px-2 py-1 rounded shrink-0">ROLE: FACULTY COVENANT OVERSEER</span>
                         </div>
@@ -2393,8 +2408,8 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                                      <div className="font-bold text-stone-850 dark:text-stone-200">Q{qIndex+1}: {q.question}</div>
                                      <div className="grid grid-cols-2 gap-1.5 mt-1.5 text-[9.5px] text-stone-500 font-mono">
                                        {q.options?.map((opt: string, optIdx: number) => (
-                                         <div key={optIdx} className={optIdx === q.correctIndex ? "text-emerald-650 font-bold font-sans" : ""}>
-                                           {optIdx}. {opt} {optIdx === q.correctIndex && "✓"}
+                                         <div key={optIdx} className={optIdx === teacherDraftAnswerKeys[qIndex]?.correctIndex ? "text-emerald-650 font-bold font-sans" : ""}>
+                                           {optIdx}. {opt} {optIdx === teacherDraftAnswerKeys[qIndex]?.correctIndex && "✓"}
                                          </div>
                                        ))}
                                      </div>

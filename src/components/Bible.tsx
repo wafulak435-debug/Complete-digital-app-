@@ -3,6 +3,7 @@ import { BookOpen, Search, Bookmark, Sun, Play, Pause, Volume2, Settings, HelpCi
 import { BIBLE_DATA, DEVOTIONALS } from "../data";
 import { BibleDB, Highlight, StudyNote } from "../lib/bibleDb";
 import { GENERAL_OFFLINE_WORDS, DictionaryWord } from "./OfflineDictionary";
+import { invokeGeminiAction } from "../lib/aiClient";
 
 interface BibleProps {
   onUnlockBadge: (badgeId: string) => void;
@@ -89,7 +90,7 @@ const ALL_66_BOOKS: BibleBookDef[] = [
 
 export default function Bible({ onUnlockBadge }: BibleProps) {
   const [activeTab, setActiveTab] = useState<"read" | "devotional" | "saved" | "sync">("read");
-  const [selectedVersion, setSelectedVersion] = useState("KJV");
+  const [selectedVersion, setSelectedVersion] = useState("NIV");
   const [selectedBook, setSelectedBook] = useState("John");
   const [selectedChapter, setSelectedChapter] = useState(1);
   const [savedVerses, setSavedVerses] = useState<string[]>([]);
@@ -259,15 +260,10 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
       }
 
       if (typeof navigator !== "undefined" && navigator.onLine) {
-        const resp = await fetch("/api/ai/assistant", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: `Translate these Bible verses from ${book} Chapter ${chapter} into Swahili (Kiswahili). Maintain standard Swahili Bible register (Biblia Takatifu, Union Version). Provide ONLY a JSON array of strings matching the same verse indexes. Output no commentary or introductory notes. Start with '[' and end with ']': ${JSON.stringify(englishVerses)}`,
-            category: "Assistant"
-          })
+        const data = await invokeGeminiAction("assistant", "/api/ai/assistant", {
+          prompt: `Translate these Bible verses from ${book} Chapter ${chapter} into Swahili (Kiswahili). Maintain standard Swahili Bible register (Biblia Takatifu, Union Version). Provide ONLY a JSON array of strings matching the same verse indexes. Output no commentary or introductory notes. Start with '[' and end with ']': ${JSON.stringify(englishVerses)}`,
+          category: "Assistant"
         });
-        const data = await resp.json();
         if (data.success && data.text) {
           let textResult = data.text.trim();
           if (textResult.startsWith("```")) {
@@ -326,16 +322,11 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
         }
 
         // Also get quick Swahili translation from server-side translator
-        const transResp = await fetch("/api/ai/language-translate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: cleanWord,
-            targetLang: "Swahili",
-            mode: "translate"
-          })
+        const transData = await invokeGeminiAction("language-translate", "/api/ai/language-translate", {
+          text: cleanWord,
+          targetLang: "Swahili",
+          mode: "translate"
         });
-        const transData = await transResp.json();
         if (transData.success && transData.text) {
           foundTrans = transData.text;
         }
@@ -608,7 +599,17 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
         }
 
         // 2. Load from live public Bible API
-        const translationCode = selectedVersion.toLowerCase() === "kjv" ? "kjv" : "web";
+        const getTranslationCode = (ver: string) => {
+          const v = ver.toUpperCase();
+          if (v.includes("NIV")) return "niv";
+          if (v.includes("KJV")) return "kjv";
+          if (v.includes("ESV")) return "esv";
+          if (v.includes("NLT")) return "nlt";
+          if (v.includes("SUV") || v.includes("SWAHILI")) return "suv";
+          if (v.includes("WEB")) return "web";
+          return "niv";
+        };
+        const translationCode = getTranslationCode(selectedVersion);
         const bookParam = encodeURIComponent(selectedBook.toLowerCase());
         const url = `https://bible-api.com/${bookParam}+${selectedChapter}?translation=${translationCode}`;
         
@@ -642,16 +643,11 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
         // 3. Fallback to Gemini AI Server-Side Retrieval if online
         try {
           if (typeof navigator !== "undefined" && navigator.onLine) {
-            const queryPrompt = `Provide the exact verses of ${selectedBook} Chapter ${selectedChapter} in standard ${selectedVersion} format. Return only a JSON array of strings, where each string represents a verse (e.g. ["Verse 1 text...", "Verse 2 text..."]). Do not include introductory text, explanations, or Markdown. Start with "[" and end with "]".`;
-            const resp = await fetch("/api/ai/assistant", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt: queryPrompt,
-                category: "Assistant"
-              })
+            const queryPrompt = `Provide the exact, complete, authentic verses of the Holy Bible for ${selectedBook} Chapter ${selectedChapter} in standard ${selectedVersion} (New International Version if NIV) format. Return ONLY a valid JSON array of strings, where each string represents a single verse starting with text or verse number. (e.g. ["1 In the beginning God created the heavens and the earth.", "2 Now the earth was formless and empty..."]). Do NOT include introductory notes, commentaries, or Markdown formatting outside JSON. Start strictly with "[" and end with "]".`;
+            const resData = await invokeGeminiAction("assistant", "/api/ai/assistant", {
+              prompt: queryPrompt,
+              category: "Assistant"
             });
-            const resData = await resp.json();
             if (active && resData.success && resData.text) {
               let parsedLines: string[] = [];
               let jsonText = resData.text.trim();
@@ -901,6 +897,17 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
   };
 
   // --- OFFLINE BIBLE SYNCHRONIZATION ENGINES ---
+  const getTranslationCode = (ver: string) => {
+    const v = ver.toUpperCase();
+    if (v.includes("NIV")) return "niv";
+    if (v.includes("KJV")) return "kjv";
+    if (v.includes("ESV")) return "esv";
+    if (v.includes("NLT")) return "nlt";
+    if (v.includes("SUV") || v.includes("SWAHILI")) return "suv";
+    if (v.includes("WEB")) return "web";
+    return "niv";
+  };
+
   const handleSyncWholeBook = async (bookName: string) => {
     const bookDef = ALL_66_BOOKS.find(b => b.name === bookName);
     if (!bookDef) return;
@@ -911,7 +918,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
     setSyncedChaptersCount(0);
     setSyncProgress(0);
     
-    const translationCode = selectedVersion.toLowerCase() === "kjv" ? "kjv" : "web";
+    const translationCode = getTranslationCode(selectedVersion);
     setSyncStatusText(`Starting offline sync for ${bookName} (${bookDef.chapters} chapters)...`);
 
     for (let ch = 1; ch <= bookDef.chapters; ch++) {
@@ -958,7 +965,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
     setSyncProgress(0);
 
     setSyncStatusText("Preparing full Bible sync. Scanning for existing cache files...");
-    const translationCode = selectedVersion.toLowerCase() === "kjv" ? "kjv" : "web";
+    const translationCode = getTranslationCode(selectedVersion);
     let processedCount = 0;
 
     for (const bookDef of ALL_66_BOOKS) {
@@ -1069,16 +1076,19 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
     try {
       const targetQuery = `Provide the exact chapter text of the Holy Scripture from ${selectedBook} Chapter ${selectedChapter} in standard ${selectedVersion} format. Separate verses into numbered lines. Be accurate and professional in your delivery.`;
       
-      const resp = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const resData = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: targetQuery,
           category: "Assistant"
-        })
-      });
-
-      const resData = await resp.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `${selectedBook} ${selectedChapter} (${selectedVersion})`,
+          historyCategory: "Devotional Bible",
+        }
+      );
       if (resData.success && resData.text) {
         // split text by newline or verse patterns
         const lines = resData.text
@@ -1211,12 +1221,14 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                 <select
                   value={selectedVersion}
                   onChange={(e) => setSelectedVersion(e.target.value)}
-                  className="w-full text-xs font-bold cursor-pointer rounded-lg border border-stone-200 bg-neutral-50 p-2.5 outline-none text-stone-700"
+                  className="w-full text-xs font-bold cursor-pointer rounded-lg border border-stone-200 bg-neutral-50 p-2.5 outline-none text-stone-700 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-100"
                 >
+                  <option value="NIV">📖 New International Version (NIV) — [Primary]</option>
                   <option value="KJV">King James Version (KJV)</option>
-                  <option value="NIV">New International Version (NIV)</option>
                   <option value="ESV">English Standard Version (ESV)</option>
-                  <option value="ASV">American Standard Version (ASV)</option>
+                  <option value="NLT">New Living Translation (NLT)</option>
+                  <option value="SUV">Swahili Union Version (SUV Biblia Takatifu)</option>
+                  <option value="WEB">World English Bible (WEB)</option>
                 </select>
               </div>
 
@@ -1972,7 +1984,7 @@ export default function Bible({ onUnlockBadge }: BibleProps) {
                     <span className="text-[10px] font-mono font-black text-red-850 uppercase tracking-widest block font-bold">Massive Synchronization Hub</span>
                     <h4 className="text-xl font-black text-stone-900">Synchronize Entire Bible</h4>
                     <p className="text-[11px] text-stone-500 font-semibold leading-relaxed">
-                      Automatically queries and saves all 1,189 chapters of the KJV or World English translation.
+                      Automatically queries and saves all 1,189 chapters of the New International Version (NIV) or selected translation.
                     </p>
                   </div>
 

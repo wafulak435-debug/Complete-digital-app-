@@ -1,32 +1,23 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
     // --- 1. GLOBAL DENY-BY-DEFAULT CATCH-ALL ---
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- 2. STANDARD SECURED FUNCTIONS ---
+    // --- 2. REUSABLE HARDENED HELPERS ---
     function isSignedIn() {
       return request.auth != null;
     }
-    
-    function isOwner(userId) {
-      return isSignedIn() && (request.auth.uid == userId || request.auth.token.email == userId);
-    }
-    
-    function isEmailAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == "wafulak435@gmail.com" || 
-        request.auth.token.email == "wafula435@gmail.com" || 
-        request.auth.token.email == "wafulak4@gmail.com" || 
-        request.auth.token.email == "wafulak003@gmail.com"
-      );
+
+    function isVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isAdmin() {
-      return isEmailAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
     }
 
     function incoming() {
@@ -37,110 +28,329 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // --- 3. MATCH ENTITIES COLLECTIONS ---
-
-    // Users Profiles database
-    match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && (
-        (isOwner(userId) && incoming().role != "admin") || isEmailAdmin()
+    function isOwner(userId) {
+      return isSignedIn() && (
+        request.auth.uid == userId ||
+        (isVerifiedEmail() && request.auth.token.email == userId)
       );
-      allow update: if isSignedIn() && (
-        (isOwner(userId) && incoming().role == existing().role) || isAdmin()
-      );
-      allow delete: if isAdmin();
     }
 
-    // Global App Settings
+    function userDocExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function notSuspended() {
+      return !userDocExists() || userDoc().get('isSuspended', false) != true;
+    }
+
+    function isEmailMainAdmin() {
+      return isVerifiedEmail() && (
+        request.auth.token.email == "wafulak435@gmail.com" ||
+        request.auth.token.email == "wafula435@gmail.com" ||
+        request.auth.token.email == "wafulak4@gmail.com" ||
+        request.auth.token.email == "wafulak003@gmail.com"
+      );
+    }
+
+    function isMainAdmin() {
+      return notSuspended() && (
+        isEmailMainAdmin() ||
+        (userDocExists() && (userDoc().role == "main_admin" || userDoc().role == "admin"))
+      );
+    }
+
+    function isAdmin() {
+      return notSuspended() && (
+        isMainAdmin() ||
+        (userDocExists() && userDoc().role == "sub_admin")
+      );
+    }
+
+    function isManager() {
+      return notSuspended() && (
+        isMainAdmin() ||
+        (userDocExists() && userDoc().role == "manager")
+      );
+    }
+
+    function hasSubAdminPerm(permField) {
+      return isMainAdmin() || (
+        userDocExists() &&
+        userDoc().role == "sub_admin" &&
+        exists(/databases/$(database)/documents/subAdminPermissions/$(request.auth.token.email)) &&
+        get(/databases/$(database)/documents/subAdminPermissions/$(request.auth.token.email)).data.get(permField, false) == true
+      );
+    }
+
+    function isExaminer(courseTrack) {
+      return notSuspended() && (
+        isMainAdmin() ||
+        isManager() ||
+        hasSubAdminPerm("allowManageExams") ||
+        (
+          userDocExists() &&
+          userDoc().role == "tutor" &&
+          courseTrack in userDoc().get('authorizedCourses', [])
+        )
+      );
+    }
+
+    // --- 3. USER PROFILES ---
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin() || isManager();
+      allow create: if isSignedIn() && isOwner(userId)
+        && incoming().role == "member"
+        && incoming().get('isSuspended', false) == false
+        && incoming().get('credits', 0) <= 20
+        && incoming().get('subscription_status', 'free') == 'free'
+        && incoming().email is string && incoming().email.size() <= 256
+        && incoming().name is string && incoming().name.size() <= 128;
+      allow update: if isSignedIn() && (
+        isMainAdmin() ||
+        (
+          isOwner(userId) &&
+          incoming().role == existing().role &&
+          incoming().get('isSuspended', false) == existing().get('isSuspended', false) &&
+          incoming().get('credits', 0) == existing().get('credits', 0) &&
+          incoming().get('subscription_status', 'free') == existing().get('subscription_status', 'free') &&
+          incoming().get('authorizedCourses', []) == existing().get('authorizedCourses', [])
+        )
+      );
+      allow delete: if isMainAdmin();
+    }
+
+    // --- 4. SUB-ADMIN PERMISSIONS (Main Admin ONLY writes) ---
+    match /subAdminPermissions/{permId} {
+      allow read: if isMainAdmin() || (isVerifiedEmail() && permId == request.auth.token.email);
+      allow create, update, delete: if isMainAdmin();
+    }
+
+    // --- 5. GLOBAL APP SETTINGS ---
     match /appSettings/{settingsId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isMainAdmin() || hasSubAdminPerm("allowVault");
     }
 
-    // Digital Books collection
+    // --- 6. PRODUCTS / BOOKS ---
     match /books/{bookId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read: if existing().status == "active"
+        || isOwner(existing().get('authorId', ''))
+        || hasSubAdminPerm("allowManageBooks");
+      allow create: if isSignedIn() && (
+        hasSubAdminPerm("allowManageBooks") ||
+        (isOwner(incoming().get('authorId', '')) && incoming().status == "draft")
+      );
+      allow update, delete: if isSignedIn() && (
+        hasSubAdminPerm("allowManageBooks") ||
+        isOwner(existing().get('authorId', ''))
+      );
     }
 
-    // eBook reviews - public reading, creator writing
+    // --- 7. REVIEWS, COMMENTS & SOCIAL POSTS ---
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().rating >= 1 && incoming().rating <= 5;
-      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId)
+        && incoming().rating is int && incoming().rating >= 1 && incoming().rating <= 5
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000;
+      allow update, delete: if isSignedIn() && (
+        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
+        hasSubAdminPerm("allowModeration")
+      );
     }
 
-    // eBook thread comments
     match /comments/{commentId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId)
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000;
+      allow update: if isSignedIn() && (
+        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
+        hasSubAdminPerm("allowModeration")
+      );
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
-    // Community Chat Forum Messages
-    match /communityMessages/{messageId} {
+    match /socialPosts/{postId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().text.size() > 0;
-      allow update, delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId)
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000;
+      allow update: if isSignedIn() && (
+        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
+        hasSubAdminPerm("allowModeration")
+      );
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
-    // Saved Document Studio PDF/DOC extracts
+    // --- 8. COMMUNITY MESSAGES & GROUP MEMBERSHIPS ---
+    match /groupMemberships/{membershipId} {
+      allow read: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow write: if hasSubAdminPerm("allowModeration");
+    }
+
+    match /communityMessages/{messageId} {
+      allow read: if (
+        existing().channel != "#workers" && existing().channel != "#faculty"
+      ) || (
+        isSignedIn() && (
+          hasSubAdminPerm("allowModeration") ||
+          exists(/databases/$(database)/documents/groupMemberships/$(existing().channel + "_" + request.auth.uid))
+        )
+      );
+      allow create: if isSignedIn() && notSuspended()
+        && isOwner(incoming().userId)
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000
+        && (
+          (incoming().channel != "#workers" && incoming().channel != "#faculty") ||
+          hasSubAdminPerm("allowModeration") ||
+          exists(/databases/$(database)/documents/groupMemberships/$(incoming().channel + "_" + request.auth.uid))
+        );
+      allow update: if isSignedIn() && (
+        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
+        hasSubAdminPerm("allowModeration")
+      );
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
+    }
+
+    // --- 9. SAVED DOCUMENTS, UPLOAD REQUESTS & ANNOTATIONS ---
     match /savedDocuments/{docId} {
-      allow read: if isSignedIn() && isOwner(resource.data.userId);
+      allow read: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowVault"));
       allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update: if isSignedIn() && isOwner(existing().userId) && isOwner(incoming().userId);
+      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
       allow delete: if isSignedIn() && isOwner(existing().userId);
     }
 
-    // Members File Upload Request moderations queue
     match /uploadRequests/{requestId} {
-      allow read: if true;
+      allow read: if existing().status == "approved" && existing().get('allowedToPublic', false) == true
+        || isOwner(existing().userId)
+        || hasSubAdminPerm("allowApproval");
       allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
       allow update: if isSignedIn() && (
-        isAdmin() || (isOwner(existing().userId) && incoming().status == "pending_delete")
+        hasSubAdminPerm("allowApproval") ||
+        (isOwner(existing().userId) && incoming().status == "pending_delete" && incoming().userId == existing().userId)
       );
-      allow delete: if isAdmin();
+      allow delete: if hasSubAdminPerm("allowApproval");
     }
 
-    // Book page annotations and highlights
     match /annotations/{annotationId} {
-      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow read: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
       allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update: if isSignedIn() && isOwner(existing().userId) && isOwner(incoming().userId);
-      allow delete: if isSignedIn() && isOwner(existing().userId) || isAdmin();
+      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
     }
 
-    // eBook purchases and verification orders
+    // --- 10. BOOK ORDERS, FEE PAYMENTS & WIFI PURCHASES ---
     match /bookOrders/{orderId} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && (
+        isOwner(existing().userId) ||
+        hasSubAdminPerm("allowConfirmPayments") ||
+        isManager()
+      );
       allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
     }
 
-    // System Broadcast Notifications
+    match /feePayments/{paymentId} {
+      allow read: if isSignedIn() && (
+        isOwner(existing().userId) ||
+        hasSubAdminPerm("allowConfirmPayments") ||
+        isManager()
+      );
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
+    }
+
+    match /wifiPurchases/{purchaseId} {
+      allow read: if isSignedIn() && (
+        isOwner(existing().userId) ||
+        hasSubAdminPerm("allowConfirmPayments") ||
+        isManager()
+      );
+      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
+    }
+
+    // --- 11. ENROLLMENTS & CERTIFICATES ---
+    match /enrollments/{enrollmentId} {
+      allow read: if isSignedIn() && (
+        isOwner(existing().userId) ||
+        hasSubAdminPerm("allowManageEnrollments") ||
+        isManager()
+      );
+      allow create: if isSignedIn() && isOwner(incoming().userId)
+        && incoming().status == "pending"
+        && incoming().feeStatus == "unpaid"
+        && incoming().certificateIssued == false;
+      allow update, delete: if hasSubAdminPerm("allowManageEnrollments") || isManager();
+    }
+
+    match /certificate_downloads/{certId} {
+      allow read: if isSignedIn() && (
+        isOwner(existing().get('userId', existing().email)) ||
+        hasSubAdminPerm("allowIssueCertificates") ||
+        isManager()
+      );
+      allow create: if hasSubAdminPerm("allowIssueCertificates") || isManager();
+      allow update, delete: if isMainAdmin();
+    }
+
+    // --- 12. EXAMS, CONFIDENTIAL ANSWER KEYS & ATTEMPTS ---
+    match /exams/{examId} {
+      allow read: if isSignedIn();
+      allow write: if isExaminer(incoming().get('courseTrack', 'leadership'));
+    }
+
+    // Strictly isolated: students can NEVER read or list answer keys
+    match /examAnswerKeys/{examId} {
+      allow read: if isExaminer(existing().get('courseTrack', 'leadership'));
+      allow write: if isExaminer(incoming().get('courseTrack', 'leadership'));
+    }
+
+    match /examAttempts/{attemptId} {
+      allow read: if isSignedIn() && (
+        isOwner(existing().userId) ||
+        isExaminer(existing().get('courseTrack', 'leadership'))
+      );
+      allow create: if isSignedIn() && isOwner(incoming().userId)
+        && incoming().status == "in_progress"
+        && !('score' in incoming().keys())
+        && !('passed' in incoming().keys());
+      allow update: if isSignedIn() && (
+        isExaminer(existing().get('courseTrack', 'leadership')) ||
+        (
+          isOwner(existing().userId) &&
+          existing().status == "in_progress" &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['answers', 'updatedAt'])
+        )
+      );
+      allow delete: if isMainAdmin();
+    }
+
+    // --- 13. NOTIFICATIONS, PRIVATE SEARCH HISTORIES & SERMON VIDEOS ---
     match /notifications/{notificationId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if hasSubAdminPerm("allowBroadcast");
     }
 
-    // WiFi Hotspot Packages Purchases
-    match /wifiPurchases/{purchaseId} {
-      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    // Search and chat histories
     match /searchHistories/{historyId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (isOwner(existing().userId) || isMainAdmin());
+      allow create: if isSignedIn() && isOwner(incoming().userId);
+      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || isMainAdmin());
     }
 
-    // Sermon and Motivation Videos
     match /sermonVideos/{videoId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if hasSubAdminPerm("allowManageBooks") || isMainAdmin();
+    }
+
+    // --- 14. APPEND-ONLY AUDIT LOGS ---
+    match /auditLogs/{logId} {
+      allow read: if hasSubAdminPerm("allowVault");
+      allow create: if isAdmin() || isManager();
+      allow update, delete: if false;
     }
   }
 }

@@ -10,9 +10,18 @@ interface CertificateParams {
   ledgerHash: string;
   date: string;
   verificationUrl: string;
+  institutionName?: string;
+  headDeanName?: string;
+  chancellorName?: string;
+  mottoText?: string;
 }
 
 export function generateAccreditedCertificatePdf(params: CertificateParams): void {
+  const instName = params.institutionName || localStorage.getItem("ZION_CERTIFICATE_INSTITUTION_NAME") || "ZION DIGITAL LEADERSHIP & BIBLE SCHOOL";
+  const headName = params.headDeanName || localStorage.getItem("ZION_PORTAL_HEAD_CERTIFICATE") || "Rev. Andrew Welime";
+  const chancName = params.chancellorName || localStorage.getItem("ZION_CERTIFICATE_CHANCELLOR_NAME") || "Kelvin O. Wafula";
+  const motto = params.mottoText || localStorage.getItem("ZION_CERTIFICATE_MOTTO") || "ESTABLISHED IN COVENANT EXCELLENCE & SACRED STEWARDSHIP";
+
   // A4 Landscape dimensions: 297mm width x 210mm height
   const doc = new jsPDF({
     orientation: "landscape",
@@ -65,12 +74,12 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
   doc.setTextColor(115, 24, 24); // Primary Rich Maroon (Bungoma Senate color)
   doc.setFont("times", "bold");
   doc.setFontSize(22);
-  doc.text("ZION DIGITAL LEADERSHIP & BIBLE SCHOOL", w / 2, 28, { align: "center" });
+  doc.text(instName.toUpperCase(), w / 2, 28, { align: "center" });
 
   doc.setTextColor(100, 110, 120);
   doc.setFont("courier", "bold");
   doc.setFontSize(7.5);
-  doc.text("ESTABLISHED IN COVENANT EXCELLENCE & SACRED STEWARDSHIP", w / 2, 33, { align: "center" });
+  doc.text(motto.toUpperCase(), w / 2, 33, { align: "center" });
 
   // Elegant divider line
   doc.setDrawColor(180, 134, 12);
@@ -99,7 +108,7 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
   doc.setFont("times", "italic");
   doc.setFontSize(11);
   doc.text("This official Graduate Diploma representing outstanding competency and mastery in our advanced,", w / 2, 75, { align: "center" });
-  doc.text("AI-evaluated syllabus study topic of:", w / 2, 81, { align: "center" });
+  doc.text("accredited syllabus study topic of:", w / 2, 81, { align: "center" });
 
   // Syllabus / Course Name Box
   doc.setFillColor(245, 243, 237);
@@ -123,7 +132,7 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
     { align: "center" }
   );
   doc.text(
-    "and continuous learning modules verified automatically by the Zion Academy AI validation core and signed by Chancellor.",
+    "and continuous learning modules verified by the Zion Academy Faculty Board of Examiners and signed by Chancellor.",
     w / 2,
     113,
     { align: "center" }
@@ -164,27 +173,27 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
   doc.setTextColor(180, 134, 12);
   doc.setFont("courier", "bold");
   doc.setFontSize(6.5);
-  doc.text("SCAN TO VERIFY", w / 2, qrY + qrSize + 4.5, { align: "center" });
+  doc.text("SCAN TO VERIFY DIPLOMA", w / 2, qrY + qrSize + 4.5, { align: "center" });
 
   // 8. Signatures Section & Official Seal
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(9);
 
-  // Signature 1: AI Director Core
+  // Signature 1: Senior Faculty Dean & Examiner
   const sigLineY = 175;
   doc.setDrawColor(190, 190, 180);
   doc.setLineWidth(0.3);
   doc.line(30, sigLineY, 95, sigLineY);
 
-  doc.setFont("times", "italic");
+  doc.setFont("times", "bolditalic");
   doc.setFontSize(10.5);
-  doc.text("Wafula_ai_Academic", 62.5, sigLineY - 3, { align: "center" });
+  doc.text(headName, 62.5, sigLineY - 3, { align: "center" });
   doc.setFont("courier", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(120, 120, 120);
-  doc.text("AI DIRECTORY AUDIT", 62.5, sigLineY + 4, { align: "center" });
+  doc.text("SENIOR FACULTY DEAN & EXAMINER", 62.5, sigLineY + 4, { align: "center" });
 
-  // Signature 2: Chancellor Kelvin Opara Wafula
+  // Signature 2: Chancellor
   doc.setDrawColor(190, 190, 180);
   doc.setLineWidth(0.3);
   doc.line(w - 95, sigLineY, w - 30, sigLineY);
@@ -192,11 +201,11 @@ export function generateAccreditedCertificatePdf(params: CertificateParams): voi
   doc.setTextColor(15, 23, 42);
   doc.setFont("times", "bolditalic");
   doc.setFontSize(11);
-  doc.text("Kelvin O. Wafula", w - 62.5, sigLineY - 3, { align: "center" });
+  doc.text(chancName, w - 62.5, sigLineY - 3, { align: "center" });
   doc.setFont("courier", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(120, 120, 120);
-  doc.text("CHANCELLOR & CHIEF ADMINISTRATOR", w - 62.5, sigLineY + 4, { align: "center" });
+  doc.text("CHANCELLOR & ACADEMIC BOARD CHAIR", w - 62.5, sigLineY + 4, { align: "center" });
 
   // Official Instructions Seal Graphics (Bottom middle left / overlay)
   const sealX = w / 2;

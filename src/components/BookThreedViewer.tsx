@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Book } from "../types";
 import { INITIAL_BOOKS } from "../data";
+import { invokeGeminiAction } from "../lib/aiClient";
 
 interface BookThreedViewerProps {
   books?: Book[];
@@ -230,18 +231,10 @@ export default function BookThreedViewer({ books = INITIAL_BOOKS }: BookThreedVi
       // Build high-end professional descriptive modifier to ensure quality photos/vectors and absolutely deny emojis
       const optimizedPrompt = `A premium, professional book cover, high resolution, dramatic lighting, award-winning illustration style, no cartoony look, no emojis: "${aiPrompt.trim()}"`;
 
-      const response = await fetch("/api/ai/generate-image", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          prompt: optimizedPrompt,
-          aspectRatio: "3:4" // portrait book format
-        })
+      const data = await invokeGeminiAction("generate-image", "/api/ai/generate-image", {
+        prompt: optimizedPrompt,
+        aspectRatio: "3:4" // portrait book format
       });
-
-      const data = await response.json();
       if (data.success && data.imageUrl) {
         setCustomAssetUrl(data.imageUrl);
         setUseCustomAsset(true);

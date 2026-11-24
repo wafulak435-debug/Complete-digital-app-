@@ -1,104 +1,71 @@
-# 🚀 Zion Digital App - Local Laptop & Cloud Ingress Run Guide
+# 🚀 Zion Digital App - Local Laptop & Command Prompt (CMD) Execution Guide
 
-This guide describes how to run, execute, and configure the **Zion Digital App** on any local laptop (Windows, macOS, or Linux) using the command prompt/terminal, ensuring complete synchronization with the live Cloud Firestore database and remote networks.
-
----
-
-## ⚡ Windows 1-Click Startup Launcher (Recommended for Windows)
-We have included a custom automate runner `start_zion_app.bat` at the root folder. You do not need to run commands manually!
-1. Simply double-click `start_zion_app.bat` inside your file explorer.
-2. It will check if you have Node.js, install dependencies automatically on its first run, let you select between developer or production execution, and open `http://localhost:3000` in your browser.
+This guide describes how to run, execute, and configure the **Zion Digital App** on any local computer (Windows Command Prompt, PowerShell, macOS, or Linux) using terminal commands and automated batch scripts.
 
 ---
 
-## 📋 Prerequisites
-Ensure your laptop has the following software installed:
-1. **Node.js** (v18 or newer recommended) — [Download from nodejs.org](https://nodejs.org)
-2. **NPM** (comes pre-packed with Node.js)
-3. **Git** (optional, for version control)
+## ⚡ Method 1: Windows 1-Click CMD Launchers (Recommended for Windows CMD)
+We provide two dedicated automated batch runners at the project root directory:
+
+1. **`run_cmd.bat`** (Direct Quick Launcher):
+   - Double-click `run_cmd.bat` or run `run_cmd.bat` inside CMD.
+   - Automatically checks Node.js, restores missing npm dependencies, launches the server, and opens `http://localhost:3000`.
+
+2. **`start_zion_app.bat`** (Interactive Launcher & Diagnostic Tool):
+   - Double-click `start_zion_app.bat` or run `start_zion_app.bat` in CMD.
+   - Lets you choose between **Developer Mode** (hot-reload) and **Production Mode** (optimized build).
 
 ---
 
-## 🛠️ Step 1: Extract and Initialize the Project Files
-1. Download or export the Zion Digital App project zip folder.
-2. Extract the ZIP files to a dedicated workspace folder on your laptop (e.g., `C:\ZionDigitalApp` or `~/ZionDigitalApp`).
-3. Open your laptop's **Command Prompt** (cmd on Windows) or **Terminal** (macOS/Linux).
-4. Navigate to your project folder:
-   ```cmd
-   cd /d "C:\ZionDigitalApp"
-   ```
-   *(Note: The `/d` flag is required in CMD if you are changing across drives, e.g., from C: to D:)*
+## 💻 Method 2: Manual Execution via Windows Command Prompt (CMD)
 
----
+### Step 1: Open CMD and Navigate to Directory
+Open **Command Prompt (CMD)** on your laptop and navigate to the project root folder:
+```cmd
+cd /d "C:\path\to\ZionDigitalApp"
+```
+*(Note: The `/d` switch ensures drive letter switching if your project is on drive D:, E:, etc.)*
 
-## 📦 Step 2: Install Package Dependencies
-To install all required modules (React, Express, Tailwind CSS, Lucide Icons, etc.), run the standard installation command:
-```bash
+### Step 2: Install/Verify Package Dependencies
+Run the installation command in CMD:
+```cmd
 npm install
 ```
-*Note: Ensure you have an active internet connection for this first install so npm can securely pull package assets.*
 
----
-
-## ⚙️ Step 3: Configure Your Environmental Parameters
-Create a file named `.env` in the root folder of your project to store any secure credentials. You can copy the structure from `.env.example`:
-```env
-# Local Environment Configuration
-NODE_ENV=development
-PORT=3000
-```
-
----
-
-## 🚀 Step 4: Run the Application Locally via CMD
-
-### 👨‍💻 Method A: Developer Execution Mode (With Hot Reloading)
-This runs the app in development mode, enabling live edits and instant code reloading:
-```bash
+### Step 3: Launch in Developer Mode (With Hot Reloading)
+To start the app with instant code reload in CMD:
+```cmd
 npm run dev
 ```
-Once the dev server is booted, open your browser and navigate to:
-```url
-http://localhost:3000
-```
+Then navigate to `http://localhost:3000` in your web browser.
 
-### 🏢 Method B: Production Build and Run Mode
-To build a highly optimized, lightning-fast distribution folder and run it under production conditions:
-1. Compile the static frontend assets and bundled backend files:
-   ```bash
-   npm run build
-   ```
-2. Start the production-grade application server:
-   ```bash
-   npm run start
-   ```
-This will open up and run the app on port `3000`.
+### Step 4: Launch in Production Mode
+To compile optimized static bundles and launch the production server in CMD:
+```cmd
+npm run build
+npm run start
+```
 
 ---
 
 ## 🛡️ Pro-Tip: Running CMD as Administrator
-Some advanced local network socket features (such as local tethering mesh tracking) require elevated administrative permissions.
-1. Click the **Start Menu**, search for **Command Prompt** or **CMD**.
-2. Right-click on it and choose **Run as Administrator**.
-3. Navigate to your folder and run the app:
+Running Command Prompt with elevated administrator privileges is recommended if you plan to share your local web server over a Wi-Fi hotspot:
+1. Press `Win + S`, type `cmd`.
+2. Right-click **Command Prompt** and select **Run as Administrator**.
+3. Navigate and run:
    ```cmd
-   cd /d "C:\ZionDigitalApp"
+   cd /d "C:\path\to\ZionDigitalApp"
    npm run dev
    ```
 
 ---
 
-## 🪐 Step 5: Dual Online/Offline Sync Architecture
-Every time this app runs on your laptop, it connects automatically with the live cloud servers and synchronized state pools:
-
-1. **Live Firestore Connection**: When online, your local laptop database transactions (Bible School tests, books, community chats, WiFi hotspot orders) write directly into the shared cloud database in real time.
-2. **Graceful Offline Fallback**: If you lose connection or travel to a place without internet/data bundles:
-   - Toggle **OFFLINE MODE (NO DATA)** in the top bar.
-   - The **Wafula Local AI Engine** intercepts all queries and executes theological searches, document extractions, translation lessons, and mock image generation completely local-first with **ZERO data bundles**.
-   - Your local changes are stored securely inside your browser's persistent `indexedDB` cache.
-   - As soon as your laptop reconnects to the network, all changes are automatically synced back to the Cloud database!
-
----
-
-## ❓ Need Assistance?
-For help with school curriculums, certified diploma issuances, e-book publication coordination, or local Bungoma WiFi hotspot configurations, open the **Zion Digital Hub** and chat with our friendly local coordinators!
+## ❓ CMD Troubleshooting
+- **Port 3000 already in use?**
+  In CMD, check which process is occupying port 3000 and terminate it:
+  ```cmd
+  netstat -ano | findstr :3000
+  taskkill /PID <PID_NUMBER> /F
+  ```
+- **Node.js command not recognized?**
+  Download and install Node.js v18 or higher from [https://nodejs.org](https://nodejs.org) and restart your CMD window.

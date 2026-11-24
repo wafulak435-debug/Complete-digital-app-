@@ -1,8 +1,6 @@
 export interface AssessmentQuestion {
   question: string;
   options: string[];
-  correctIndex: number;
-  explanation: string;
 }
 
 export interface Lesson {
@@ -40,9 +38,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Articulating a clear, desirable 'Why' that connects with people's values.",
           "Ignoring local resources and focusing exclusively on theoretical global parameters.",
           "Withholding project goals to prevent administrative confusion."
-        ],
-        correctIndex: 1,
-        explanation: "Visionary leadership inspires engagement from within. By clearly communicating the core 'Why', leaders earn willing dedication rather than forced compliance."
+        ]
       },
       {
         question: "How should a visionary leader utilize repeatable slogans and relatable analogies?",
@@ -51,9 +47,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To translate complex strategic goals into simple, memorable, and actionable shared milestones.",
           "To avoid writing operational guidelines altogether.",
           "To replace real database audits with casual storytelling."
-        ],
-        correctIndex: 1,
-        explanation: "Analogies and slogans bypass complex jargon loops, ensuring that every level of the cohort can accurately memorize and execute the primary mission goals."
+        ]
       },
       {
         question: "Why should strategic visioning be grounded in local realities (e.g. Bungoma, Kenya)?",
@@ -62,9 +56,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To ensure that resource availability, culture, and practical local strengths guide our execution buffers.",
           "Simply to satisfy municipal government reporting requirements.",
           "To exclude international collaborators from participating in local projects."
-        ],
-        correctIndex: 1,
-        explanation: "A vision that ignores local culture and resource constraints is built on sand. Solid execution requires aligning goals with localized strengths."
+        ]
       },
       {
         question: "What constitutes the core function of structured quarterly milestones on a 10-year roadmap?",
@@ -73,9 +65,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To provide immediate tactical checkpoints that keep daily operations aligned with the long-term vision.",
           "To replace the final project evaluation with minor checklists.",
           "To allow administrators to change primary vision goals every month."
-        ],
-        correctIndex: 1,
-        explanation: "Quarterly milestones bridge the gap between grand long-term goals and daily focus, ensuring steady momentum without losing sight of the broader horizon."
+        ]
       },
       {
         question: "What role does iterative vision auditing play to prevent organizational drift?",
@@ -84,9 +74,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It allows the leader to gauge internal alignment, collect feedback, and clarify target values dynamically.",
           "It eliminates the need for any formal written contracts or assignments.",
           "It guarantees that projects are completed beneath initial budget lines on every occasion."
-        ],
-        correctIndex: 1,
-        explanation: "Ongoing vision audits create continuous learning loops. They ensure that misalignments or strategic drift are caught and addressed proactively."
+        ]
       }
     ]
   },
@@ -110,9 +98,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "A leader should spend 70% of the time actively listening to feedback and local perspectives.",
           "That only 30% of any spoken instruction is translated into workable PDFs.",
           "Allowing only 30% of cohort members to speak during general assemblies."
-        ],
-        correctIndex: 1,
-        explanation: "Active listening demonstrates humility and gathers crucial local context. Speaking less and studying more prevents strategic mistakes."
+        ]
       },
       {
         question: "Which technique is vital to execute 'Closed Loop Verification' in daily meetings?",
@@ -121,9 +107,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Having participants summarize the core action deliverables in their own words to verify alignment.",
           "Recording the entire meeting in audio to play back later at high speed.",
           "Writing a formal email detailing penalties for non-compliance."
-        ],
-        correctIndex: 1,
-        explanation: "Closed loop verification requires the listener to actively process and re-state the directive, exposing any gaps or misunderstandings instantly."
+        ]
       },
       {
         question: "How does 'Acknowledge Before Answering' improve organizational culture?",
@@ -132,9 +116,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It replaces the need to answer difficult or budget-challenging questions directly.",
           "It speeds up meetings by shutting down unnecessary discussions.",
           "It establishes an administrative hierarchy where only approved moderators speak."
-        ],
-        correctIndex: 0,
-        explanation: "Acknowledging feedback builds trust. When individuals feel heard, defensive walls crumble, fostering genuine collaborative problem-solving."
+        ]
       },
       {
         question: "What is the primary benefit of High-Empathy Framing when delivering critical change?",
@@ -143,9 +125,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It aligns the strategic reason for change with the personal values and concerns of the audience.",
           "It forces the audience to accept lower wages without complaint.",
           "It guarantees that no team member will ever make mistakes again."
-        ],
-        correctIndex: 1,
-        explanation: "Empathy helps bridge divides. By styling the message around the audience's point of view, you turn resistance into understanding."
+        ]
       },
       {
         question: "Why should an administrator utilize a Multi-Channel approach when publishing directives?",
@@ -154,9 +134,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To appeal to different learning preferences (visual, auditory, textual) and ensure redundancy.",
           "To confuse low-level coordinators about which version is currently active.",
           "To prove that the administrator is hyper-active across all networks."
-        ],
-        correctIndex: 1,
-        explanation: "Multi-channel distribution minimizes transmission failure. It provides redundant pathways for critical information, securing consistent execution."
+        ]
       }
     ]
   },
@@ -180,9 +158,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Anticipating multi-order effects of decisions and defending resources with buffers.",
           "Ignoring long-term values to complete checkboxes faster.",
           "Relying entirely on yesterday's guidelines or static outdated procedures."
-        ],
-        correctIndex: 1,
-        explanation: "Strategy is proactive. It builds defensive buffers and anticipates second-order consequences to protect the long-term vision."
+        ]
       },
       {
         question: "What is a 'Second-Order Effect' in strategic management?",
@@ -191,9 +167,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "The secondary, indirect consequence that stems from our immediate, direct tactical decisions.",
           "The speed at which a secondary server takes over during network outages.",
           "A feedback loop that occurs only inside the second quarter of the academic year."
-        ],
-        correctIndex: 1,
-        explanation: "First-order choices create immediate visible wins. Second-order effects are the downstream ripples, which are often negative if not planned defensively."
+        ]
       },
       {
         question: "Why is defensive 'Buffer Allocation' crucial for sustainable organizational survival?",
@@ -202,9 +176,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To absorb unexpected shocks, budget overruns, and logistical delays without collapsing daily operations.",
           "To pay out bonuses to top-level administrative coordinators early.",
           "To exclude minor projects from receiving seed capital."
-        ],
-        correctIndex: 1,
-        explanation: "Unforeseen shocks are guaranteed to occur. Strategic buffering preserves stability and provides breathing room to adjust formulas."
+        ]
       },
       {
         question: "What does 'Objective Centering' allow a team to do during crisis periods?",
@@ -213,9 +185,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It forces them to repeat failed approaches indefinitely.",
           "It shuts down all communication lines until a formal review is completed.",
           "It removes all performance guidelines to reduce stress levels."
-        ],
-        correctIndex: 0,
-        explanation: "When crisis hits, rigid paths break. Objective centering provides a magnetic north, allowing the team to innovate new paths to the same goal."
+        ]
       },
       {
         question: "How does a 'Scenario Planning Matrix' protect organizational integrity?",
@@ -224,9 +194,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "By pre-defining action plans for multiple future states, ensuring rapid coordinate response.",
           "By removing the need for regular board meetings.",
           "By limiting the number of books in the digital library."
-        ],
-        correctIndex: 1,
-        explanation: "Scenario planning replaces panic with structured steps. It ensures that when worst-case realities hit, the team has a pre-verified manual ready."
+        ]
       }
     ]
   },
@@ -250,9 +218,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "As a delegated trust to be spent entirely on serving and empowering the cohort.",
           "As an unnecessary barrier that slows down decision speed.",
           "As a financial tool to secure private capital lines."
-        ],
-        correctIndex: 1,
-        explanation: "Authority is never an end in itself. Ethical leaders view power as a resource delegated to them solely to lower barriers for others."
+        ]
       },
       {
         question: "What is the primary function of establishing 'Meticulous Asset Transparency'?",
@@ -261,9 +227,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To invite public trust, foster accountability, and eliminate vulnerability points for corruption.",
           "To make the financial reports too complicated for standard members to read.",
           "To ensure that only certified accountants can use the digital portal."
-        ],
-        correctIndex: 1,
-        explanation: "Transparency is the ultimate detergent for corruption. Public, auditable financial records keep systems healthy and build secure organizational faith."
+        ]
       },
       {
         question: "How does treating team members as 'Scholars rather than Cogs' affect productivity?",
@@ -272,9 +236,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It unlocks internal pride, fosters creative agency, and drives higher long-term commitment.",
           "It forces the leader to seek consensus for minor daily decisions.",
           "It increases administration payroll costs unnecessarily."
-        ],
-        correctIndex: 1,
-        explanation: "Dignity is a master key. When people feel valued as intellectual agents with real potential, they invest their best energies into execution."
+        ]
       },
       {
         question: "What constitutes a proactive method to mitigate Conflicts of Interest?",
@@ -283,9 +245,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Full disclosure of linkages and recusing oneself from decisions that affect personal assets.",
           "Re-allocating organizational budgets to trusted family members quietly.",
           "Eliminating all external independent oversight protocols."
-        ],
-        correctIndex: 1,
-        explanation: "Disclosure builds protective walls around organizational integrity. It prevents personal bias from eroding the objective trust of the cohort."
+        ]
       },
       {
         question: "Why are independent Stewardship Audits highly recommended for active NGOs?",
@@ -294,9 +254,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To provide objective, unbiased reviews of system metrics and protect cohort assets.",
           "To change the primary vision statements without consulting founders.",
           "To replace local managers with foreign advisors permanently."
-        ],
-        correctIndex: 1,
-        explanation: "Internal reviews are prone to blindspots. Independent auditors provide an objective sanity check, ensuring system compliance and safety."
+        ]
       }
     ]
   },
@@ -320,9 +278,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "As raw feedback pointing to unresolved gaps, offering an opportunity for process renewal.",
           "As proof that the team is completely incompetent.",
           "As an excuse to delay critical project deliverables indefinitely."
-        ],
-        correctIndex: 1,
-        explanation: "Friction indicates underlying design gaps. An ethical leader uses the energy of conflict to reveal hidden system bottlenecks and forge better paths."
+        ]
       },
       {
         question: "What is the core target of 'Interest-Based Mediation'?",
@@ -331,9 +287,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To focus the conversation away from rigid emotional positions and find common, shared core interests.",
           "To determine which of the two parties is legally and financially at fault.",
           "To replace active team members with external neutral consultants."
-        ],
-        correctIndex: 1,
-        explanation: "Positions are rigid, but interests are negotiable. Identifying shared baseline values allows divided teams to find creative win-win solutions."
+        ]
       },
       {
         question: "Why must a mediator anchor the session with uninterrupted 'Active Listening' slots?",
@@ -342,9 +296,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To lower emotional defenses, make participants feel respected, and capture clear factual details.",
           "To avoid taking any definitive administrative stance during the crisis.",
           "To allow the dominant party to exhaust and silence the weaker party."
-        ],
-        correctIndex: 1,
-        explanation: "Defensiveness melts when a participant feels fully heard. Providing uninterrupted speaking time establishes respect and uncovers core truths."
+        ]
       },
       {
         question: "What is 'Collaborative Problem Synthesis'?",
@@ -353,9 +305,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Co-creating a practical, forward-looking action checklist that honors both parties' core values and interests.",
           "Splitting the organization into two separate entities to avoid contact.",
           "Allowing the most vocal party to dictate the final agreement."
-        ],
-        correctIndex: 1,
-        explanation: "Synthesis takes the best of both perspectives. The resulting checklist feels co-owned by both parties, ensuring deep commitment."
+        ]
       },
       {
         question: "Why are post-agreement 30- and 60-day Integration Audits necessary?",
@@ -364,9 +314,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To verify compliance with the agreement, support healing alignment, and adjust guidelines dynamically.",
           "To find reasons to fine or penalize coordinators.",
           "To prove that the mediator has absolute control over team schedules."
-        ],
-        correctIndex: 1,
-        explanation: "Paper agreements can fail in real-world application. Routine check-ins ensure minor friction is addressed before it escalates back into a crisis."
+        ]
       }
     ]
   },
@@ -390,9 +338,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "It slows organization response speed, lowers trust, and halts team capability development.",
           "It forces the system to spend excess budget on server hosting.",
           "It causes minor formatting issues when publishing eBooks."
-        ],
-        correctIndex: 1,
-        explanation: "A manager who must approve every line of work becomes a literal bottleneck. Delegation releases energy and raises organization IQ."
+        ]
       },
       {
         question: "How should 'Capability-Matched Entrustment' be executed in a school setting?",
@@ -401,9 +347,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "By auditing previous performance records and assigning tasks that match proven competency scales.",
           "By assigning vital logistics purely based on personal friendships.",
           "By letting everyone vote on who should handle financial allocations."
-        ],
-        correctIndex: 1,
-        explanation: "Delegation is built on proven ability. Aligning the complexity of a role with individual skills prevents frustration and system crashes."
+        ]
       },
       {
         question: "Why must delegated authority be wrapped in clear 'Boundary Framing'?",
@@ -412,9 +356,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "To define safety parameters, budget caps, and moral guidelines where they can operate with absolute autonomy.",
           "To make the project guidelines long and difficult to memorize.",
           "To ensure that only senior administrators retain access codes."
-        ],
-        correctIndex: 1,
-        explanation: "Boundaries don't restrict; they define the playground. Clear scopes prevent fear of overstepping and keep everyone structurally secure."
+        ]
       },
       {
         question: "What does 'Refusing to Micromanage' communicate to a designated leader?",
@@ -423,9 +365,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "An expression of high administrative trust, boosting internal owner accountability and creative problem-solving.",
           "That the director lacks the technical skills to audit the work.",
           "An invitation to skip daily operational updates altogether."
-        ],
-        correctIndex: 1,
-        explanation: "Freedom breeds accountability. When you give leaders space to own their decisions, they assume a profound sense of pride in the results."
+        ]
       },
       {
         question: "How should an outstanding director conduct an 'Objective Audit Loop'?",
@@ -434,9 +374,7 @@ export const PREBUILT_LESSONS: Lesson[] = [
           "Through scheduled, transparent reviews of outcomes against target goals, providing constructive feedback.",
           "By ignoring performance metrics unless a major failure is reported.",
           "By letting the scholar grade themselves without external verification."
-        ],
-        correctIndex: 1,
-        explanation: "Audit loops must be predictable and constructive. They focus on objective outcome goals while supporting the leader's continuous learning."
+        ]
       }
     ]
   }
@@ -466,9 +404,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To continuously calculate correction signals that smoothly drive mechanical states toward a target value.",
           "To automatically translate Arduino scripts into python representations.",
           "To count the physical layout dimensions of local microcontroller cards."
-        ],
-        correctIndex: 1,
-        explanation: "PID controllers use feedback error integrals and derivatives to modulate actuator voltage, preventing mechanical overshoot and jerky movements."
+        ]
       },
       {
         question: "Which transmission protocol is a standard, lightweight choice for IoT sensor telemetry?",
@@ -477,9 +413,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Message Queuing Telemetry Transport (MQTT)",
           "Hypertext Transfer Protocol Secure (HTTPS) with heavy XML pages",
           "Simple File Transfer Protocol (SFTP)"
-        ],
-        correctIndex: 1,
-        explanation: "MQTT utilizes a lightweight publish-subscribe model, making it ideal for remote solar-powered sensors operating over low-bandwidth cellular nodes."
+        ]
       },
       {
         question: "What does an ultrasonic sensor measure to compute physical distance?",
@@ -488,9 +422,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The round-trip flight time of high-frequency sound wave pulses bouncing off an object.",
           "The thermal infrared heat signatures emitted by dynamic moving parts.",
           "The electrical conductance of metallic framework structures."
-        ],
-        correctIndex: 1,
-        explanation: "Ultrasonic sensors emit high-frequency pings and count the time taken to capture the echo, multiplying by the speed of sound to deduce exact distance."
+        ]
       },
       {
         question: "In automated agriculture, how do sensor nodes save pump electricity?",
@@ -499,9 +431,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "By reading moisture data and running water pumps only when the soil drops below a critical dryness threshold.",
           "By deleting historic ledger database logs to clear memory.",
           "By downloading heavy external books in background mode."
-        ],
-        correctIndex: 1,
-        explanation: "Conditional irrigation ensures that resource-guzzling pumps run only when necessary, saving water and conserving solar-battery capacities."
+        ]
       },
       {
         question: "What constitutes the 'actuator' portion of an automated robotic arm system?",
@@ -510,9 +440,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The electric motors, servos, or pneumatic cylinders that execute physical movement.",
           "The ultrasonic sensor reading distance parameters.",
           "The security credential key assigned to the node."
-        ],
-        correctIndex: 1,
-        explanation: "Actuators are the muscles of automation. While sensors observe and chips decide, actuators receive the output voltage to manipulate physical space."
+        ]
       }
     ]
   },
@@ -539,9 +467,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Content space plus padding width, border thickness, and optionally outer margin widths.",
           "By measuring the overall display frame coordinates of the viewport.",
           "By compiling the script files inside the dev server."
-        ],
-        correctIndex: 1,
-        explanation: "The total size of a CSS box represents the sum of its raw content space, left/right padding widths, and borders. Margins push other boxes away."
+        ]
       },
       {
         question: "Which HTML5 element represents semantic container placement rather than standard divs?",
@@ -550,9 +476,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "`<section>`",
           "`<center>`",
           "`<bold>`"
-        ],
-        correctIndex: 1,
-        explanation: "Semantic tags like section, main, header, and footer describe the content layout clearly to search engines and web screen readers."
+        ]
       },
       {
         question: "How does CSS Flexbox help align children boxes inside a parent container wrapper?",
@@ -561,9 +485,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "By dynamically spacing, wrapping, and centering children along a designated main-axis and cross-axis.",
           "By converting standard text paragraphs into binary database tables.",
           "By disabling browser hover styles on mobile layout sizes."
-        ],
-        correctIndex: 1,
-        explanation: "Flexbox manages 1-dimensional layouts instantly. Flex layout rules ease alignment, centering, and size adaptation without fixed calculations."
+        ]
       },
       {
         question: "In responsive layout designs, what is the role of CSS Media Queries?",
@@ -572,9 +494,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To apply distinct CSS styling blocks depending on the screen width or viewport properties.",
           "To stream high-definition video guides from county databases.",
           "To verify if the user's connection bypass is currently paid."
-        ],
-        correctIndex: 1,
-        explanation: "Media queries (and modern Tailwind utility prefixes like sm:, md:, lg:) allow styling to adapt based on screen dimension thresholds."
+        ]
       },
       {
         question: "What's the key advantage of Tailwind utility classes over custom external CSS sheets?",
@@ -583,9 +503,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Direct inline class application avoids CSS bloat, streamlines visual iterations, and secures design system tokens.",
           "Tailwind allows the website to bypass search engine crawler protocols.",
           "It automatically encrypts the HTML pages from browser inspections."
-        ],
-        correctIndex: 1,
-        explanation: "Utility frameworks provide precalculated constraint tokens for margins, padding, and colors. This avoids duplicate CSS write-ups and keeps things cohesive."
+        ]
       }
     ]
   },
@@ -612,9 +530,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "By querying the dictionary using its unique, direct, associated string or integer key.",
           "By converting the dictionary into a tuple list structures.",
           "By running a background shell command in execution mode."
-        ],
-        correctIndex: 1,
-        explanation: "Dictionaries use hash maps underneath. Querying by key bypasses search loops and fetches values instantly regardless of size."
+        ]
       },
       {
         question: "What is the primary significance of 'Indentation Whitespace' in Python coding syntaxes?",
@@ -623,9 +539,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "It defines execution blocks and visual scopes, replacing the need for curly braces or begin-end tags.",
           "It tells the runtime engine to store the values as floating-point decimals.",
           "It encrypts variables from being accessed in adjacent classes."
-        ],
-        correctIndex: 1,
-        explanation: "Whitespace indentation is a structural requirement in Python. Incorrect alignment raises direct IndentationError during compile phase."
+        ]
       },
       {
         question: "Which script block ensures that a Python program can recover gracefully from a potential division-by-zero risk?",
@@ -634,9 +548,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "`try ... except ZeroDivisionError`",
           "`if exception == True ...`",
           "`assert x != 0` with no fallback handler"
-        ],
-        correctIndex: 1,
-        explanation: "Try-except blocks intercept exceptions, executing alternative corrective pathways rather than terminating the operational script."
+        ]
       },
       {
         question: "What does list slicing like `numbers[1:4]` return in Python?",
@@ -645,9 +557,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The first and fourth numbers of the list only.",
           "An integer summing the values of those positions.",
           "A custom tuple that deletes those indices from the parent list."
-        ],
-        correctIndex: 0,
-        explanation: "Slicing slices collections cleanly. Inclusive of start index and exclusive of end index, it crafts a rapid, lightweight subset copy."
+        ]
       },
       {
         question: "What is the goal of utilizing Python's `with open('report.txt', 'r') as f:` context manager?",
@@ -656,9 +566,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To ensure the file stream closes safely and fully automatically, even if errors occur inside the read block.",
           "To translate the file formatting into beautiful PDF reports.",
           "To block other county network nodes from writing into this file."
-        ],
-        correctIndex: 1,
-        explanation: "The with keyword acts as a context manager. It guarantees resource release immediately after block exit, avoiding memory leakage or locked files."
+        ]
       }
     ]
   },
@@ -685,9 +593,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Vector graphics are built from mathematical paths that scale infinitely without losing crispness, while raster graphics use fixed pixel arrays that blur when enlarged.",
           "Vectors are always stored in binary database ledgers, whereas rasters are text-based.",
           "There is no difference; both formats compile into standard PDF certificates identically."
-        ],
-        correctIndex: 1,
-        explanation: "Vectors declare geometry (points, lines, curves). This secures crisp display branding on large physical posters or microscopic mobile icons."
+        ]
       },
       {
         question: "How does the 'Golden Ratio' (approximately 1.618) assist professional designers?",
@@ -696,9 +602,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "It provides a natural, visually aesthetic mathematical proportion for layout divisions, image framings, and grid sizes.",
           "It dictates how many fonts are permitted on an administrative report.",
           "It speeds up file upload size calculation inside the browser."
-        ],
-        correctIndex: 1,
-        explanation: "Found repeatedly in nature, the golden ratio represents organic balance. Applying it to layout dimensions triggers immediate visual comfort."
+        ]
       },
       {
         question: "Which font pairing strategy represents a clean and standard design methodology?",
@@ -707,9 +611,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Pairing a strong, distinctive Display Heading (e.g. Space Grotesk) with a highly legible Sans-Serif body font (e.g. Inter).",
           "Using only heavy industrial pixel art fonts for lengthy narrative studies.",
           "Disabling font smoothing on high-resolution screens."
-        ],
-        correctIndex: 1,
-        explanation: "Contrast anchors hierarchy. A readable body font keeps reading comfortable, while bold header fonts guide attention checkpoints."
+        ]
       },
       {
         question: "What is represented by 'Negative Space' in graphic layouts?",
@@ -718,9 +620,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The intentional empty, unmarked area surrounding visual elements, letting the elements breathe and stand out.",
           "An administrative error where images fail to render because of broken URL paths.",
           "The bottom footer space where system log metrics are saved."
-        ],
-        correctIndex: 1,
-        explanation: "Whitespace is not empty waste; it is a vital active force. It frames objects, clarifies relationships, and establishes premium layout elegance."
+        ]
       },
       {
         question: "What describes a brand's 'Style Guide'?",
@@ -729,9 +629,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "A spreadsheet tracking the hourly earnings of design personnel.",
           "An automated script that automatically changes layout colors every week.",
           "A validation key required to access county design servers."
-        ],
-        correctIndex: 0,
-        explanation: "Consistent presentation fosters recognition. Style guides keep web apps, print, and physical storefront assets uncompromised and cohesive."
+        ]
       }
     ]
   },
@@ -758,9 +656,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "When the audio of the following scene begins playing before the physical visual cut occurs.",
           "A diagonal transition effect that slides from left to right coordinates.",
           "Encrypting the exported video using high-concurrency security blocks."
-        ],
-        correctIndex: 1,
-        explanation: "J-cuts blend scenes. By letting the listener hear the next scene before they see it, transitions feel fluid, conversational, and natural."
+        ]
       },
       {
         question: "Why is audio levels normalized to peak around -6dB to -12dB in video timelines?",
@@ -769,9 +665,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To preserve audio headroom and avoid digital clipping distortion while keeping vocals clear across standard speakers.",
           "To make the final exported file size 50% smaller.",
           "To satisfy municipal license boundaries for local sound broadcasts."
-        ],
-        correctIndex: 1,
-        explanation: "0dB represents standard absolute ceiling logic thresholds. Vocal peaks hitting 0dB distort. Hovering near -6dB secures crisp sound delivery."
+        ]
       },
       {
         question: "What does 'Color Correction' accomplish before 'Color Grading'?",
@@ -780,9 +674,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "It standardizes exposure, color balance, and neutral whites so every single shot looks scientifically accurate and consistent.",
           "It converts the file format into highly compressed web streams.",
           "It writes custom background code that processes video sequences."
-        ],
-        correctIndex: 1,
-        explanation: "Consistency precedes styling. Correct first to set a neutral, balanced baseline, then apply artistic grading or custom LUT looks."
+        ]
       },
       {
         question: "What is a 'Lookup Table' (LUT) used for in video post-production?",
@@ -791,9 +683,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "A mathematical matrix that instantly remaps raw camera logs into styled, cinematic color profiles.",
           "A troubleshooting list used to identify broken system files.",
           "An automated tool that counts the total frames in a clip."
-        ],
-        correctIndex: 1,
-        explanation: "LUTs act as color recipes. They take input colors and apply custom mathematical curves to render cinematic shadow depths or retro warm tones."
+        ]
       },
       {
         question: "Which frame-rate speed is standard for classic, Hollywood-style cinematic video playback?",
@@ -802,9 +692,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "24 frames per second (FPS), matches physical photo shutter traditions.",
           "60 frames per second (FPS) for fluid digital gaming.",
           "10 frames per second (FPS) to save cloud storage space."
-        ],
-        correctIndex: 1,
-        explanation: "24 FPS delivers a classic motion blur that humans associate with cinematic movies. Higher speeds look clinical or resembles reality TV feeds."
+        ]
       }
     ]
   },
@@ -831,9 +719,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Execution overhead grows quadratically, meaning a 10x input increase triggers a 100x increase in operation loops.",
           "The physical system will demand 5 times more CPU servers.",
           "Encryption key lengths are automatically doubled."
-        ],
-        correctIndex: 1,
-        explanation: "Quadratic time O(N²) (often triggered by nested loops) bogs down on large data collections. Senior architects avoid it, preferring O(N log N) algorithms."
+        ]
       },
       {
         question: "What constitutes a proactive prevention against SQL Injection attacks on endpoints?",
@@ -842,9 +728,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Re-routing requests to clients for verification.",
           "Using parameterized queries and prepared statements to isolate instruction commands from incoming data inputs.",
           "Erasing key table schemas from the disk."
-        ],
-        correctIndex: 2,
-        explanation: "Parameterization treats user inputs strictly as parameters, never as executable code strings. Malicious injected scripts remain benign text variables."
+        ]
       },
       {
         question: "How does 'Asynchronous Event Handling' boost Node.js thread efficiency?",
@@ -853,9 +737,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "By utilizing non-blocking operations so the main single thread can cycle other requests while waiting for disk or network I/O events.",
           "By converting compiled files into client side packages.",
           "By forcing callers to reload their browser pages during data updates."
-        ],
-        correctIndex: 1,
-        explanation: "Instead of sleeping while waiting for databases, Node registers a callback and continues cycling. The event loop fires the callback upon I/O arrival."
+        ]
       },
       {
         question: "Which of the following represents a standard HTTP response code for a missing or unregistered endpoint?",
@@ -864,9 +746,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "500 Server Error",
           "404 Not Found",
           "403 Forbidden"
-        ],
-        correctIndex: 2,
-        explanation: "404 is the classic HTTP standard error telling the client browser that the requested URI location does not point to any active backend handler in the router."
+        ]
       },
       {
         question: "What is CORS (Cross-Origin Resource Sharing) designed to regulate?",
@@ -875,9 +755,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "A browser security gate restricting web scripts from pulling assets from distinct domain servers without authorization headers.",
           "How fast microcontrollers can send sensor signals to remote MQTT relays.",
           "The maximum size parameter for file uploads."
-        ],
-        correctIndex: 1,
-        explanation: "CORS prevents rogue scripts on website A from calling private APIs on server B inside the browser session, protecting user cookies and identity data."
+        ]
       }
     ]
   },
@@ -904,9 +782,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "A realistic object starting completely static and slowly accelerating up to speed, matching standard physical friction properties.",
           "A bouncy, chaotic movement that bounces off boundary coordinates.",
           "An immediate fade out that deletes the active graphic layer."
-        ],
-        correctIndex: 1,
-        explanation: "Natural movements have weight and momentum. Easing curves adjust parameter progression based on math, smoothing transitions."
+        ]
       },
       {
         question: "Why are vector-based 'Lottie Files' highly popular inside web and mobile applications?",
@@ -915,9 +791,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "They represent animations via lightweight JSON data arrays that scale infinitely without pixel artifacts or heavy memory consumption.",
           "They isolate the server from undergoing cyber security intrusion attacks.",
           "They disable browser web socket errors dynamically in background mode."
-        ],
-        correctIndex: 1,
-        explanation: "Lottie exports raw keyframes into JSON markup. Web engines read this code and draw the shapes dynamically on a canvas, saving bandwidth."
+        ]
       },
       {
         question: "What occurs when you parent Graphic Layer A to Graphic Layer B in timelines?",
@@ -926,9 +800,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Layer A inherits all scale, coordinates, and rotation offsets of Layer B automatically, while maintaining its own relative offsets.",
           "An export error is thrown because layers cannot coexist inside nested paradigms.",
           "The file is encrypted and hidden from county administration checks."
-        ],
-        correctIndex: 1,
-        explanation: "Parenting binds components coordinate spaces together. Moving the parent automatically moves the child, keeping compound assemblies synchronized."
+        ]
       },
       {
         question: "What is the primary function of a Motion Shutter Angle parameter?",
@@ -937,9 +809,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Simulating realistic directional motion blur on rapid moving objects, mirroring actual physical cameras.",
           "Reducing the exported video frame size files on the hard disk.",
           "Generating random gold colored banners on the website headers."
-        ],
-        correctIndex: 1,
-        explanation: "Shutter angle dictates motion blur. A larger angle blends frames together more dramatically during high-velocity movements, enhancing realism."
+        ]
       },
       {
         question: "Which of the following describes the 'Alpha Channel' in visual layouts?",
@@ -948,9 +818,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The designated color space reserved strictly for grey tones.",
           "A mask layer containing transparency values, letting background content show through unoccupied areas.",
           "The security rules validation protocol on the county server database."
-        ],
-        correctIndex: 2,
-        explanation: "Standard files store Red, Green, and Blue values (RGB). Adding an Alpha channel (RGBA) allows layering transparent elements perfectly on background layers."
+        ]
       }
     ]
   },
@@ -977,9 +845,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "RAM is fast, volatile temporary storage that clears on shutdown, while HDDs and SSDs write files permanently onto stable media.",
           "RAM can only process written numbers, while hard drives handle text sequences only.",
           "RAM is a system database stored exclusively in remote cloud hosting servers."
-        ],
-        correctIndex: 1,
-        explanation: "RAM feeds active processes directly. When electricity cuts off, RAM contents evaporate. Hard drives retain records for future startups."
+        ]
       },
       {
         question: "Which keyboard shortcut utility is standard to invoke the Task Manager of a stalled computer to terminate lagging tasks?",
@@ -988,9 +854,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Alt + Spacebar",
           "Ctrl + Enter",
           "Ctrl + Alt + Spacebar"
-        ],
-        correctIndex: 0,
-        explanation: "On modern systems, Task Manager displays instant active thread logs and memory consumption, assisting scholars to isolate and end frozen systems."
+        ]
       },
       {
         question: "How does a Solid State Drive (SSD) boost computer performance compared to a classic rotational Hard Disk Drive (HDD)?",
@@ -999,9 +863,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "SSDs use physical spinning plates that read data sequentially.",
           "SSDs write data to non-volatile flash memory chips with zero mechanical latency, offering immensely faster read/write speeds.",
           "SSDs bypass browser websocket restrictions."
-        ],
-        correctIndex: 2,
-        explanation: "SSDs have no moving mechanical parts. They read and write records directly via high-density electrical paths, decreasing OS boot speeds to seconds."
+        ]
       },
       {
         question: "What is a 'Device Driver' inside operating systems?",
@@ -1010,9 +872,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "An administrative script that registers student credentials in the ledger.",
           "A localized translator software bridging operating system commands with raw physical circuit parameters.",
           "An encryption key that locks the keyboard from unapproved typing."
-        ],
-        correctIndex: 2,
-        explanation: "Drivers translate general OS commands (e.g. 'draw line') into signals that unique brands of hardware (e.g. printer chips) can physically decode."
+        ]
       },
       {
         question: "What does a high CPU operating temperature (above 90°C) trigger inside modern computer systems to prevent melting?",
@@ -1021,9 +881,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "The thermal safety logic throttles CPU performance speeds, or triggers immediate shutdown to avoid permanent circuit damage.",
           "A standard email is dispatched to the county administrator.",
           "The computer translates its active programs into python script variables."
-        ],
-        correctIndex: 1,
-        explanation: "Thermal throttling is a defensive safety shield. Chips reduce calculations to drop heat, shutting down if temperatures breach safe thresholds."
+        ]
       }
     ]
   },
@@ -1050,9 +908,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To centralize public document registry, fee processing, and administrative permits online, lowering delivery overheads and corruption vectors.",
           "To replace school directors with automated AI servers.",
           "To stream international sports events for free on local nets."
-        ],
-        correctIndex: 1,
-        explanation: "e-Government cuts out physical gatekeeping and endless queues. Structured online access secures direct ledger postings and uniform public treatment."
+        ]
       },
       {
         question: "How do REST APIs assist e-Citizen platforms looking to process merchant payments?",
@@ -1061,9 +917,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "They enable secure digital handshake exchanges between civic systems and mobile money gateways (e.g. Lipa Na M-Pesa).",
           "They print a hard copy receipt on the user's printer.",
           "They translate database schemas into readable books on demand."
-        ],
-        correctIndex: 1,
-        explanation: "Web APIs send structured payloads containing price, account, and transaction codes. The payment gate resolves the payment, returning an approved response."
+        ]
       },
       {
         question: "Why are localized off-grid Wi-Fi relays valuable to students in rural Webuye and Kanduyi?",
@@ -1072,9 +926,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "They host local copies of academy textbooks and lessons, allowing students to study without costly mobile data charges.",
           "They make the student's physical device batteries last 3 times longer.",
           "They disable all examinations dynamically inside the school."
-        ],
-        correctIndex: 1,
-        explanation: "Connectivity has costs. Local digital offline archives allow infinite reads of massive study textbooks from local cache servers completely data-free."
+        ]
       },
       {
         question: "What does 'Digital Integrity' demand when handling sensitive public registration details?",
@@ -1083,9 +935,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Anonymizing personal data, encrypting critical storage, and restricting access to certified county administrators.",
           "Storing database records in public spreadsheets that anyone can edit.",
           "Deleting applicant details immediately after the meeting."
-        ],
-        correctIndex: 1,
-        explanation: "Governance mandates privacy behavior. Restricting data profiles to authenticated staff protects student details from marketing bots or credential theft."
+        ]
       },
       {
         question: "How does a 'Digital Skill Ledger' support localized economic empowerment?",
@@ -1094,9 +944,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "By logging verified student course achievements and assessments score hashes, proving job-readiness instantly to certified employers.",
           "By increasing the price of printed textbooks on the online store.",
           "By restricting students from moving outside their district boundaries."
-        ],
-        correctIndex: 1,
-        explanation: "Authentic, digitized proof of capability lowers hiring hesitation, directly connecting talent with actual technical developer vacancies."
+        ]
       }
     ]
   },
@@ -1123,9 +971,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Excel must treat the following expression as a calculation formula instead of flat text values.",
           "The cell is locked from undergoing any future editing modifications.",
           "The values are automatically synced with the remote database server."
-        ],
-        correctIndex: 1,
-        explanation: "The leading equals sign triggers the Excel calculation parser to evaluate cell mathematical coordinates and output the computed value."
+        ]
       },
       {
         question: "In professional report writing in Microsoft Word, which margin constraint is standard?",
@@ -1134,9 +980,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Standard 1 inch (2.54 cm) margins on all sides to hold balance and text layout breathing grids.",
           "Left-hand margin only, with zero borders on the right side.",
           "Variable margins that change size dynamically with every page."
-        ],
-        correctIndex: 1,
-        explanation: "Consistent standard margins preserve visual tracking, leaving spaces that keep printed reports readable and aesthetic."
+        ]
       },
       {
         question: "What is the primary function of the `=XLOOKUP()` formula in modern spreadsheets?",
@@ -1145,9 +989,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "To scan a column range for a specific search value and return the corresponding data from any column in the row, without direction restrictions.",
           "To calculate the average coordinate values of multiple cells.",
           "To check if the sheet file contains any software viruses."
-        ],
-        correctIndex: 1,
-        explanation: "XLOOKUP is the powerful successor of VLOOKUP. It scans both left and right, handles vertical and horizontal records, and includes default if-not-found fallbacks."
+        ]
       },
       {
         question: "Which visual style maximizes audience attention during slide presentations?",
@@ -1156,9 +998,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Applying high contrast colors, spacious negative space, large typography, and crisp, minimal bullet summaries.",
           "Using seven flashing background animations and sound effects on every slide.",
           "Keeping all slide slides in black-and-white code blocks only."
-        ],
-        correctIndex: 1,
-        explanation: "Slides are visual companions, not transcript read-outs. Large typography and generous space force the audience to focus on the speaker's vocal guidance."
+        ]
       },
       {
         question: "Why acts 'Typing Accuracy' as a superior skill compared to pure 'Typing Speed'?",
@@ -1167,9 +1007,7 @@ export const COMPUTER_LESSONS: Lesson[] = [
           "Because speed with mistakes creates chaotic data records that demand hours of costly manual auditing and correction.",
           "Because computers automatically lock if accuracy drops below 50%.",
           "Because accuracy reduces the physical size parameter of exported files."
-        ],
-        correctIndex: 1,
-        explanation: "Data integrity is critical. Slow, accurate entry beats hyper-fast sloppy inputs on every occasion. Correctness is the baseline of digital systems."
+        ]
       }
     ]
   }
@@ -1199,9 +1037,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "Exegesis extracts the original author's intended meaning from the text, while eisegesis forces a reader's subjective ideas into it.",
           "Exegesis only analyzes the Old Testament covenants, while eisegesis covers the epistles.",
           "Exegesis utilizes digital calculators, while eisegesis uses offline notes."
-        ],
-        correctIndex: 1,
-        explanation: "Exegesis literally means 'to lead out'. Safe theology demands exegesis—drawing truth from scripture rather than reading custom beliefs into it."
+        ]
       },
       {
         question: "Under Systematic Theology, how is the Abrahamic Covenant classified?",
@@ -1210,9 +1046,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "As an unconditional covenant of promise, pointing directly to global blessing in Jesus.",
           "As a temporary agricultural contract restricted to farming sectors.",
           "As a secret code that requires Gemini AI credentials to decode."
-        ],
-        correctIndex: 1,
-        explanation: "The Abrahamic Covenant is unconditional (Genesis 15) and serves as the master blueprint for redemptive history, ultimately fulfilled under Christ's global lineage."
+        ]
       },
       {
         question: "Why are Hebrew and Greek studies valuable for local Christian apologists?",
@@ -1221,9 +1055,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "Because they reveal subtle nuances, structural grammar, and literary formats of the original manuscripts, overcoming translation gaps.",
           "To allow pastors to charge higher tuition fees for local Bible School certificates.",
           "To secure Wi-Fi hotspot links from external network intrusions."
-        ],
-        correctIndex: 1,
-        explanation: "Original languages provide the rawest truth of scripture. Understanding Greek/Hebrew words prevents dogmatic errors based on weak English translations."
+        ]
       },
       {
         question: "What is the primary danger of ignoring historical-cultural context during Bible study?",
@@ -1232,9 +1064,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "It leads to severe misinterpretation, extracting allegorical or legalistic codes that contradict original intentions.",
           "It prevents the student from receiving their digital diploma PDF.",
           "It slows down the database sync frequency on server consoles."
-        ],
-        correctIndex: 1,
-        explanation: "Scripture was written *to* a specific people at a specific time. Stripping verses from their historical-cultural canvas leads to cultic legalism or modern error."
+        ]
       },
       {
         question: "In sermon preparation, how is 'Application' properly separated from the 'Textual Interpretation'?",
@@ -1243,9 +1073,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "Application must ignore the original text to sound relevant to modern ears.",
           "Interpretation is handled exclusively by heads of portals, while students only do application.",
           "They are identical; no distinction is necessary under ethical statesmanship guides."
-        ],
-        correctIndex: 0,
-        explanation: "Exegesis first defines target meaning. Application translates that meaning into relevant, ethical daily action, maintaining scriptural authority."
+        ]
       }
     ]
   },
@@ -1272,9 +1100,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "A systematic sermon that walks line-by-line of a single scriptural passage, exposing its literal context and direct truth.",
           "An administrative lecture outlining regional security quotas and county boundaries.",
           "A short speech delivered strictly off-the-grid when Wi-Fi hotspots collapse."
-        ],
-        correctIndex: 1,
-        explanation: "Expository preaching makes the main point of the scripture passage the main point of the sermon, maintaining absolute alignment with text files."
+        ]
       },
       {
         question: "How does Pastoral Counseling differ from secular psychotherapy frameworks?",
@@ -1283,9 +1109,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "It combines clinical human care techniques with biblical truth, prayer, and spiritual regeneration parameters.",
           "It charges no fee and has no professional standards in place.",
           "It requires all patients to have minor admin credentials first."
-        ],
-        correctIndex: 1,
-        explanation: "Pastoral counseling respects active therapeutic sciences, but anchors ultimate restoration in covenantal hope, repentance, grace, and relational peace in Christ."
+        ]
       },
       {
         question: "Under ministerial ethics, how should church ledger funds be managed?",
@@ -1294,9 +1118,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "With transparent independent accounts, multi-signature check approvals, and routine disclosures to the general assembly.",
           "By converting all assembly collection cash into digital tokens in background mode.",
           "By ignoring physical ledger receipts to reduce administration workloads."
-        ],
-        correctIndex: 1,
-        explanation: "Ethical stewardship demands flawless asset transparency. Multi-person oversight prevents financial errors, protects pastors, and builds deep community trust."
+        ]
       },
       {
         question: "What constitutes the core focus of 'The ministry of presence' during pastoral crisis care?",
@@ -1305,9 +1127,7 @@ export const BIBLE_LESSONS: Lesson[] = [
           "Simply being present, actively listening, and extending quiet empathy and love during severe loss.",
           "Writing a detailed digital PDF report about the patient's condition for the admin portal.",
           "Re-routing regional payments to minor admin accounts."
-        ],
-        correctIndex: 1,
-        explanation: "In deep trauma, answers are often unwelcome. The ministry of presence values human dignity, offering supportive silence and simple compassionate reassurance."
+        ]
       },
       {
         question: "Why is local community outreach highlighted as a key biblical pastoral duty?",
@@ -1316,9 +1136,91 @@ export const BIBLE_LESSONS: Lesson[] = [
           "Because theological wisdom is dead without fruit. True ministry mobilizes believers to serve the marginalized, feed the hungry, and build community.",
           "To replace local educational systems with church-governed programs in Kenya.",
           "To allow pastors to act as overseers of the financial portal."
-        ],
-        correctIndex: 1,
-        explanation: "James 2 defines pure religion as serving orphans and widows. Faith must translate into practical localized empowerment, grounding the Gospel in works of love."
+        ]
+      }
+    ]
+  },
+  {
+    id: "evangelism_great_commission",
+    topic: "Evangelism & The Great Commission",
+    slogan: "Go Into All The World: Proclaiming Grace, Hope, & Truth",
+    intro: "Evangelism is the heartbeat of Christian faith—sharing the transformative Good News of Jesus Christ through word, action, and unyielding love.",
+    points: [
+      "The Great Commission Mandate (Matthew 28:18-20): Understanding the global and local call to make disciples of all nations, beginning in our immediate communities.",
+      "Personal Evangelism & Relational Outreach: Building authentic relationships, sharing personal testimony with humility, and meeting people where they are.",
+      "Open-Air Crusades & Community Evangelism: Organizing public gatherings, gospel crusades, and open-air meetings with spiritual clarity and local civic respect.",
+      "Christian Apologetics & Answering Hard Questions: Presenting reasoned defenses of the faith with gentleness, addressing intellectual and moral objections gracefully.",
+      "Follow-up, Discipleship & Church Integration: Ensuring new believers are nurtured, paired with mentors, and integrated into local church families for sustained growth."
+    ],
+    selfAssessment: [
+      {
+        question: "What is the primary biblical foundation for Christian Evangelism?",
+        options: [
+          "Building large physical structures with elaborate architecture.",
+          "The Great Commission (Matthew 28:18-20), calling believers to make disciples of all nations.",
+          "Charging fees for religious lectures and administrative certificates.",
+          "Restricting theological knowledge strictly to ordained academic scholars."
+        ]
+      },
+      {
+        question: "What key attitude should accompany Christian Apologetics according to 1 Peter 3:15?",
+        options: [
+          "Aggressive debate tactics designed to humiliate spiritual opponents.",
+          "Gentleness, respect, and a clear conscience while giving a reason for the hope within you.",
+          "Strict silence whenever difficult questions regarding faith arise.",
+          "Insisting on blind agreement without providing reasoned biblical evidence."
+        ]
+      },
+      {
+        question: "Why is follow-up and discipleship essential after an evangelistic crusade or personal outreach?",
+        options: [
+          "To keep statistical records for annual denominational reports.",
+          "Because winning a decision is only the beginning; new believers need intentional nurturing to grow into mature followers of Christ.",
+          "To collect immediate financial dues from new participants.",
+          "To transfer minor admin rights to fresh converts automatically."
+        ]
+      },
+      {
+        question: "How should relational or personal evangelism be conducted in daily life?",
+        options: [
+          "Through forced confrontational arguments in public marketplaces.",
+          "Through authentic love, active listening, compassionate service, and transparent personal testimony.",
+          "By avoiding non-believers entirely until they attend a formal church service.",
+          "By distributing printed flyers without ever engaging in conversation."
+        ]
+      }
+    ]
+  },
+  {
+    id: "church_planting_growth",
+    topic: "Church Planting, Missions & Community Discipleship",
+    slogan: "Planting Vibrant Assemblies, Mobilizing Missionaries",
+    intro: "Church planting is the single most effective methodology under heaven for fulfilling the Great Commission and establishing local light centres.",
+    points: [
+      "Targeted Mission Field Assessment: Mapping unreached areas, understanding local cultural dynamics, and identifying strategic ministry hubs.",
+      "Core Team Formation & Leadership Development: Gathering and equipping a dedicated core group of servant leaders, intercessors, and teachers.",
+      "Contextualized Gospel Proclamation: Communicating eternal biblical truth in culturally resonant language without compromising doctrine.",
+      "Multiplying Small Discipleship Groups: Structuring home Bible studies, cell groups, and youth fellowships for decentralized pastoral care.",
+      "Financial Sustainability & Local Ownership: Building self-supporting, self-governing, and self-propagating local church assemblies."
+    ],
+    selfAssessment: [
+      {
+        question: "What is the primary goal of biblical church planting?",
+        options: [
+          "Creating competitive denominational rivalries in urban centres.",
+          "Establishing self-supporting, gospel-centered local assemblies that worship God and multiply disciples.",
+          "Securing real estate holdings for commercial leasing.",
+          "Replacing local community leadership with external oversight teams permanently."
+        ]
+      },
+      {
+        question: "Why are small discipleship groups (cell groups/home Bible studies) vital for church growth?",
+        options: [
+          "They eliminate the need for Sunday morning worship gatherings.",
+          "They provide intimate environments for personal accountability, pastoral care, active Bible study, and leadership development.",
+          "They allow members to bypass standard ethical guidelines.",
+          "They serve strictly as administrative payment collection points."
+        ]
       }
     ]
   }

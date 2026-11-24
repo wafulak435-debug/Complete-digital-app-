@@ -56,25 +56,15 @@ export async function syncUserSession(userId: string, email: string, name: strin
     
     if (docSnap.exists()) {
       const existing = docSnap.data() as User;
-      const lowerEmail = email.toLowerCase().trim();
-      const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
-                      lowerEmail === "wafula435@gmail.com";
-      if (isAdmin && existing.role !== "admin") {
-        existing.role = "admin";
-        await setDoc(userDocRef, { role: "admin" }, { merge: true });
-      }
       try {
         localStorage.setItem(`WAFULA_CACHED_USER_${userId}`, JSON.stringify(existing));
       } catch (_) {}
       return existing;
     } else {
-      const lowerEmail = email.toLowerCase().trim();
-      const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
-                      lowerEmail === "wafula435@gmail.com";
       const newUser: User = {
         email,
         name,
-        role: isAdmin ? "admin" : "member",
+        role: "member",
         readingStreak: 1,
         dailyGoalMinutes: 30
       };
@@ -92,13 +82,10 @@ export async function syncUserSession(userId: string, email: string, name: strin
         return JSON.parse(cachedObj) as User;
       } catch (_) {}
     }
-    const lowerEmail = email.toLowerCase().trim();
-    const isAdmin = lowerEmail === "wafulak435@gmail.com" || 
-                    lowerEmail === "wafula435@gmail.com";
     return {
       email,
       name,
-      role: isAdmin ? "admin" : "member",
+      role: "member",
       readingStreak: 1,
       dailyGoalMinutes: 30
     };

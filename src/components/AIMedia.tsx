@@ -3,6 +3,7 @@ import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Pl
 import { User, SavedDocument } from "../types";
 import { VeoVideoEngine, PetAdventureEngine, VectorArtMaker } from "./AICreativeWidgets";
 import ChurchVideoStudio from "./ChurchVideoStudio";
+import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
 
 interface AIMediaProps {
   currentUser: User | null;
@@ -34,9 +35,9 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
         {
           id: "m_com_1",
           targetId: "media_general",
-          userId: "wafulak435@gmail.com",
-          userName: "Director Wafula",
-          text: "Welcome to the Creative AIMedia Discussion board! Submit notes or share recommendations here.",
+          userId: "director@ziondigital.app",
+          userName: "Kelvin Opara Wafula",
+          text: "Welcome to the Zion Creative Media Studio discussion board. Share production notes or worship video ideas here.",
           date: new Date().toISOString().split("T")[0]
         }
       ];
@@ -161,17 +162,15 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
     setGeneratedImageUrl(null);
 
     try {
-      const response = await fetch("/api/ai/generate-image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const resData = await invokeGeminiAction(
+        "generate-image",
+        "/api/ai/generate-image",
+        {
           prompt: imagePrompt,
           aspectRatio,
           hdMode
-        })
-      });
-
-      const resData = await response.json();
+        }
+      );
       if (resData.success && resData.imageUrl) {
         setGeneratedImageUrl(resData.imageUrl);
         setGeneratedImagesHistory((prev) => [
@@ -204,7 +203,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
     setVideoProgress(10);
 
     try {
-      const response = await fetch("/api/ai/generate-video", {
+      const response = await secureApiFetch("/api/ai/generate-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -242,7 +241,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
 
     const pollStatus = async () => {
       try {
-        const response = await fetch("/api/ai/video-status", {
+        const response = await secureApiFetch("/api/ai/video-status", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ operationName })
@@ -308,23 +307,17 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
 
   return (
     <div id="ai_creative_media_hub" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 space-y-8 select-none text-left">
-      {/* Decorative Header */}
-      <div className="rounded-2xl bg-gradient-to-r from-violet-900 via-indigo-950 to-slate-950 text-white p-6 sm:p-8 text-left shadow-2xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 h-40 w-40 transform translate-x-12 -translate-y-12 opacity-15 rounded-full border-[20px] border-indigo-500 animate-pulse" />
-        <div className="relative z-10 space-y-3">
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
-              ADVANCED AI 3.5 ENGINE
-            </span>
-            <span className="bg-emerald-500/30 text-emerald-250 border border-emerald-400/30 font-mono text-[9px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse flex items-center gap-1">
-              <span>●</span> 100% FREE & UNLIMITED TIERS ACTIVE
-            </span>
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-black tracking-tight font-display">
-            Creative AI Studio
+      {/* Decorative Editorial Studio Header */}
+      <div className="rounded-2xl bg-[#2C241E] dark:bg-[#1E1A17] text-[#FAF8F4] p-6 sm:p-8 text-left shadow-sm border border-[#E7E1D8]/20 relative overflow-hidden">
+        <div className="relative z-10 space-y-2.5">
+          <span className="inline-block bg-[#A8421B]/30 text-[#F5D6C6] border border-[#A8421B]/50 font-mono text-[10px] font-bold uppercase tracking-[0.18em] px-2.5 py-1 rounded-full">
+            ZION CREATIVE MEDIA STUDIO
+          </span>
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight font-serif">
+            Sermon, Cover & Motion Studio
           </h2>
-          <p className="text-xs text-indigo-200/80 max-w-2xl leading-relaxed">
-            Generate unlimited custom graphic cover pages, illustrations, vectors, and realistic video outlines using our high-speed neural models. All photo and video creation models are completely free with zero limits, parameters, blockages, or payment structures within your current studio or school networks.
+          <p className="text-xs text-[#E7E1D8]/85 max-w-2xl leading-relaxed">
+            Design custom book covers, ministry graphics, illustrations, and worship or teaching videos directly within your studio workspace.
           </p>
         </div>
       </div>
@@ -898,35 +891,42 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
               .filter(c => !c.parentId)
               .map((c) => {
                 const childReplies = mediaComments.filter(rep => rep.parentId === c.id);
-                const isAdmin = currentUser?.role === "admin";
+                const isAdmin = Boolean(
+                  currentUser &&
+                    (["main_admin", "admin"].includes(currentUser.role) ||
+                      (currentUser.role === "sub_admin" && currentUser.permissions?.allowModeration))
+                );
+                const isCommentOwner = Boolean(
+                  currentUser && currentUser.email?.toLowerCase() === String(c.userId || "").toLowerCase()
+                );
 
                 return (
-                  <div key={c.id} className="rounded-xl bg-stone-50/40 border border-stone-150 p-4 space-y-3 relative text-left">
+                  <div key={c.id} className="rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] p-4 space-y-3 relative text-left">
                     <div className="flex justify-between items-center text-xs">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-stone-800">{c.userName}</span>
+                        <span className="font-bold text-[#1F1B18]">{c.userName}</span>
                         {c.isModerated && (
-                          <span className="bg-amber-105 text-amber-805 text-[9px] px-2 py-0.5 rounded-full font-bold">
-                            ⚠️ Moderated
+                          <span className="bg-amber-100 text-amber-800 text-[9px] px-2 py-0.5 rounded-full font-bold">
+                            Moderated
                           </span>
                         )}
                       </div>
-                      <span className="text-[9px] text-stone-400 font-mono">{c.date}</span>
+                      <span className="text-[9px] text-[#6E655E] font-mono">{c.date}</span>
                     </div>
 
                     {/* Content view */}
                     {c.isModerated && !isAdmin ? (
-                      <p className="text-stone-400 italic text-[11px] bg-stone-100 p-2.5 rounded-lg border border-dashed border-stone-200">
+                      <p className="text-[#6E655E] italic text-[11px] bg-[#ECE7DF] p-2.5 rounded-lg border border-dashed border-[#E7E1D8]">
                         {c.text}
                       </p>
                     ) : (
                       <div className="space-y-1">
                         {c.isModerated && isAdmin && (
-                          <span className="text-[10px] text-amber-970 text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded block font-mono">
-                            Admin viewpoint (Original comment):
+                          <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded block font-mono">
+                            Moderator view (Original comment):
                           </span>
                         )}
-                        <p className="text-stone-705 text-xs leading-relaxed font-sans">
+                        <p className="text-[#1F1B18] text-xs leading-relaxed">
                           "{c.isModerated && isAdmin ? c.originalText : c.text}"
                         </p>
                       </div>
@@ -938,34 +938,38 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
                         <button
                           type="button"
                           onClick={() => setMediaReplyTarget(mediaReplyTarget === c.id ? null : c.id)}
-                          className="text-indigo-650 hover:underline font-bold"
+                          className="text-[#A8421B] hover:underline font-bold cursor-pointer"
                         >
-                          Reply to conversation
+                          Reply
                         </button>
                       )}
 
-                      {/* Admin Oversight buttons */}
                       {isAdmin && (
                         <>
-                          {currentUser && !c.isModerated && <span className="text-stone-300">|</span>}
+                          {currentUser && !c.isModerated && <span className="text-[#E7E1D8]">|</span>}
                           <button
                             type="button"
                             onClick={() => handleModerateMediaComment(c.id)}
-                            className="text-amber-705 font-bold hover:underline"
+                            className="text-amber-700 font-bold hover:underline cursor-pointer"
                           >
-                            🛡️ {c.isModerated ? "Restore / Unmoderate" : "Moderate Content"}
+                            {c.isModerated ? "Restore" : "Moderate"}
                           </button>
-                          <span className="text-stone-300">|</span>
+                        </>
+                      )}
+
+                      {(isAdmin || isCommentOwner) && (
+                        <>
+                          <span className="text-[#E7E1D8]">|</span>
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm("Delete this media discussion thread and all its replies?")) {
+                              if (confirm("Delete this discussion thread?")) {
                                 handleDeleteMediaComment(c.id);
                               }
                             }}
-                            className="text-red-650 font-bold hover:underline"
+                            className="text-rose-700 font-bold hover:underline cursor-pointer"
                           >
-                            🗑️ Delete Thread
+                            Delete
                           </button>
                         </>
                       )}

@@ -1,487 +1,173 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Montserrat:wght@400;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Open+Sans:wght@400;600;700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-serif: "Playfair Display", Georgia, Cambria, serif;
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  --font-montserrat: "Montserrat", sans-serif;
-  --font-playfair: "Playfair Display", serif;
-  --font-opensans: "Open Sans", sans-serif;
-  --font-lora: "Lora", serif;
 
-  /* Premium Theme color mappings per design specifications */
   --color-bg-app: var(--bg-app);
-  --color-bg-card: var(--bg-card);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-muted: var(--bg-muted);
   --color-text-primary: var(--text-primary);
-  --color-text-muted: var(--text-muted);
-  --color-border-primary: var(--border-primary);
-
-  --color-sidebar: #0F172A;
-  --color-accent: #3B82F6;
-  --color-success: #22C55E;
-  --color-kenya-red: #CE1126;
-  --color-kenya-green: #006600;
-
-  /* Overriding standard crimson red classes to Kenya Red for cultural alignment */
-  --color-red-50: #fef2f2;
-  --color-red-100: #fee2e2;
-  --color-red-600: #e11d48;
-  --color-red-700: #CE1126;
-  --color-red-800: #99111b;
-  --color-red-900: #7f1d1d;
-  
-  --color-blue-600: #3B82F6;
-  --color-blue-700: #2563EB;
-  
-  /* Class-based dark mode configuration for Tailwind CSS v4 */
-  --variant-dark: class;
+  --color-text-secondary: var(--text-secondary);
+  --color-border-main: var(--border-main);
+  --color-accent: var(--accent-main);
+  --color-accent-hover: var(--accent-hover);
 }
 
 :root {
-  --bg-app: #f0f4f8; /* Soft bluish off-white canvas */
-  --bg-card: #ffffff; /* Elegant card backdrop */
-  --text-primary: #0f172a; /* Deep elegant slate navy */
-  --text-muted: #475569; /* Balanced slate gray */
-  --border-primary: #cbd5e1; /* Clear slate gray lines */
+  color-scheme: light;
+  --bg-app: #FAF8F4;
+  --bg-surface: #FFFFFF;
+  --bg-muted: #F3EFE8;
+  --bg-sand: #ECE7DF;
+  --text-primary: #1F1B18;
+  --text-secondary: #6E655E;
+  --border-main: #E7E1D8;
+  --accent-main: #A8421B;
+  --accent-hover: #8F3614;
+  --accent-soft: #FBF1EB;
+  --accent-ring: rgba(168, 66, 27, 0.22);
 }
 
 .dark {
-  --bg-app: #0f172a; /* Rich dark slate blue */
-  --bg-card: #17223b; /* Elegant slightly deep slate card base */
-  --text-primary: #f8fafc; /* Crisp readable bright element text */
-  --text-muted: #94a3b8; /* Gentle contrast muted slate text */
-  --border-primary: #2d3a4f; /* Subdued borders */
+  color-scheme: dark;
+  --bg-app: #141210;
+  --bg-surface: #1E1A17;
+  --bg-muted: #27221E;
+  --bg-sand: #2D2722;
+  --text-primary: #F5F1EB;
+  --text-secondary: #B6ABA0;
+  --border-main: #332C26;
+  --accent-main: #D96B3E;
+  --accent-hover: #C2592E;
+  --accent-soft: rgba(217, 107, 62, 0.14);
+  --accent-ring: rgba(217, 107, 62, 0.28);
 }
 
-body {
-  font-family: var(--font-current, "Inter", ui-sans-serif, system-ui, sans-serif);
-  background-color: var(--bg-app);
-  color: var(--text-primary);
-  transition: background-color 0.2s ease, color 0.2s ease;
-  font-weight: 500;
-}
-
-/* Custom color overrides to resolve non-standard Tailwind class issues and pale rendering */
-.text-stone-850 { color: #1c1917 !important; }
-.dark .text-stone-850:not(.light-only *) { color: #f5f5f4 !important; }
-
-.text-stone-450 { color: #6b6661 !important; }
-.dark .text-stone-450:not(.light-only *) { color: #cbd5e1 !important; }
-
-.text-stone-250 { color: #d6d3d1 !important; }
-.dark .text-stone-250:not(.light-only *) { color: #57534e !important; }
-
-.text-stone-650 { color: #57534e !important; }
-.dark .text-stone-650:not(.light-only *) { color: #cbd5e1 !important; }
-
-.text-slate-850 { color: #1e293b !important; }
-.dark .text-slate-850:not(.light-only *) { color: #f1f5f9 !important; }
-
-.text-slate-650 { color: #334155 !important; }
-.dark .text-slate-650:not(.light-only *) { color: #e2e8f0 !important; }
-
-.text-neutral-850 { color: #171717 !important; }
-.dark .text-neutral-850:not(.light-only *) { color: #fafafa !important; }
-
-.text-slate-500 { color: #475569 !important; }
-.dark .text-slate-500:not(.light-only *) { color: #cbd5e1 !important; }
-
-/* Real-time automated contrast protection overrides for seamless dark mode readability */
-.dark .text-stone-900:not(.light-only *), 
-.dark .text-neutral-900:not(.light-only *), 
-.dark .text-slate-900:not(.light-only *),
-.dark h1:not(.light-only *),
-.dark h2:not(.light-only *),
-.dark h3:not(.light-only *),
-.dark h4:not(.light-only *) {
-  color: #f8fafc !important; /* Force high contrast light slate */
-}
-
-.dark .text-stone-800:not(.light-only *), 
-.dark .text-neutral-800:not(.light-only *), 
-.dark .text-slate-800:not(.light-only *) {
-  color: #f1f5f9 !important; /* Force light gray */
-}
-
-.dark .text-stone-700:not(.light-only *), 
-.dark .text-neutral-700:not(.light-only *), 
-.dark .text-slate-705:not(.light-only *), 
-.dark .text-slate-700:not(.light-only *) {
-  color: #e2e8f0 !important;
-}
-
-.dark .text-stone-600:not(.light-only *), 
-.dark .text-neutral-600:not(.light-only *), 
-.dark .text-slate-600:not(.light-only *) {
-  color: #cbd5e1 !important; /* Force readable muted gray */
-}
-
-.dark .text-stone-500:not(.light-only *), 
-.dark .text-neutral-500:not(.light-only *), 
-.dark .text-slate-500:not(.light-only *) {
-  color: #cbd5e1 !important;
-}
-
-/* Base borders & background protection */
-.dark .bg-white:not(.light-only *),
-.dark .bg-stone-50:not(.light-only *),
-.dark .bg-neutral-50:not(.light-only *) {
-  background-color: var(--bg-card) !important;
-}
-
-.dark .border-stone-100:not(.light-only *),
-.dark .border-stone-150:not(.light-only *),
-.dark .border-stone-200:not(.light-only *),
-.dark .border-slate-200:not(.light-only *),
-.dark .border-neutral-200:not(.light-only *) {
-  border-color: var(--border-primary) !important;
-}
-
-/* Force input and selection text to be high contrast, visible, and bold */
-input, select, textarea {
-  color: #0f172a !important;
-  font-weight: 800 !important;
-}
-.dark input:not(.light-only *), .dark select:not(.light-only *), .dark textarea:not(.light-only *) {
-  color: #f8fafc !important;
-  font-weight: 800 !important;
-}
-
-/* Premium design-led typography weights (no brute-force enforcers on standard bodies, spans and divs) */
-body {
-  font-weight: 500; /* Sophisticated modern medium default weight */
-}
-
-input, textarea, select {
-  font-weight: 600 !important;
-}
-
-button {
-  font-weight: 600;
-}
-
-h1, h2, h3, h4, h5, h6, .font-display, .font-black, .font-extrabold {
-  font-weight: 800 !important;
-}
-
-/* Placeholder contrast styling */
-::placeholder {
-  color: #4b5563 !important;
-  opacity: 1 !important;
-  font-weight: 700 !important;
-}
-.dark ::placeholder:not(.light-only *) {
-  color: #9ca3af !important;
-  opacity: 1 !important;
-  font-weight: 700 !important;
-}
-
-/* Glass panel blur background styling */
-.glass-panel {
-  background: var(--bg-card);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border-primary);
-}
-
-/* Flat polished stat cards with light borders */
-.stat-card {
-  background: var(--bg-card);
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.02);
-  border: 1px solid var(--border-primary);
-  color: var(--text-primary);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
-}
-.stat-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-}
-
-/* Premium AI highlight overlays */
-.ai-glow {
-  box-shadow: 0 0 15px rgba(59, 130, 246, 0.25);
-  border: 1px solid rgba(147, 197, 253, 0.4);
-}
-
-/* Official colored administration labels */
-.admin-badge {
-  background: rgba(239, 68, 68, 0.08);
-  border-left: 3.5px solid #CE1126;
-  padding: 4px 10px;
-  font-size: 11px;
-  color: #CE1126;
-  font-weight: 600;
-  border-radius: 2px 6px 6px 2px;
-}
-
-/* Back to Top Floating Button */
-.scroll-top-btn {
-  position: fixed;
-  bottom: 2rem;
-  right: 2rem;
-  z-index: 50;
-}
-
-/* Precise Bible verse text legibility enhancement rule */
-#bible_reader_panel p, .bible-component p {
-  font-weight: 900 !important;
-}
-
-/* Focus Mode: Interactive selector for bookstore item cards */
-.bookstore-item-card {
-  position: relative;
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  transform-style: preserve-3d;
-  will-change: transform, box-shadow;
-  backface-visibility: hidden;
-}
-
-.bookstore-item-card img {
-  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-.bookstore-item-card:hover {
-  transform: perspective(1000px) translateY(-10px) scale(1.04) rotateX(6deg);
-  border-color: #f59e0b !important;
-  box-shadow: 
-    0 10px 20px -5px rgba(0, 0, 0, 0.08),
-    0 25px 50px -12px rgba(0, 0, 0, 0.18),
-    0 40px 80px -15px rgba(0, 0, 0, 0.25);
-}
-
-.bookstore-item-card:hover img {
-  transform: scale(1.08) !important;
-}
-
-/* Dynamic SVG-based custom tooltips for Bookstore items - only active on non-touch desktop layouts */
-@media (hover: hover) and (min-width: 1024px) {
-  .bookstore-item-card[data-tooltip-price]::after {
-    content: " Price: " attr(data-tooltip-price) " \a  Rating: " attr(data-tooltip-rating) " \a  Size: " attr(data-tooltip-size) " ";
-    white-space: pre-wrap;
-    position: absolute;
-    top: -85px;
-    left: 50%;
-    transform: translateX(-50%) translateY(10px) scale(0.95);
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2050/svg' width='100%' height='100%' viewBox='0 0 160 80' preserveAspectRatio='none'><rect x='0' y='0' width='160' height='68' rx='8' fill='%231c1917'/><polygon points='75,68 85,68 80,76' fill='%231c1917'/></svg>");
-    background-size: 100% 100%;
-    background-repeat: no-repeat;
-    color: #fef08a; /* Soft amber/yellow text */
-    padding: 12px 14px 22px 14px;
-    font-family: monospace;
-    font-size: 9.5px;
-    line-height: 1.5;
-    text-align: left;
-    font-weight: bold !important;
-    pointer-events: none;
-    opacity: 0;
-    width: 160px;
-    height: 80px;
-    z-index: 99;
-    transition: opacity 0.25s ease-in-out, transform 0.25s ease-in-out;
-  }
-
-  .bookstore-item-card[data-tooltip-price]:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
-  }
-}
-
-/* Highly visible premium styled scrollbars for horizontal slider containers */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(206, 17, 38, 0.4) transparent;
-  -webkit-overflow-scrolling: touch;
-}
-
-.scrollbar-thin::-webkit-scrollbar {
-  height: 6px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 9999px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: rgba(206, 17, 38, 0.35);
-  border-radius: 9999px;
-  border: 1px solid transparent;
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(206, 17, 38, 0.6);
-}
-
-/* Snug Mobile Responsiveness: Scale down elements on phones so features fit perfectly without tilting */
-@media (max-width: 639px) {
+@layer base {
   html {
-    font-size: 84% !important; /* Scale down typography slightly on small screens */
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    overflow-x: hidden !important;
-    font-size: 11.5px !important;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    transition: background-color 200ms ease, color 200ms ease;
   }
 
-  #root {
-    overflow-x: hidden !important;
-    width: 100% !important;
+  h1, h2, h3, .font-editorial {
+    font-family: var(--font-serif);
+    letter-spacing: -0.02em;
   }
 
-  /* Compact container paddings */
-  .mx-auto.max-w-7xl, 
-  .container, 
-  #store_viewport,
-  #product_detail_section,
-  #bible_reader_panel,
-  #curriculum_studio,
-  main {
-    padding-left: 0.35rem !important;
-    padding-right: 0.35rem !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-  }
-
-  /* Universal scaling for oversized headlines to prevent container overflows */
-  h1, .text-3xl, .text-4xl, .text-5xl {
-    font-size: 1.25rem !important;
-    line-height: 1.2 !important;
-    letter-spacing: -0.015em !important;
-  }
-
-  h2, .text-2xl {
-    font-size: 1.125rem !important;
-    line-height: 1.2 !important;
-  }
-
-  h3, .text-xl, .text-lg {
-    font-size: 0.95rem !important;
-    line-height: 1.25 !important;
-  }
-
-  p, .text-xs, .text-sm, .text-base {
-    font-size: 11px !important;
-    line-height: 1.4 !important;
-  }
-
-  /* Handle white-space wrapping tightly for all buttons & input components */
-  button, select, input, textarea, a, span {
-    white-space: normal !important; /* Allow natural wrapping on mobile */
-    word-break: break-word !important;
-  }
-
-  /* Shift voice command pill above bottom mobile nav bar to avoid overlapping dictionary or bible tabs */
-  .fixed.bottom-6.right-6 {
-    bottom: 4.8rem !important;
-    right: 0.5rem !important;
-  }
-
-  .fixed.bottom-6.right-6 button {
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.35rem !important;
-    font-size: 9.5px !important;
-  }
-
-  /* Enforce standard safety bounds on all page wrappers */
-  * {
-    max-width: 100% !important;
-    box-sizing: border-box !important;
-  }
-
-  /* Shrink header & hero banner sizes */
-  .rounded-2xl {
-    border-radius: 0.6rem !important;
-  }
-
-  /* Snugger spacing in grids and flex elements */
-  .grid {
-    gap: 0.4rem !important;
-  }
-
-  .gap-6 {
-    gap: 0.5rem !important;
-  }
-
-  .gap-8 {
-    gap: 0.75rem !important;
-  }
-
-  /* snuggier card padding */
-  .p-5, .p-6, .p-8 {
-    padding: 0.65rem !important;
-  }
-
-  .p-4 {
-    padding: 0.45rem !important;
-  }
-
-  .p-3 {
-    padding: 0.3rem !important;
-  }
-
-  /* Standard padding overrides on components and pages */
-  .py-6, .py-8, .md:py-8, .py-12 {
-    padding-top: 0.6rem !important;
-    padding-bottom: 0.6rem !important;
-  }
-
-  /* Make tab titles and action buttons slim and touch-friendly */
-  button, .btn {
-    padding-left: 0.5rem !important;
-    padding-right: 0.5rem !important;
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.35rem !important;
-    font-size: 0.7rem !important;
-  }
-
-  /* Ensure text fields and select inputs don't swell beyond limits */
-  input, select, textarea {
-    padding: 0.35rem !important;
-    font-size: 0.7rem !important;
-  }
-
-  /* Reduce space consumed by lists */
-  .space-y-4 > :not([hidden]) ~ :not([hidden]) {
-    margin-top: 0.4rem !important;
-  }
-  .space-y-6 > :not([hidden]) ~ :not([hidden]) {
-    margin-top: 0.5rem !important;
-  }
-  .space-y-8 > :not([hidden]) ~ :not([hidden]) {
-    margin-top: 0.75rem !important;
-  }
-
-  /* Constrain the bookstore item cards specifically to fit perfectly */
-  .bookstore-item-card {
-    padding: 0.4rem !important;
-    border-radius: 0.6rem !important;
-  }
-
-  .bookstore-item-card img {
-    max-height: 110px !important;
-  }
-
-  .bookstore-item-card .aspect-\[3\/4\] {
-    height: 110px !important;
-    max-height: 110px !important;
-    border-width: 3px !important;
-  }
-
-  /* Handle details modal so it doesn't leak or require scrolling */
-  .modal, [role="dialog"] {
-    max-width: 96% !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 0.75rem !important;
-  }
-
-  /* Make sure horizontal tabs have smooth momentum scrolling */
-  .overflow-x-auto {
-    -webkit-overflow-scrolling: touch !important;
+  /* Tabular numerals for financial values, timers, and KPI counters */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }
 
+/* Custom Sleek Mode: crisp editorial spacing without changing typography voice */
+.sleek-mode-active {
+  letter-spacing: -0.008em;
+}
+
+.sleek-mode-active .rounded-3xl {
+  border-radius: 1.25rem;
+}
+
+/* Scrollbar refinement matching warm paper palette */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(110, 101, 94, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 66, 27, 0.5);
+}
+
+/* Sleek utility animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.28s ease-out forwards;
+}
+
+/* Native Android / iOS Safe-Area Padding */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+@media (max-width: 1024px) {
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
+  img, video, iframe, canvas, svg {
+    max-width: 100%;
+  }
+  input, select, textarea, button {
+    max-width: 100%;
+  }
+  @supports (-webkit-touch-callout: none) {
+    input, textarea, select {
+      font-size: 16px;
+    }
+  }
+}
+
+/* Touch friendly targets without shrinking compact inline icon pills */
+@media (pointer: coarse) {
+  button[data-tap-target="true"],
+  a[data-tap-target="true"] {
+    min-height: 44px;
+  }
+}
+
+/* Printed Diploma Optimization */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background-color: #ffffff;
+    color: #000000;
+  }
+}

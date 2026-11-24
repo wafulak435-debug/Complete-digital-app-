@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Send, Volume2, Mic, Play, Plus, BookOpen, Clock, RefreshCw, Layers, CheckCircle2, AlertCircle, FileText, Music, Video, Award, BookMarked } from "lucide-react";
+import { invokeGeminiAction } from "../lib/aiClient";
 
 interface FileAttachment {
   name: string;
@@ -311,16 +312,20 @@ Every language contains a highly customized vocabulary used by statesmen, execut
   const handleQueryAINotes = async () => {
     setIsGeneratingNotes(true);
     try {
-      const resp = await fetch("/api/ai/language-translate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await invokeGeminiAction(
+        "language-translate",
+        "/api/ai/language-translate",
+        {
           text: `You MUST compile incredibly detailed, exhaustive, and academic-grade teaching notes structured into a hierarchy of 'Topic > Sub-topic > Detailed Notes' on the following topic: "${activeTopic}" in ${selectedLanguage} language. Provide general vocabulary, specific grammar explanations, pronunciation keys, and active verbal conjugations under each Sub-topic's Detailed Notes section. Format sections exactly like this without ANY markdown '#' hash characters: TOPIC: [Topic Name], SUB-TOPIC: [Sub-topic Name], DETAILED NOTES: [Notes content].`,
           targetLang: selectedLanguage,
           mode: "lesson"
-        })
-      });
-      const result = await resp.json();
+        },
+        {
+          saveHistory: true,
+          historyTitle: `${selectedLanguage} Lesson: ${activeTopic}`,
+          historyCategory: "Language Teacher",
+        }
+      );
       if (result.success && result.text) {
         setDetailedNotes(result.text);
         alert(`🔔 Mwalimu AI has successfully compiled highly detailed and comprehensive academic notes for ${selectedLanguage}!`);
@@ -382,18 +387,20 @@ Every language contains a highly customized vocabulary used by statesmen, execut
     setIsTeacherTyping(true);
 
     try {
-      // Call standard assistant proxy which supports attached images base64 list
-      const resp = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const resData = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: `You are an expert language teacher teaching me ${selectedLanguage}. Help me solve this question: "${userText}". Reference any attached files, songs, videos, or photos. Provide a highly detailed, scholarly, and comprehensive diagnostic response.`,
           category: "Problem Solver",
-          images: currentFiles.map(f => f.data) // map file base64 strings
-        })
-      });
-      
-      const resData = await resp.json();
+          images: currentFiles.map(f => f.data)
+        },
+        {
+          saveHistory: true,
+          historyTitle: `${selectedLanguage} Tutor: ${userText.slice(0, 60)}`,
+          historyCategory: "Language Teacher",
+        }
+      );
       if (resData.success && resData.text) {
         setChatLog((prev) => [
           ...prev,

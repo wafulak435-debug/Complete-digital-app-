@@ -1,7 +1,11 @@
 import React, { useState } from "react";
 import { Phone, Mail, Facebook, MapPin, CheckCircle, Send, Landmark } from "lucide-react";
 
-export default function Contact() {
+interface ContactProps {
+  onOpenMap?: () => void;
+}
+
+export default function Contact({ onOpenMap }: ContactProps = {}) {
   const [formState, setFormState] = useState({ name: "", email: "", message: "", sent: false });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -83,16 +87,32 @@ export default function Contact() {
                 </div>
               </a>
 
-              {/* Location (Bungoma, Kenya - Corrected) */}
-              <div className="flex items-start space-x-3.5 rounded-xl p-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                  <MapPin className="h-5 w-5" />
+              {/* Location (Bungoma, Kenya) & Interactive Map Launcher */}
+              <div className="flex flex-col space-y-2 rounded-xl p-3 bg-stone-50 border border-stone-200/70">
+                <div className="flex items-start space-x-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                    <MapPin className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold text-neutral-400 upper tracking-wider font-mono">Headquarters Location</p>
+                    <p className="text-sm font-bold text-neutral-800">Bungoma, Western Kenya</p>
+                    <p className="text-[11px] text-stone-500">Kanduyi Hub, Eldoret, Kisumu & Nairobi</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs font-semibold text-neutral-400 upper tracking-wider font-mono">Headquarters Location</p>
-                  <p className="text-sm font-bold text-neutral-800">Bungoma, Kenya</p>
-                  <p className="text-[11px] text-stone-500">Serving Western Kenya & East Africa</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onOpenMap) {
+                      onOpenMap();
+                    } else {
+                      window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "campuses-map" } }));
+                    }
+                  }}
+                  className="mt-1 flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-lg bg-[#A8421B] hover:bg-[#8F3614] text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  <span>Open Interactive Campus Map (Google Maps)</span>
+                </button>
               </div>
             </div>
           </div>

@@ -2,37 +2,70 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "User profile with reading streaks and daily goals",
+      "description": "User profile with reading streaks, daily goals, and RBAC metadata",
       "type": "object",
       "properties": {
         "email": { "type": "string", "description": "User email address" },
         "name": { "type": "string", "description": "User full name" },
-        "role": { "type": "string", "enum": ["admin", "member"], "description": "The user access level" },
+        "role": {
+          "type": "string",
+          "enum": ["main_admin", "sub_admin", "admin", "manager", "tutor", "member"],
+          "description": "The authoritative user access level"
+        },
         "avatarUrl": { "type": "string", "description": "Optional image avatar reference URL" },
         "readingStreak": { "type": "integer", "description": "Continuous streak of active reading" },
-        "dailyGoalMinutes": { "type": "integer", "description": "User personal reading minutes objective target" }
+        "dailyGoalMinutes": { "type": "integer", "description": "User personal reading minutes objective target" },
+        "isSuspended": { "type": "boolean", "description": "True if suspended by administration" },
+        "authorizedCourses": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Courses a tutor is authorized to examine"
+        }
       },
       "required": ["email", "name", "role", "readingStreak", "dailyGoalMinutes"]
+    },
+    "SubAdminPermission": {
+      "title": "SubAdminPermission",
+      "description": "Granular capability permissions assigned to sub-administrators exclusively by main administrator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "allowBroadcast": { "type": "boolean" },
+        "allowApproval": { "type": "boolean" },
+        "allowVault": { "type": "boolean" },
+        "allowManageBooks": { "type": "boolean" },
+        "allowConfirmPayments": { "type": "boolean" },
+        "allowManageEnrollments": { "type": "boolean" },
+        "allowManageExams": { "type": "boolean" },
+        "allowIssueCertificates": { "type": "boolean" },
+        "allowModeration": { "type": "boolean" },
+        "allowSuspendUsers": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "updatedAt"]
     },
     "Book": {
       "title": "Book",
       "description": "Digital books stored in active catalog library",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique identifier of the book" },
-        "title": { "type": "string", "description": "Main title of digital handbook" },
-        "author": { "type": "string", "description": "Book main writer or publisher" },
-        "price": { "type": "number", "description": "Sale pricing for eBook format in KES currency" },
-        "category": { "type": "string", "description": "Taxonomy category of the book" },
-        "description": { "type": "string", "description": "Synopsis and outline details" },
-        "coverImage": { "type": "string", "description": "Public cover graphic illustration Unsplash URL" },
-        "fileSize": { "type": "string", "description": "Size of PDF content payload" },
-        "pages": { "type": "integer", "description": "Page count" },
-        "publishedDate": { "type": "string", "description": "Launch publishing day tag" },
-        "isFeatured": { "type": "boolean", "description": "True if featured on homepage panels" },
-        "status": { "type": "string", "enum": ["active", "draft"], "description": "Inventory status" },
-        "rating": { "type": "number", "description": "Average review grade scored dynamically" },
-        "reviewsCount": { "type": "integer", "description": "Total user responses tally count" }
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "authorId": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "coverImage": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "pages": { "type": "integer" },
+        "publishedDate": { "type": "string" },
+        "isFeatured": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "draft"] },
+        "rating": { "type": "number" },
+        "reviewsCount": { "type": "integer" }
       },
       "required": ["id", "title", "author", "price", "category", "description", "coverImage", "fileSize", "pages", "publishedDate", "isFeatured", "status", "rating", "reviewsCount"]
     },
@@ -41,13 +74,13 @@
       "description": "E-Book critique comments and scores from users",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Review unique node ID" },
-        "productId": { "type": "string", "description": "Book document ID" },
-        "userId": { "type": "string", "description": "Creator user UID index" },
-        "userName": { "type": "string", "description": "Creator display name tag" },
-        "rating": { "type": "integer", "description": "Star score ranking between 1 and 5" },
-        "text": { "type": "string", "description": "Written response text content body" },
-        "date": { "type": "string", "description": "Submission ISO date marker" }
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "rating": { "type": "integer" },
+        "text": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "productId", "userId", "userName", "rating", "text", "date"]
     },
@@ -56,13 +89,27 @@
       "description": "Threaded discussions on digital book resources",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Comment leaf ID" },
-        "targetId": { "type": "string", "description": "Reference catalog item ID" },
-        "userId": { "type": "string", "description": "Authenticated writer ID" },
-        "userName": { "type": "string", "description": "Authenticated writer name" },
-        "text": { "type": "string", "description": "Body message wording text" },
-        "date": { "type": "string", "description": "Creation date" },
-        "parentId": { "type": "string", "description": "Optional parent node identifier for nesting" }
+        "id": { "type": "string" },
+        "targetId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "text": { "type": "string" },
+        "date": { "type": "string" },
+        "parentId": { "type": "string" }
+      },
+      "required": ["id", "targetId", "userId", "userName", "text", "date"]
+    },
+    "SocialPost": {
+      "title": "SocialPost",
+      "description": "Community social posts editable only by owner or moderator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "targetId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "text": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "targetId", "userId", "userName", "text", "date"]
     },
@@ -71,33 +118,45 @@
       "description": "Discussions and group lessons in Bungoma Community",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique chat node identifier" },
-        "channel": { "type": "string", "enum": ["#General", "#Book Talks", "#Leadership", "#Publishing"], "description": "Group channel name" },
-        "userId": { "type": "string", "description": "Sender user ID" },
-        "userName": { "type": "string", "description": "Sender display name" },
-        "userAvatar": { "type": "string", "description": "Optional profile photo endpoint" },
-        "isAdmin": { "type": "boolean", "description": "Privilege sign of the sender" },
-        "text": { "type": "string", "description": "Chat message wording" },
-        "date": { "type": "string", "description": "Calendar day note" },
-        "time": { "type": "string", "description": "Clock time stamp" },
-        "parentId": { "type": "string", "description": "Optional nesting root" }
+        "id": { "type": "string" },
+        "channel": { "type": "string", "enum": ["#General", "#Book Talks", "#Leadership", "#Publishing", "#workers", "#faculty", "#generatechat"] },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "isAdmin": { "type": "boolean" },
+        "text": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "parentId": { "type": "string" }
       },
       "required": ["id", "channel", "userId", "userName", "text", "date", "time"]
+    },
+    "GroupMembership": {
+      "title": "GroupMembership",
+      "description": "Restricted group channel access list",
+      "type": "object",
+      "properties": {
+        "channel": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "addedBy": { "type": "string" }
+      },
+      "required": ["channel", "userId"]
     },
     "SavedDocument": {
       "title": "SavedDocument",
       "description": "Personal document extracts generated on Document Studio",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique keying token" },
-        "userId": { "type": "string", "description": "Owner identifier index" },
-        "title": { "type": "string", "description": "Personal label" },
-        "content": { "type": "string", "description": "Main document text content" },
-        "type": { "type": "string", "enum": ["pdf", "doc", "video", "photo"], "description": "Category file type classification" },
-        "folder": { "type": "string", "description": "Directory folder placement name" },
-        "date": { "type": "string", "description": "Creation day tag" },
-        "fileSize": { "type": "string", "description": "Size designation string format" },
-        "downloadUrl": { "type": "string", "description": "Endpoint URL" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["pdf", "doc", "video", "photo"] },
+        "folder": { "type": "string" },
+        "date": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "downloadUrl": { "type": "string" }
       },
       "required": ["id", "userId", "title", "content", "type", "folder", "date", "fileSize"]
     },
@@ -106,16 +165,16 @@
       "description": "Files uploaded by users requiring approval",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Upload transaction key" },
-        "userId": { "type": "string", "description": "Member owner UID" },
-        "userName": { "type": "string", "description": "Member display moniker" },
-        "title": { "type": "string", "description": "Upload document label title" },
-        "type": { "type": "string", "enum": ["pdf", "video", "photo"], "description": "File format category" },
-        "fileSize": { "type": "string", "description": "Standard storage size scale" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "pending_delete"], "description": "Approval progression status" },
-        "allowedToPublic": { "type": "boolean", "description": "Toggles public library visibility" },
-        "date": { "type": "string", "description": "Action timestamp record" },
-        "contentUrl": { "type": "string", "description": "Secured content download link" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["pdf", "video", "photo", "audio"] },
+        "fileSize": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected", "pending_delete"] },
+        "allowedToPublic": { "type": "boolean" },
+        "date": { "type": "string" },
+        "contentUrl": { "type": "string" }
       },
       "required": ["id", "userId", "userName", "title", "type", "fileSize", "status", "allowedToPublic", "date"]
     },
@@ -124,14 +183,14 @@
       "description": "User highlights and notes for digital books",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique key token" },
-        "userId": { "type": "string", "description": "Creator user identifier" },
-        "bookId": { "type": "string", "description": "Book ID reference" },
-        "page": { "type": "integer", "description": "Page number reference" },
-        "text": { "type": "string", "description": "Highlighted text content" },
-        "comment": { "type": "string", "description": "Optional comment annotation text" },
-        "color": { "type": "string", "description": "Highlight color code" },
-        "date": { "type": "string", "description": "Timestamp ISO representation" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "bookId": { "type": "string" },
+        "page": { "type": "integer" },
+        "text": { "type": "string" },
+        "comment": { "type": "string" },
+        "color": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "userId", "bookId", "page", "text", "date"]
     },
@@ -140,131 +199,216 @@
       "description": "Global application environment preferences",
       "type": "object",
       "properties": {
-        "primaryColor": { "type": "string", "description": "Hex color string for --color-accent decoration" },
-        "fontSizeMultiplier": { "type": "number", "description": "Font scaling multiplier factor between 0.8 and 1.5" },
-        "customLogoUrl": { "type": "string", "description": "Custom global enterprise brand launcher logo base64 or Unsplash URL" }
+        "primaryColor": { "type": "string" },
+        "fontSizeMultiplier": { "type": "number" },
+        "customLogoUrl": { "type": "string" }
       },
       "required": ["primaryColor", "fontSizeMultiplier"]
     },
     "BookOrder": {
       "title": "BookOrder",
-      "description": "Purchased eBook order requiring manual administration payment clearance confirmation",
+      "description": "Purchased eBook order requiring trusted payment confirmation",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Order reference node token" },
-        "userId": { "type": "string", "description": "Purchasing user's email ID" },
-        "userName": { "type": "string", "description": "Purchasing user's display moniker" },
-        "bookId": { "type": "string", "description": "Target book product lookup ID" },
-        "bookTitle": { "type": "string", "description": "Target book product designation title name" },
-        "price": { "type": "number", "description": "Stipulated cost amount paid in KES currency" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Order progression milestone" },
-        "date": { "type": "string", "description": "Submission ISO date format marker" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "bookId": { "type": "string" },
+        "bookTitle": { "type": "string" },
+        "price": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "date": { "type": "string" }
       },
       "required": ["id", "userId", "userName", "bookId", "bookTitle", "price", "status", "date"]
     },
-    "SystemNotification": {
-      "title": "SystemNotification",
-      "description": "Alert notifications broadcasted by administrators to app users",
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "School course enrollment request & administrative approval record",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique notification identifier" },
-        "title": { "type": "string", "description": "Short headline statement" },
-        "message": { "type": "string", "description": "Longer detail body of the notification" },
-        "type": { "type": "string", "enum": ["free_book", "wifi_alert", "general"], "description": "Notification category" },
-        "targetBookId": { "type": "string", "description": "Associated eBook ID if relevant" },
-        "date": { "type": "string", "description": "Submissions timestamp record" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTopic": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "feeStatus": { "type": "string", "enum": ["unpaid", "paid"] },
+        "certificateIssued": { "type": "boolean" },
+        "enrolledAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "studentName", "courseId", "status", "feeStatus", "certificateIssued"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Published exam questions strictly separated from confidential answer keys",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "courseTrack": { "type": "string" },
+        "title": { "type": "string" },
+        "durationMinutes": { "type": "integer" },
+        "maxAttempts": { "type": "integer" },
+        "resultsReleased": { "type": "boolean" }
+      },
+      "required": ["id", "courseTrack", "title", "resultsReleased"]
+    },
+    "ExamAnswerKey": {
+      "title": "ExamAnswerKey",
+      "description": "Confidential answer keys accessible only to authorized examiners",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string" },
+        "courseTrack": { "type": "string" },
+        "answers": { "type": "array" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["examId", "courseTrack", "answers"]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "Student exam attempt with server-computed score protection",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "examId": { "type": "string" },
+        "courseTrack": { "type": "string" },
+        "userId": { "type": "string" },
+        "status": { "type": "string", "enum": ["in_progress", "submitted", "expired"] },
+        "score": { "type": "number" },
+        "passed": { "type": "boolean" }
+      },
+      "required": ["id", "examId", "courseTrack", "userId", "status"]
+    },
+    "FeePayment": {
+      "title": "FeePayment",
+      "description": "Student tuition, certificate, and fee payment confirmations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "feeType": { "type": "string", "enum": ["library", "certificate", "tuition", "wifi"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "rejected"] },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "userId", "feeType", "amount", "status", "date"]
+    },
+    "CertificateDownload": {
+      "title": "CertificateDownload",
+      "description": "Verified issued school certificates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "courseTopic": { "type": "string" },
+        "score": { "type": "number" },
+        "ledgerHash": { "type": "string" }
+      },
+      "required": ["id", "email", "courseTopic", "score", "ledgerHash"]
+    },
+    "SystemNotification": {
+      "title": "SystemNotification",
+      "description": "Alert notifications broadcasted by administrators",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["free_book", "wifi_alert", "general"] },
+        "targetBookId": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "title", "message", "type", "date"]
     },
     "WifiPurchase": {
       "title": "WifiPurchase",
-      "description": "WiFi hotspots packages purchased by users via payment gateway",
+      "description": "WiFi hotspots packages purchased by users",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Unique transaction ID reference" },
-        "userId": { "type": "string", "description": "Associated member email address" },
-        "userName": { "type": "string", "description": "Member display name" },
-        "planName": { "type": "string", "description": "Package designator" },
-        "price": { "type": "number", "description": "Charge amount paid in KES" },
-        "phoneNumber": { "type": "string", "description": "M-Pesa registered subscriber number used for STK Push" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "description": "Transaction clear status" },
-        "expiresAt": { "type": "string", "description": "Calculated pack expire date/time" },
-        "date": { "type": "string", "description": "Purchase transaction day tag" }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "planName": { "type": "string" },
+        "price": { "type": "number" },
+        "phoneNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "expiresAt": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "userId", "userName", "planName", "price", "phoneNumber", "status", "expiresAt", "date"]
+    },
+    "SearchHistory": {
+      "title": "SearchHistory",
+      "description": "Private per-user AI search history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "query": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "userId", "query", "date"]
     },
     "SermonVideo": {
       "title": "SermonVideo",
       "description": "Admin uploaded sermons and motivational videos",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Video unique identifier" },
-        "title": { "type": "string", "description": "Title of the video sermon or motivation" },
-        "speaker": { "type": "string", "description": "Speaker or presenter name" },
-        "videoUrl": { "type": "string", "description": "Direct URL or stream endpoint to the video" },
-        "thumbnailUrl": { "type": "string", "description": "URL to the preview thumbnail image" },
-        "description": { "type": "string", "description": "Detailed notes or sermon script summary" },
-        "category": { "type": "string", "enum": ["Sermon", "Motivation"], "description": "Category selector" },
-        "duration": { "type": "string", "description": "Duration badge in minutes and seconds" },
-        "date": { "type": "string", "description": "ISO date representing upload time" },
-        "likesCount": { "type": "integer", "description": "Likes counter" },
-        "viewsCount": { "type": "integer", "description": "Views counter" }
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "speaker": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string", "enum": ["Sermon", "Motivation", "Evangelism", "Worship Songs"] },
+        "duration": { "type": "string" },
+        "date": { "type": "string" }
       },
       "required": ["id", "title", "speaker", "videoUrl", "thumbnailUrl", "category", "date"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Append-only immutable audit log for privileged actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actorId": { "type": "string" },
+        "actorEmail": { "type": "string" },
+        "category": { "type": "string" },
+        "action": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "actorId", "category", "action"]
     }
   },
   "firestore": {
-    "/appSettings/{settingsId}": {
-      "schema": "AppSettings",
-      "description": "Global settings database"
-    },
-    "/users/{userId}": {
-      "schema": "User",
-      "description": "User profiles database"
-    },
-    "/books/{bookId}": {
-      "schema": "Book",
-      "description": "Digital eBooks database"
-    },
-    "/reviews/{reviewId}": {
-      "schema": "Review",
-      "description": "Dynamic eBook critical reviews"
-    },
-    "/comments/{commentId}": {
-      "schema": "Comment",
-      "description": "Contextual eBook comments tree"
-    },
-    "/communityMessages/{messageId}": {
-      "schema": "CommunityMessage",
-      "description": "Universal discussion channels"
-    },
-    "/savedDocuments/{docId}": {
-      "schema": "SavedDocument",
-      "description": "Document Studio generator documents Vault"
-    },
-    "/uploadRequests/{requestId}": {
-      "schema": "MemberUploadRequest",
-      "description": "Member uploaded content and reviews backlog queue"
-    },
-    "/annotations/{annotationId}": {
-      "schema": "Annotation",
-      "description": "User highlights and annotations"
-    },
-    "/bookOrders/{orderId}": {
-      "schema": "BookOrder",
-      "description": "Purchased eBook order verification queues"
-    },
-    "/notifications/{notificationId}": {
-      "schema": "SystemNotification",
-      "description": "Broadcasted notifications for free books and wi-fi alerts"
-    },
-    "/wifiPurchases/{purchaseId}": {
-      "schema": "WifiPurchase",
-      "description": "WiFi network bundle credentials and hotspot receipts"
-    },
-    "/sermonVideos/{videoId}": {
-      "schema": "SermonVideo",
-      "description": "Sermon and motivational videos archive"
-    }
+    "/appSettings/{settingsId}": { "schema": "AppSettings", "description": "Global settings database" },
+    "/users/{userId}": { "schema": "User", "description": "User profiles database" },
+    "/subAdminPermissions/{permId}": { "schema": "SubAdminPermission", "description": "Sub-admin permissions controlled by main admin" },
+    "/books/{bookId}": { "schema": "Book", "description": "Digital eBooks database" },
+    "/reviews/{reviewId}": { "schema": "Review", "description": "Dynamic eBook critical reviews" },
+    "/comments/{commentId}": { "schema": "Comment", "description": "Contextual eBook comments tree" },
+    "/socialPosts/{postId}": { "schema": "SocialPost", "description": "Community social posts" },
+    "/communityMessages/{messageId}": { "schema": "CommunityMessage", "description": "Universal discussion channels" },
+    "/groupMemberships/{membershipId}": { "schema": "GroupMembership", "description": "Restricted group memberships" },
+    "/savedDocuments/{docId}": { "schema": "SavedDocument", "description": "Document Studio vault" },
+    "/uploadRequests/{requestId}": { "schema": "MemberUploadRequest", "description": "Member upload moderation queue" },
+    "/annotations/{annotationId}": { "schema": "Annotation", "description": "User highlights and annotations" },
+    "/bookOrders/{orderId}": { "schema": "BookOrder", "description": "Purchased eBook orders" },
+    "/enrollments/{enrollmentId}": { "schema": "Enrollment", "description": "School course enrollments" },
+    "/exams/{examId}": { "schema": "Exam", "description": "Sanitized published exams" },
+    "/examAnswerKeys/{examId}": { "schema": "ExamAnswerKey", "description": "Confidential examiner-only answer keys" },
+    "/examAttempts/{attemptId}": { "schema": "ExamAttempt", "description": "Student exam attempts" },
+    "/feePayments/{paymentId}": { "schema": "FeePayment", "description": "Fee payments" },
+    "/certificate_downloads/{certId}": { "schema": "CertificateDownload", "description": "Issued certificates" },
+    "/notifications/{notificationId}": { "schema": "SystemNotification", "description": "Broadcasted notifications" },
+    "/wifiPurchases/{purchaseId}": { "schema": "WifiPurchase", "description": "WiFi hotspot purchases" },
+    "/searchHistories/{historyId}": { "schema": "SearchHistory", "description": "Private AI search histories" },
+    "/sermonVideos/{videoId}": { "schema": "SermonVideo", "description": "Sermon and motivational videos" },
+    "/auditLogs/{logId}": { "schema": "AuditLog", "description": "Immutable security audit log" }
   }
 }

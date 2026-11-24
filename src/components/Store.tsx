@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Book, Review, Comment, User, BookCategory, SavedDocument, BookOrder } from "../types";
-import { Search, SlidersHorizontal, Star, Calendar, DollarSign, MessageSquare, ArrowLeft, Bookmark, ShoppingBag, FolderKey, Plus, Eye, Globe, Sparkles, Crown, Cpu, BookOpen, Briefcase, Smile, GraduationCap, Heart, Atom, Loader2, MoreVertical, Share2, Check } from "lucide-react";
+import { Book, Review, Comment, User, SavedDocument, BookOrder } from "../types";
+import {
+  Search, SlidersHorizontal, Star, ArrowLeft, ArrowRight, Bookmark, ShoppingBag,
+  Plus, Eye, Globe, Sparkles, Crown, Cpu, BookOpen, Briefcase, Smile, GraduationCap,
+  Heart, Atom, Loader2, MoreVertical, Share2, Check, ChevronLeft, ChevronRight,
+  Compass, CreditCard, Cloud, HardDrive, ShieldCheck
+} from "lucide-react";
 import SecureBookReader from "./SecureBookReader";
 import { motion } from "motion/react";
+import {
+  DEFAULT_SHOWCASE_CONFIG,
+  fetchShowcaseFromServer,
+  subscribeShowcaseUpdates,
+  SiteShowcaseConfig,
+} from "../lib/showcase";
+import { secureApiFetch } from "../lib/aiClient";
 
 interface StoreProps {
   currentUser: User | null;
   onLogIn: () => void;
+  onNavigate?: (view: any) => void;
   books: Book[];
   onUpdateBookRating: (id: string, newAvg: number, newReviewCount: number) => void;
   onPurchaseBook: (id: string) => void;
@@ -34,6 +47,7 @@ const getBookProgress = (bookId: string, totalPages: number) => {
 export default function Store({
   currentUser,
   onLogIn,
+  onNavigate,
   books,
   onUpdateBookRating,
   onPurchaseBook,
@@ -46,8 +60,31 @@ export default function Store({
   initialBookId = null,
   onClearInitialBookId
 }: StoreProps) {
-  // Navigation
+  // Navigation & Live Showcase config
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
+  const [showcase, setShowcase] = useState<SiteShowcaseConfig>(DEFAULT_SHOWCASE_CONFIG);
+  const [slideIdx, setSlideIdx] = useState(0);
+  const [isSlidePaused, setIsSlidePaused] = useState(false);
+
+  const canModerateComments =
+    currentUser?.role === "main_admin" ||
+    currentUser?.role === "admin" ||
+    (currentUser?.role === "sub_admin" && Boolean(currentUser?.permissions?.allowModeration));
+
+  useEffect(() => {
+    fetchShowcaseFromServer().then((cfg) => setShowcase(cfg));
+    const unsub = subscribeShowcaseUpdates((cfg) => setShowcase(cfg));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (isSlidePaused || selectedBook || !showcase.slides.length) return;
+    const intervalMs = Math.max(1500, Number(showcase.intervalMs) || 2000);
+    const timer = setInterval(() => {
+      setSlideIdx((prev) => (prev + 1) % showcase.slides.length);
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [isSlidePaused, selectedBook, showcase.slides.length, showcase.intervalMs]);
 
   // Auto-select initial book from shared link or deep link
   useEffect(() => {
@@ -242,7 +279,7 @@ export default function Store({
     setSelectedBook((prev) => prev ? { ...prev, rating: newAverage, reviewsCount: nextReviews.length } : null);
   };
 
-  // Submit Comment dialogue entry
+  // Submit Comment dialogue entry (with server sync)
   const handleSubmitComment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) {
@@ -251,12 +288,13 @@ export default function Store({
     }
     if (!commentText.trim() || !selectedBook) return;
 
+    const cleanText = commentText.trim();
     const newComment: Comment = {
       id: "com_" + Date.now(),
       targetId: selectedBook.id,
       userId: currentUser.email,
       userName: currentUser.name,
-      text: commentText.trim(),
+      text: cleanText,
       date: new Date().toISOString().split("T")[0]
     };
 
@@ -264,6 +302,17 @@ export default function Store({
     setComments(nextComments);
     localStorage.setItem(`WAFULA_COMMENTS_${selectedBook.id}`, JSON.stringify(nextComments));
     setCommentText("");
+
+    secureApiFetch("/api/social/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: newComment.id,
+        targetId: selectedBook.id,
+        text: cleanText,
+        userName: currentUser.name,
+      }),
+    }).catch(() => {});
   };
 
   // Trigger STK Push countdown simulations
@@ -292,12 +341,13 @@ export default function Store({
     }
     if (!replyText.trim() || !selectedBook) return;
 
+    const cleanReply = replyText.trim();
     const newReply: Comment = {
       id: "com_rep_" + Date.now(),
       targetId: selectedBook.id,
       userId: currentUser.email,
       userName: currentUser.name,
-      text: replyText.trim(),
+      text: cleanReply,
       parentId,
       date: new Date().toISOString().split("T")[0]
     };
@@ -307,9 +357,40 @@ export default function Store({
     localStorage.setItem(`WAFULA_COMMENTS_${selectedBook.id}`, JSON.stringify(nextComments));
     setReplyText("");
     setReplyTarget(null);
+
+    secureApiFetch("/api/social/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: newReply.id,
+        targetId: selectedBook.id,
+        parentId,
+        text: cleanReply,
+        userName: currentUser.name,
+      }),
+    }).catch(() => {});
   };
 
-  const handleDeleteComment = (commentId: string) => {
+  const handleDeleteComment = async (commentId: string, ownerEmail?: string) => {
+    const isOwner = Boolean(
+      currentUser?.email &&
+      ownerEmail &&
+      currentUser.email.toLowerCase().trim() === ownerEmail.toLowerCase().trim()
+    );
+    if (!isOwner && !canModerateComments) {
+      triggerToast("Only the comment owner or an authorized moderator can delete this comment.");
+      return;
+    }
+    try {
+      const res = await secureApiFetch(`/api/social/posts/${encodeURIComponent(commentId)}`, {
+        method: "DELETE",
+      });
+      if (res.status === 403) {
+        triggerToast("Permission denied on server.");
+        return;
+      }
+    } catch {}
+
     const updated = comments.filter(c => c.id !== commentId && c.parentId !== commentId);
     setComments(updated);
     if (selectedBook) {
@@ -318,6 +399,10 @@ export default function Store({
   };
 
   const handleModerateComment = (commentId: string) => {
+    if (!canModerateComments) {
+      triggerToast("Moderator permissions are required to moderate discussion posts.");
+      return;
+    }
     const updated = comments.map(c => {
       if (c.id === commentId) {
         const currentlyModerated = !c.isModerated;
@@ -734,78 +819,88 @@ export default function Store({
                 <div id="store_comments_list" className="space-y-4">
                   {comments.filter(c => !c.parentId).map((c) => {
                     const childReplies = comments.filter((rep) => rep.parentId === c.id);
-                    const isAdmin = currentUser?.role === "admin";
+                    const isCommentOwner = Boolean(
+                      currentUser?.email &&
+                      c.userId &&
+                      currentUser.email.toLowerCase().trim() === c.userId.toLowerCase().trim()
+                    );
 
                     return (
-                      <div key={c.id} className="rounded-xl bg-[#fcfbf9] border border-stone-150 p-4 space-y-3 relative text-left">
+                      <div key={c.id} className="rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] p-4 space-y-3 relative text-left">
                         <div className="flex justify-between items-center">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-stone-850">{c.userName}</span>
+                            <span className="font-bold text-[#1F1B18]">{c.userName}</span>
                             {c.isModerated && (
-                              <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-805 text-[9px] px-2 py-0.5 rounded-full font-bold">
-                                ⚠️ Moderated
+                              <span className="bg-amber-100 text-amber-800 text-[9px] px-2 py-0.5 rounded-full font-bold">
+                                Moderated
                               </span>
                             )}
                           </div>
-                          <span className="text-[9px] text-stone-400 font-mono">{c.date}</span>
+                          <span className="text-[9px] text-[#6E655E] font-mono">{c.date}</span>
                         </div>
                         
-                        {/* If moderated, show public warning, or if admin show original with tag */}
-                        {c.isModerated && !isAdmin ? (
-                          <p className="text-stone-400 italic text-xs bg-stone-100 p-2.5 rounded-lg border border-dashed border-stone-200">
+                        {/* If moderated, show public warning, or if moderator show original with tag */}
+                        {c.isModerated && !canModerateComments ? (
+                          <p className="text-[#6E655E] italic text-xs bg-[#EFECE5] p-2.5 rounded-lg border border-dashed border-[#D8D0C5]">
                             "{c.text}"
                           </p>
                         ) : (
                           <div className="space-y-1">
-                            {c.isModerated && isAdmin && (
+                            {c.isModerated && canModerateComments && (
                               <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded block font-mono">
-                                Admin view (Original message):
+                                Moderator view (Original message):
                               </span>
                             )}
-                            <p className="text-stone-700 leading-relaxed font-sans">
-                              "{c.isModerated && isAdmin ? c.originalText : c.text}"
+                            <p className="text-[#1F1B18] leading-relaxed font-sans">
+                              "{c.isModerated && canModerateComments ? c.originalText : c.text}"
                             </p>
                           </div>
                         )}
 
-                        {/* Admin Action Bar */}
-                        {isAdmin && (
-                          <div className="flex gap-2.5 pt-1 border-t border-dashed border-stone-150 mt-2">
-                            <button
-                              type="button"
-                              onClick={() => handleModerateComment(c.id)}
-                              className="text-[10px] font-bold text-amber-700 hover:text-amber-850 flex items-center space-x-1"
-                              title="Toggle public visibility moderation"
-                            >
-                              <span>🛡️</span>
-                              <span>{c.isModerated ? "Unmoderate" : "Moderate / Hide"}</span>
-                            </button>
+                        {/* Owner / Moderator Action Bar */}
+                        {(canModerateComments || isCommentOwner) && (
+                          <div className="flex gap-3 pt-1.5 border-t border-dashed border-[#E7E1D8] mt-2">
+                            {canModerateComments && (
+                              <button
+                                type="button"
+                                onClick={() => handleModerateComment(c.id)}
+                                className="text-[10px] font-bold text-amber-700 hover:text-amber-900 flex items-center space-x-1 cursor-pointer"
+                                title="Toggle public visibility moderation"
+                              >
+                                <span>{c.isModerated ? "Unmoderate" : "Moderate / Hide"}</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => {
-                                if (confirm("Delete this thread and all replies? This is completely irreversible.")) {
-                                  handleDeleteComment(c.id);
+                                if (confirm("Delete this comment and its replies? This cannot be undone.")) {
+                                  handleDeleteComment(c.id, c.userId);
                                 }
                               }}
-                              className="text-[10px] font-bold text-red-600 hover:text-red-800 flex items-center space-x-1"
+                              className="text-[10px] font-bold text-[#A8421B] hover:text-[#8F3614] flex items-center space-x-1 cursor-pointer"
                             >
-                              <span>🗑️ Delete Thread</span>
+                              <span>Delete Thread</span>
                             </button>
                           </div>
                         )}
 
                         {/* Nested replies */}
                         {childReplies.length > 0 && (
-                          <div className="border-l-2 border-stone-250 pl-4 space-y-2.5 mt-2.5 bg-stone-50/50 py-2.5 px-3 rounded-r-lg">
+                          <div className="border-l-2 border-[#D8D0C5] pl-4 space-y-2.5 mt-2.5 bg-white/70 py-2.5 px-3 rounded-r-lg">
                             {childReplies.map((rep) => {
                               const isRepModerated = rep.isModerated;
+                              const isRepOwner = Boolean(
+                                currentUser?.email &&
+                                rep.userId &&
+                                currentUser.email.toLowerCase().trim() === rep.userId.toLowerCase().trim()
+                              );
                               return (
-                                <div key={rep.id} className="text-xs space-y-1.5 border-b border-stone-100 last:border-b-0 pb-2 last:pb-0">
-                                  <div className="flex justify-between items-center text-[10px] text-stone-500">
+                                <div key={rep.id} className="text-xs space-y-1.5 border-b border-[#E7E1D8] last:border-b-0 pb-2 last:pb-0">
+                                  <div className="flex justify-between items-center text-[10px] text-[#6E655E]">
                                     <div className="flex items-center gap-1">
-                                      <span className="font-bold text-stone-700">{rep.userName}</span>
+                                      <span className="font-bold text-[#1F1B18]">{rep.userName}</span>
                                       {isRepModerated && (
-                                        <span className="bg-amber-100 text-amber-800 text-[8px] px-1.5 py-0.2 rounded font-mono">
+                                        <span className="bg-amber-100 text-amber-800 text-[8px] px-1.5 py-0.5 rounded font-mono">
                                           Moderated
                                         </span>
                                       )}
@@ -813,42 +908,46 @@ export default function Store({
                                     <span className="font-mono">{rep.date}</span>
                                   </div>
                                   
-                                  {isRepModerated && !isAdmin ? (
-                                    <p className="text-stone-400 italic text-[11px] bg-stone-105 p-1.5 rounded">
+                                  {isRepModerated && !canModerateComments ? (
+                                    <p className="text-[#6E655E] italic text-[11px] bg-[#EFECE5] p-1.5 rounded">
                                       "{rep.text}"
                                     </p>
                                   ) : (
                                     <div className="space-y-0.5">
-                                      {isRepModerated && isAdmin && (
-                                        <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.2 rounded block font-mono">
-                                          Admin view (Original reply):
+                                      {isRepModerated && canModerateComments && (
+                                        <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.5 rounded block font-mono">
+                                          Moderator view (Original reply):
                                         </span>
                                       )}
-                                      <p className="text-stone-600 italic">
-                                        "{isRepModerated && isAdmin ? rep.originalText : rep.text}"
+                                      <p className="text-[#1F1B18]/80 italic">
+                                        "{isRepModerated && canModerateComments ? rep.originalText : rep.text}"
                                       </p>
                                     </div>
                                   )}
 
-                                  {/* Reply Admin Controls */}
-                                  {isAdmin && (
-                                    <div className="flex gap-2 text-[9px] font-bold text-stone-400 pt-0.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleModerateComment(rep.id)}
-                                        className="text-amber-700 hover:underline"
-                                      >
-                                        {isRepModerated ? "Unmoderate Reply" : "Moderate Reply"}
-                                      </button>
-                                      <span className="text-stone-300">|</span>
+                                  {/* Reply Owner / Moderator Controls */}
+                                  {(canModerateComments || isRepOwner) && (
+                                    <div className="flex gap-2 text-[9px] font-bold text-[#6E655E] pt-0.5">
+                                      {canModerateComments && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleModerateComment(rep.id)}
+                                            className="text-amber-700 hover:underline cursor-pointer"
+                                          >
+                                            {isRepModerated ? "Unmoderate Reply" : "Moderate Reply"}
+                                          </button>
+                                          <span className="text-[#D8D0C5]">|</span>
+                                        </>
+                                      )}
                                       <button
                                         type="button"
                                         onClick={() => {
                                           if (confirm("Delete this reply?")) {
-                                            handleDeleteComment(rep.id);
+                                            handleDeleteComment(rep.id, rep.userId);
                                           }
                                         }}
-                                        className="text-red-650 hover:underline"
+                                        className="text-[#A8421B] hover:underline cursor-pointer"
                                       >
                                         Delete Reply
                                       </button>
@@ -869,19 +968,19 @@ export default function Store({
                               value={replyText}
                               onChange={(e) => setReplyText(e.target.value)}
                               placeholder="Write a reply..."
-                              className="flex-1 rounded border p-1"
+                              className="flex-1 rounded-lg border border-[#E7E1D8] bg-white px-2.5 py-1.5 outline-none focus:border-[#A8421B]"
                             />
                             <button
                               type="button"
                               onClick={() => handleReplySubmit(c.id)}
-                              className="rounded bg-red-700 px-3 py-1 text-white text-[10px] font-bold"
+                              className="rounded-lg bg-[#A8421B] hover:bg-[#8F3614] px-3 py-1.5 text-white text-[10px] font-bold cursor-pointer"
                             >
                               Post
                             </button>
                             <button
                               type="button"
                               onClick={() => setReplyTarget(null)}
-                              className="text-stone-400"
+                              className="text-[#6E655E] px-2 cursor-pointer"
                             >
                               Cancel
                             </button>
@@ -889,7 +988,7 @@ export default function Store({
                         ) : (
                           <button
                             onClick={() => setReplyTarget(c.id)}
-                            className="text-[10px] font-bold text-red-700 hover:underline block pt-1.5"
+                            className="text-[10px] font-bold text-[#A8421B] hover:underline block pt-1.5 cursor-pointer"
                           >
                             Reply to Thread
                           </button>
@@ -904,10 +1003,375 @@ export default function Store({
           </div>
         </div>
       ) : (
-             /* STORE PAGE MAIN SHELF AND PRODUCT LISTINGS */
-        <div className="space-y-6">
+        /* EDITORIAL HERO, 2-SECOND LIVE SHOWCASE, VISION/MISSION/SLOGAN & BOOK STORE SHELF */
+        <div className="space-y-10">
+          {/* 1. Editorial Hero Banner with Cream Parchment Backdrop */}
+          <section className="relative overflow-hidden rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE] shadow-xs">
+            <img
+              src={showcase.heroBackdropUrl}
+              alt="Zion Digital Library Backdrop"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+            />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#FAF8F4]/95 via-[#FAF8F4]/88 to-[#FAF8F4]/45" />
+
+            <div className="relative z-10 px-6 py-10 sm:px-10 sm:py-14 space-y-6 max-w-4xl text-left">
+              <p className="font-mono text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.22em] text-[#A8421B]">
+                {showcase.heroEyebrow}
+              </p>
+
+              <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight leading-[1.06] text-[#1F1B18]">
+                {showcase.heroTitleLead}
+                <span className="block italic text-[#A8421B] mt-1">{showcase.heroTitleAccent}</span>
+              </h1>
+
+              {/* Inline Vision / Mission / Slogan block with Terracotta Vertical Bar */}
+              <div className="border-l-2 border-[#A8421B] pl-4 space-y-1.5 text-xs sm:text-sm text-[#4A433D]">
+                <p>
+                  <strong className="text-[#1F1B18]">Vision:</strong> {showcase.vision}
+                </p>
+                <p>
+                  <strong className="text-[#1F1B18]">Mission:</strong> {showcase.mission}
+                </p>
+                <p className="italic font-display text-[#A8421B] text-sm">
+                  &ldquo;{showcase.slogan}&rdquo;
+                </p>
+              </div>
+
+              <p className="text-xs sm:text-sm text-[#6E655E] leading-relaxed max-w-2xl">
+                {showcase.heroDescription}
+              </p>
+
+              {/* Hero Action Buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#A8421B] hover:bg-[#8F3614] text-white font-semibold px-5 py-2.5 text-xs sm:text-sm shadow-xs transition cursor-pointer"
+                >
+                  <span>Explore Collection</span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    document.getElementById("featured_books_anchor")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#D8D0C5] bg-white/85 hover:bg-white text-[#1F1B18] font-semibold px-5 py-2.5 text-xs sm:text-sm transition cursor-pointer"
+                >
+                  <span>Featured Books</span>
+                </button>
+              </div>
+
+              {/* Hero Vision/Mission/Slogan Trio Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>SLOGAN</span>
+                  </span>
+                  <p className="text-xs italic font-display text-[#1F1B18]">
+                    &ldquo;{showcase.tagline}&rdquo;
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
+                    <Eye className="h-3.5 w-3.5" />
+                    <span>VISION</span>
+                  </span>
+                  <p className="text-[11px] leading-relaxed text-[#4A433D]">
+                    {showcase.vision}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
+                    <Compass className="h-3.5 w-3.5" />
+                    <span>MISSION</span>
+                  </span>
+                  <p className="text-[11px] leading-relaxed text-[#4A433D]">
+                    {showcase.mission}
+                  </p>
+                </div>
+              </div>
+
+              {/* Editorial Stats Row */}
+              <div className="flex flex-wrap items-center gap-8 sm:gap-12 pt-3 border-t border-[#E7E1D8]">
+                <div>
+                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">500+</div>
+                  <div className="text-[11px] text-[#6E655E]">Digital Books</div>
+                </div>
+                <div>
+                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">10K+</div>
+                  <div className="text-[11px] text-[#6E655E]">Happy Readers</div>
+                </div>
+                <div>
+                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">24/7</div>
+                  <div className="text-[11px] text-[#6E655E]">Instant Access</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* 2. Live 2-Second Editorial Slideshow (Editable in Manager Portal) */}
+          {showcase.slides.length > 0 && (() => {
+            const safeIndex = slideIdx % showcase.slides.length;
+            const activeSlide = showcase.slides[safeIndex];
+            const counterStr = `${String(safeIndex + 1).padStart(2, "0")} / ${String(showcase.slides.length).padStart(2, "0")}`;
+
+            return (
+              <section
+                onMouseEnter={() => setIsSlidePaused(true)}
+                onMouseLeave={() => setIsSlidePaused(false)}
+                className="rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE] p-5 sm:p-8 shadow-xs space-y-4 text-left"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                  <div className="space-y-1">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
+                      {activeSlide.category || "ZION DIGITAL"}
+                    </span>
+                    <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18] tracking-tight">
+                      {activeSlide.title}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-[#6E655E] max-w-2xl">
+                      {activeSlide.subtitle}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeSlide.targetView === "store") {
+                        document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                      } else {
+                        onNavigate?.(activeSlide.targetView);
+                      }
+                    }}
+                    className="self-start sm:self-end inline-flex items-center gap-1.5 rounded-xl bg-white border border-[#D8D0C5] hover:border-[#A8421B] text-[#1F1B18] hover:text-[#A8421B] font-semibold px-3.5 py-2 text-xs transition cursor-pointer shrink-0"
+                  >
+                    <span>{activeSlide.ctaLabel || "Open Section"}</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                {/* Controls + Monospace Slide Counter */}
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSlideIdx((prev) => (prev - 1 + showcase.slides.length) % showcase.slides.length)
+                    }
+                    className="h-8 w-8 rounded-full border border-[#E7E1D8] bg-white hover:bg-[#FAF8F4] text-[#6E655E] hover:text-[#1F1B18] flex items-center justify-center transition cursor-pointer"
+                    aria-label="Previous slide"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-[11px] font-semibold tracking-widest text-[#6E655E] tabular-nums">
+                      {counterStr}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {showcase.slides.map((s, idx) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSlideIdx(idx)}
+                          aria-label={`Go to slide ${idx + 1}`}
+                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                            idx === safeIndex ? "w-5 bg-[#A8421B]" : "w-1.5 bg-[#D8D0C5]"
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setSlideIdx((prev) => (prev + 1) % showcase.slides.length)}
+                    className="h-8 w-8 rounded-full border border-[#E7E1D8] bg-white hover:bg-[#FAF8F4] text-[#6E655E] hover:text-[#1F1B18] flex items-center justify-center transition cursor-pointer"
+                    aria-label="Next slide"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Full-Bleed Clean Photography */}
+                <div className="relative overflow-hidden rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] h-56 sm:h-72 md:h-80">
+                  <img
+                    src={activeSlide.imageUrl}
+                    alt={activeSlide.title}
+                    className="h-full w-full object-cover transition-all duration-500"
+                  />
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* 3. Our Purpose: Vision, Mission & Slogan Cards */}
+          <section className="rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE]/75 px-5 py-9 sm:px-8 space-y-6">
+            <div className="text-center max-w-2xl mx-auto space-y-2">
+              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-[#A8421B]">
+                OUR PURPOSE
+              </p>
+              <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18]">
+                Vision &amp; Mission
+              </h2>
+              <p className="text-xs sm:text-sm text-[#6E655E]">
+                Zion Digital exists to equip every reader with the knowledge and faith to lead, grow, and transform their world.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
+                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
+                  <Eye className="h-5 w-5" />
+                </div>
+                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">VISION</div>
+                <p className="text-xs text-[#4A433D] leading-relaxed">{showcase.vision}</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
+                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
+                  <Compass className="h-5 w-5" />
+                </div>
+                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">MISSION</div>
+                <p className="text-xs text-[#4A433D] leading-relaxed">{showcase.mission}</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
+                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">SLOGAN</div>
+                <p className="font-display italic text-lg text-[#1F1B18]">{showcase.slogan}</p>
+              </div>
+            </div>
+
+            <p className="text-center font-display italic text-xs text-[#6E655E]">
+              &ldquo;{showcase.tagline}&rdquo;
+            </p>
+          </section>
+
+          {/* 4. Curated Selection: Featured Books */}
+          {books.some((b) => b.status === "active" && b.isFeatured) && (
+            <section id="featured_books_anchor" className="space-y-4">
+              <div className="flex items-end justify-between">
+                <div className="text-left">
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
+                    CURATED SELECTION
+                  </p>
+                  <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18]">
+                    Featured Books
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1F1B18] hover:text-[#A8421B] cursor-pointer"
+                >
+                  <span>View All</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                {books
+                  .filter((b) => b.status === "active" && b.isFeatured)
+                  .slice(0, 4)
+                  .map((fb) => (
+                    <div
+                      key={fb.id}
+                      onClick={() => setSelectedBook(fb)}
+                      className="group rounded-2xl border border-[#E7E1D8] bg-white overflow-hidden cursor-pointer hover:border-[#A8421B]/50 hover:shadow-md transition text-left"
+                    >
+                      <div className="relative aspect-[3/4] bg-[#F7F4EE] overflow-hidden">
+                        <img
+                          src={fb.coverImage}
+                          alt={fb.title}
+                          className="h-full w-full object-cover group-hover:scale-[1.03] transition duration-300"
+                        />
+                        <span className="absolute top-2.5 left-2.5 rounded-md bg-[#A8421B] px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-white">
+                          FEATURED
+                        </span>
+                      </div>
+                      <div className="p-3 space-y-1">
+                        <p className="font-mono text-[9px] uppercase tracking-wider text-[#6E655E]">
+                          {fb.category}
+                        </p>
+                        <h3 className="font-display text-xs sm:text-sm font-semibold text-[#1F1B18] line-clamp-1">
+                          {fb.title}
+                        </h3>
+                        <p className="font-mono text-xs font-bold text-[#A8421B]">
+                          KES {fb.price.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </section>
+          )}
+
+          {/* 5. Supported Payment & Cloud Storage Ecosystem */}
+          <section className="rounded-3xl border border-[#E7E1D8] bg-white p-5 sm:p-7 space-y-4 text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
+                  SUPPORTED PAYMENTS &amp; CLOUD STORAGE
+                </p>
+                <h3 className="font-display text-lg sm:text-xl font-semibold text-[#1F1B18]">
+                  Integrated Kenyan Checkout &amp; Multi-Cloud Document Vault
+                </h3>
+              </div>
+              <span className="font-mono text-[10px] text-[#6E655E] uppercase tracking-wider">
+                KES • M-PESA STK • SUPABASE • INDEXEDDB
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
+                  <CreditCard className="h-4 w-4 text-[#A8421B]" />
+                  <span>Paystack KES &amp; M-Pesa</span>
+                </div>
+                <p className="text-[11px] text-[#6E655E] leading-relaxed">
+                  Instant Kenyan Shilling (KES) M-Pesa STK Push and Visa/Mastercard checkout with webhook verification.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
+                  <ShieldCheck className="h-4 w-4 text-emerald-700" />
+                  <span>Lipa Na M-Pesa (247247)</span>
+                </div>
+                <p className="text-[11px] text-[#6E655E] leading-relaxed">
+                  Direct Kenya Paybill checkout verified by finance administrators before unlocking paid books &amp; certificates.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
+                  <Cloud className="h-4 w-4 text-[#A8421B]" />
+                  <span>Supabase &amp; Firebase Vault</span>
+                </div>
+                <p className="text-[11px] text-[#6E655E] leading-relaxed">
+                  Private row-level-secured user storage buckets and cloud reading progress across Android, Windows, and web.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
+                  <HardDrive className="h-4 w-4 text-[#A8421B]" />
+                  <span>Offline IndexedDB Studio</span>
+                </div>
+                <p className="text-[11px] text-[#6E655E] leading-relaxed">
+                  Save approved books, notes, and Word/PDF exports locally on-device for uninterrupted offline reading.
+                </p>
+              </div>
+            </div>
+          </section>
+
           {/* Main search and dynamic filter banner */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4 text-xs">
+          <div id="store_catalog_anchor" className="rounded-2xl border border-[#E7E1D8] bg-white p-5 shadow-xs space-y-4 text-xs">
             <div className="flex flex-col sm:flex-row gap-3">
               {/* Query search text */}
               <div ref={searchContainerRef} className="flex-1 relative">
@@ -924,7 +1388,7 @@ export default function Store({
                     }
                   }}
                   placeholder="Search premium books, local authors, categories..."
-                  className="w-full rounded-xl border border-stone-200 bg-neutral-50 py-2.5 pl-10 pr-10 outline-none focus:bg-white focus:border-red-700"
+                  className="w-full rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] py-2.5 pl-10 pr-10 outline-none focus:bg-white focus:border-[#A8421B]"
                 />
                 {isSearchingDebounced && (
                   <div className="absolute right-3 top-3">
@@ -1026,19 +1490,19 @@ export default function Store({
                   onClick={() => setShowFilters(!showFilters)}
                   className={`flex items-center justify-center space-x-1.5 rounded-xl border px-4 py-2.5 font-bold transition shrink-0 cursor-pointer w-full sm:w-auto ${
                     showFilters 
-                      ? "bg-red-700 text-white border-red-800 hover:bg-red-800" 
-                      : "border-stone-200 hover:bg-neutral-55 bg-white text-stone-700"
+                      ? "bg-[#A8421B] text-white border-[#8F3614] hover:bg-[#8F3614]" 
+                      : "border-[#E7E1D8] hover:bg-[#FAF8F4] bg-white text-[#1F1B18]"
                   }`}
                 >
                   <SlidersHorizontal className="h-4 w-4" />
-                  <span>Sort & Filters</span>
+                  <span>Sort &amp; Filters</span>
                 </button>
               </div>
             </div>
 
             {/* Horizontal Category Filter Bar */}
             <div className="space-y-1.5">
-              <span className="text-[9px] font-mono text-stone-400 font-bold uppercase tracking-wider block">Filter by Subject Genre</span>
+              <span className="text-[9px] font-mono text-[#6E655E] font-bold uppercase tracking-wider block">Filter by Subject Genre</span>
               <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-thin scroll-smooth flex-nowrap w-full">
                 {categories.map((cat) => {
                   const categoryIconMap: Record<string, React.ReactNode> = {
@@ -1060,8 +1524,8 @@ export default function Store({
                       onClick={() => setSelectedCategory(cat)}
                       className={`rounded-xl px-3.5 py-2 text-xs font-bold whitespace-nowrap transition-all duration-200 cursor-pointer select-none border flex items-center space-x-2 shrink-0 ${
                         selectedCategory === cat 
-                          ? "bg-red-700 border-red-700 text-white shadow-md shadow-red-500/15 scale-105" 
-                          : "bg-white border-stone-200 text-stone-700 hover:bg-stone-50"
+                          ? "bg-[#A8421B] border-[#A8421B] text-white shadow-sm scale-[1.02]" 
+                          : "bg-white border-[#E7E1D8] text-[#1F1B18] hover:bg-[#FAF8F4]"
                       }`}
                     >
                       <span className={selectedCategory === cat ? "[&_svg]:text-white" : ""}>
@@ -1565,11 +2029,11 @@ export default function Store({
                     );
                   })()}
 
-                  {/* Add to Library section button */}
-                  <div className="pt-2 border-t border-stone-100 flex flex-col">
+                  {/* Add to Library / Purchase Guard */}
+                  <div className="pt-2 border-t border-[#E7E1D8] flex flex-col">
                     {purchasedBookIds.includes(b.id) ? (
-                      <div className="w-full py-1.5 px-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold flex items-center justify-center gap-1 border border-emerald-200/40">
-                        <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400 font-extrabold stroke-[2.5]" />
+                      <div className="w-full py-1.5 px-2.5 rounded-xl bg-emerald-50/80 text-emerald-700 text-[10px] font-bold flex items-center justify-center gap-1 border border-emerald-200/40">
+                        <Check className="h-3 w-3 text-emerald-600 font-extrabold stroke-[2.5]" />
                         <span>Saved in Library</span>
                       </div>
                     ) : (
@@ -1578,17 +2042,22 @@ export default function Store({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (!currentUser) {
-                            triggerToast("🔒 Please sign in first to quick-save eBooks to your personal Library!");
+                            triggerToast("Please sign in first to save or purchase eBooks.");
                             onLogIn();
                             return;
                           }
+                          if ((b.price || 0) > 0) {
+                            setSelectedBook(b);
+                            triggerToast(`"${b.title}" requires KES ${b.price.toLocaleString()} checkout to unlock full reading access.`);
+                            return;
+                          }
                           onQuickSaveToLibrary?.(b.id);
-                          triggerToast(`📥 "${b.title}" quickly saved to your personal library!`);
+                          triggerToast(`"${b.title}" added to your personal library.`);
                         }}
-                        className="w-full py-1.5 px-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white dark:bg-stone-850 dark:hover:bg-indigo-600 text-[10px] font-black tracking-wide uppercase flex items-center justify-center gap-1 border border-indigo-200/50 hover:border-transparent transition-all duration-200 active:scale-95 cursor-pointer"
+                        className="w-full py-1.5 px-2.5 rounded-xl bg-[#FAF8F4] hover:bg-[#A8421B] text-[#A8421B] hover:text-white text-[10px] font-bold tracking-wide uppercase flex items-center justify-center gap-1 border border-[#E7E1D8] hover:border-transparent transition-all duration-200 active:scale-95 cursor-pointer"
                       >
                         <Plus className="h-3 w-3 shrink-0 stroke-[2.5]" />
-                        <span>Add to Library</span>
+                        <span>{(b.price || 0) > 0 ? `Unlock • KES ${b.price.toLocaleString()}` : "Add Free Book"}</span>
                       </button>
                     )}
                   </div>
@@ -2226,7 +2695,7 @@ export default function Store({
           book={readingBook}
           currentUser={currentUser}
           hasPaid={purchasedBookIds.includes(readingBook.id)}
-          isAdmin={currentUser?.role === "admin"}
+          isAdmin={["main_admin", "admin", "sub_admin"].includes(currentUser?.role || "")}
           onClose={() => setReadingBook(null)}
           onTriggerPayment={() => {
             setStkStatus("idle");

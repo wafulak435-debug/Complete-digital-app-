@@ -3,12 +3,15 @@ import { motion } from "motion/react";
 import { Sparkles, Trash2, Link2, Plus, ArrowUp, Send, Play, Music, Youtube, HelpCircle, History, RefreshCw, Layers, Mic, MicOff, BookOpen, Image as ImageIcon, Video, Sliders, Download, CheckCircle, FileText, Printer, Copy, Check } from "lucide-react";
 import { SearchHistoryItem, PersonalLink } from "../types";
 import { compileAcademicDocumentPdf } from "../utils/academicDocumentPdfCompiler";
+import { exportPDF, exportWordDoc } from "../lib/docExporter";
 import {
   fetchSearchHistoriesFromFirestore,
   saveSearchHistoryToFirestore,
   deleteSearchHistoryFromFirestore,
   clearSearchHistoriesFromFirestore
 } from "../lib/firestoreUtils";
+import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import { BOOKS_DEFAULT_COVER } from "../lib/showcase";
 
 // Helper functions to parse headers in bold and rest in normal weight
 function parseMarkdownBold(text: string) {
@@ -85,15 +88,25 @@ interface AIChatProps {
   currentUser: { email: string; name: string } | null;
   onUnlockBadge: (badgeId: string) => void;
   isOnline?: boolean;
+  sleekMode?: boolean;
+  onToggleSleekMode?: () => void;
 }
 
 // Advanced local rule-based AI engine that runs 100% offline without data bundles!
-function generateLocalOfflineAIResponse(promptText: string, category: string): string {
+function generateLocalOfflineAIResponse(promptText: string, category: string, history?: { role: string; text: string }[]): string {
   const query = promptText.toLowerCase().trim();
+  let memoryPrefix = "";
+
+  if (history && history.length > 0) {
+    const lastUserMsg = [...history].reverse().find(m => m.role === "user");
+    if (lastUserMsg) {
+      memoryPrefix = `*(Memory Check: Remembered previous turn about "${lastUserMsg.text.slice(0, 60)}...")*\n\n`;
+    }
+  }
   
   // 1. Covenant Leadership & Wafula School responses
   if (query.includes("school") || query.includes("wafula") || query.includes("bungoma") || query.includes("covenant") || query.includes("stewardship") || query.includes("leadership") || query.includes("pillar") || query.includes("zion")) {
-    return `### Wafula School of Covenant Leadership - Academic Briefing (OFFLINE AI)
+    return `${memoryPrefix}### Wafula School of Covenant Leadership - Academic Briefing (OFFLINE AI)
 
 Welcome to the **Bungoma Core Covenant Leadership** advisor. Your request has been compiled locally from our Certified Leadership syllabus archives (running 100% without cellular data bundles!).
 
@@ -209,7 +222,7 @@ Your query is processed using our **local rule-based parsing engine**, which pre
 Tell me what you would like to explore or outline today!`;
 }
 
-export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: AIChatProps) {
+export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sleekMode = false, onToggleSleekMode }: AIChatProps) {
   const [forceOfflineAI, setForceOfflineAI] = useState<boolean>(() => {
     return localStorage.getItem("WAFULA_FORCE_OFFLINE_AI") === "true";
   });
@@ -597,6 +610,33 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: 
     }
   };
 
+  // Download / Export Chat Session directly to PDF or Word document (.docx)
+  const handleExportChatPDF = (singleText?: string) => {
+    if (singleText) {
+      exportPDF("Zion AI Response Summary", singleText);
+    } else if (messages.length > 0) {
+      const fullSessionText = messages
+        .map((m) => `[${m.role.toUpperCase()}]:\n${m.text}`)
+        .join("\n\n----------------------------------------\n\n");
+      exportPDF(`Zion AI Chat Session (${activeCategory})`, fullSessionText);
+    } else {
+      alert("No active chat messages to download yet.");
+    }
+  };
+
+  const handleExportChatWord = (singleText?: string) => {
+    if (singleText) {
+      exportWordDoc("Zion AI Response Summary", singleText);
+    } else if (messages.length > 0) {
+      const fullSessionText = messages
+        .map((m) => `[${m.role.toUpperCase()}]:\n${m.text}`)
+        .join("\n\n----------------------------------------\n\n");
+      exportWordDoc(`Zion AI Chat Session (${activeCategory})`, fullSessionText);
+    } else {
+      alert("No active chat messages to download yet.");
+    }
+  };
+
   const handleCompileDocumentPdf = (e: React.FormEvent) => {
     e.preventDefault();
     setIsCompilingDoc(true);
@@ -633,26 +673,35 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: 
       : { prompt: creativePrompt, aspectRatio: creativeAspect };
 
     try {
-      const response = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
+      let data: any;
+      if (creativeType === "image") {
+        data = await invokeGeminiAction("generate-image", "/api/ai/generate-image", payload, {
+          saveHistory: true,
+          historyTitle: `AI Image: ${creativePrompt.slice(0, 60)}`,
+          historyCategory: "Creative Image",
+        });
+      } else {
+        const response = await secureApiFetch(targetUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        data = await response.json();
+      }
       if (data.success) {
         if (creativeType === 'image') {
           setCreativeResultImage(data.imageUrl);
           setMessages((prev) => [
             ...prev,
             { role: "user", text: `[Creative Request] Generate image: "${creativePrompt}"` },
-            { role: "model", text: `I have customized a gorgeous high-fidelity creative illustration based on your design prompt: "${creativePrompt}". Take a look at the newly painted media!`, groundingSources: [] }
+            { role: "model", text: `I have prepared a visual illustration based on your prompt: "${creativePrompt}".`, groundingSources: [] }
           ]);
         } else {
           setCreativeResultVideo(data.videoUrl || "https://assets.mixkit.co/videos/preview/mixkit-milky-way-galaxy-in-the-night-sky-40432-large.mp4");
           setMessages((prev) => [
             ...prev,
             { role: "user", text: `[Creative Request] Generate video: "${creativePrompt}"` },
-            { role: "model", text: `Stream compiled successfully! Your interactive high-definition creative video representation of "${creativePrompt}" is loaded below. Click play!`, groundingSources: [] }
+            { role: "model", text: `Video render completed for "${creativePrompt}". Press play below to preview.`, groundingSources: [] }
           ]);
         }
       } else {
@@ -660,9 +709,9 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: 
       }
     } catch (err: any) {
       console.warn(err);
-      setCreativeError("Offline mode activated. Generated custom dynamic artwork based on context!");
+      setCreativeError("Offline mode active. Showing local bundled preview asset.");
       if (creativeType === 'image') {
-        setCreativeResultImage(`https://picsum.photos/seed/${encodeURIComponent(creativePrompt)}/800/800`);
+        setCreativeResultImage(BOOKS_DEFAULT_COVER);
       } else {
         setCreativeResultVideo("https://assets.mixkit.co/videos/preview/mixkit-milky-way-galaxy-in-the-night-sky-40432-large.mp4");
       }
@@ -701,18 +750,22 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: 
     }
 
     try {
-      const response = await fetch("/api/ai/assistant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const data = await invokeGeminiAction(
+        "assistant",
+        "/api/ai/assistant",
+        {
           prompt: userText,
           category: activeCategory,
           history: messages,
           images: currentImages,
-          enableGoogleSearch: enableGoogleSearch
-        })
-      });
-      const data = await response.json();
+          enableGoogleSearch: enableGoogleSearch,
+        },
+        {
+          saveHistory: true,
+          historyTitle: userText.slice(0, 80),
+          historyCategory: activeCategory,
+        }
+      );
       if (data.success) {
         setMessages((prev) => [...prev, { role: "model", text: data.text, groundingSources: data.groundingSources }]);
         // Save searches persistently linked to profiles
@@ -842,16 +895,33 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true }: 
                       {forceOfflineAI ? "ON (Save Bundles)" : "OFF"}
                     </strong>
                   </button>
+
+                  {onToggleSleekMode && (
+                    <button
+                      type="button"
+                      onClick={onToggleSleekMode}
+                      className={`px-3 py-1.5 rounded-xl border font-sans text-[9.5px] font-bold uppercase transition flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                        sleekMode
+                          ? "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-700 font-extrabold animate-pulse"
+                          : "bg-stone-900 text-amber-400 border-stone-700 hover:bg-stone-800"
+                      }`}
+                      title="Toggle Sleek Mode for ultra-fast, streamlined, distraction-free viewing!"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Sleek Mode:</span>
+                      <strong className="underline font-black">{sleekMode ? "ACTIVE" : "OFF"}</strong>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="flex overflow-x-auto max-w-full bg-neutral-100 p-1 rounded-xl text-[10px] uppercase tracking-wider font-bold gap-1 scrollbar-none select-none shrink-0" style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
+              <div className="flex overflow-x-auto max-w-full bg-[#EFECE5] dark:bg-stone-800 p-1 rounded-xl text-[10px] uppercase tracking-wider font-bold gap-1 scrollbar-none select-none shrink-0" style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}>
                 {["Assistant", "Problem Solver", "Project Plan", "AI Note Generator", "Document Publisher", "Creative Studio"].map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
-                    className={`rounded-lg px-2.5 py-1.5 transition whitespace-nowrap shrink-0 ${
-                      activeCategory === cat ? "bg-red-700 text-white shadow-xs focus:ring-1 focus:ring-red-400" : "text-stone-600 hover:bg-neutral-50"
+                    className={`rounded-lg px-2.5 py-1.5 transition whitespace-nowrap shrink-0 cursor-pointer ${
+                      activeCategory === cat ? "bg-[#A8421B] text-white shadow-xs" : "text-[#6E655E] hover:bg-white/70 dark:text-stone-300"
                     }`}
                   >
                     {cat}
@@ -1228,26 +1298,26 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
               </div>
             ) : activeCategory === "Creative Studio" ? (
               <div className="space-y-5 py-2 text-left">
-                <div className="bg-red-50/70 border border-red-150 p-4 rounded-xl text-xs space-y-1">
-                  <h4 className="font-bold text-red-900 flex items-center gap-1.5 font-display text-sm">
-                    <Sliders className="h-4 w-4" />
-                    <span>Zion Creative Arts Media Generation Suite</span>
+                <div className="bg-[#FAF8F4] border border-[#E7E1D8] p-4 rounded-xl text-xs space-y-1">
+                  <h4 className="font-bold text-[#1F1B18] flex items-center gap-1.5 font-display text-sm">
+                    <Sliders className="h-4 w-4 text-[#A8421B]" />
+                    <span>Zion Creative Arts Media Studio</span>
                   </h4>
-                  <p className="text-stone-600 leading-relaxed">
-                    Harness advanced Gemini Image models or Deep Video Renderers to paint high-fidelity digital art or craft video animations. Standard assets are cached seamlessly. Media is saved to history instantly.
+                  <p className="text-[#6E655E] leading-relaxed">
+                    Create editorial artwork illustrations and animated video clips saved automatically to your account history.
                   </p>
                 </div>
 
                 <form onSubmit={handleCreativeSubmit} className="space-y-4 text-xs">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <label className="block font-bold text-stone-700 uppercase font-mono tracking-wider text-[10px]">Visual Media Type</label>
-                      <div className="flex bg-stone-100 p-1 rounded-xl font-bold">
+                      <label className="block font-bold text-[#1F1B18] uppercase font-mono tracking-wider text-[10px]">Visual Media Type</label>
+                      <div className="flex bg-[#EFECE5] p-1 rounded-xl font-bold">
                         <button
                           type="button"
                           onClick={() => setCreativeType('image')}
                           className={`flex-1 rounded-lg py-2 transition flex items-center justify-center gap-1.5 cursor-pointer border-0 ${
-                            creativeType === 'image' ? 'bg-red-700 text-white shadow-xs' : 'text-stone-600 hover:bg-neutral-50'
+                            creativeType === 'image' ? 'bg-[#A8421B] text-white shadow-xs' : 'text-[#6E655E] hover:bg-white/70'
                           }`}
                         >
                           <ImageIcon className="h-3.5 w-3.5" />
@@ -1257,7 +1327,7 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                           type="button"
                           onClick={() => setCreativeType('video')}
                           className={`flex-1 rounded-lg py-2 transition flex items-center justify-center gap-1.5 cursor-pointer border-0 ${
-                            creativeType === 'video' ? 'bg-red-700 text-white shadow-xs' : 'text-stone-600 hover:bg-neutral-50'
+                            creativeType === 'video' ? 'bg-[#A8421B] text-white shadow-xs' : 'text-[#6E655E] hover:bg-white/70'
                           }`}
                         >
                           <Video className="h-3.5 w-3.5" />
@@ -1352,6 +1422,34 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                 )}
               </div>
             ) : (
+            <div className="space-y-3">
+              {messages.length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-stone-50 dark:bg-stone-850 p-2.5 px-3 rounded-xl border border-stone-200 dark:border-stone-800 text-xs gap-2">
+                  <div className="flex items-center gap-2">
+                    <Download className="h-4 w-4 text-red-700 dark:text-red-400" />
+                    <span className="font-extrabold text-stone-800 dark:text-stone-200">Download Chat Session / Summary:</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleExportChatPDF()}
+                      className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition shadow-xs cursor-pointer border-0"
+                    >
+                      <Download className="h-3 w-3" />
+                      <span>Export PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportChatWord()}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] flex items-center gap-1.5 transition shadow-xs cursor-pointer border-0"
+                    >
+                      <Download className="h-3 w-3" />
+                      <span>Export Word (.docx)</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
             <div id="chat_feed_viewport" className="h-[380px] overflow-y-auto border border-stone-100 dark:border-stone-800 bg-transparent rounded-xl p-4 space-y-4 pr-2">
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-center h-full text-stone-400 dark:text-stone-500 space-y-2">
@@ -1480,6 +1578,26 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
 
                             <button
                               type="button"
+                              onClick={() => handleExportChatPDF(m.text)}
+                              className="px-2 py-0.5 bg-red-50 text-red-800 border border-red-200 rounded text-[9px] font-bold hover:bg-red-100 flex items-center gap-1 cursor-pointer transition ml-1"
+                              title="Export this response directly as PDF document"
+                            >
+                              <Download className="h-2.5 w-2.5 text-red-700" />
+                              <span>PDF</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleExportChatWord(m.text)}
+                              className="px-2 py-0.5 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded text-[9px] font-bold hover:bg-indigo-100 flex items-center gap-1 cursor-pointer transition ml-1"
+                              title="Export this response directly as Word (.docx) document"
+                            >
+                              <Download className="h-2.5 w-2.5 text-indigo-700" />
+                              <span>Word</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => handleCopyChatResponse(m.text, mIdx)}
                               className="px-2 py-0.5 bg-stone-50 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200 dark:border-stone-700 rounded text-[9px] font-bold hover:bg-stone-150 dark:hover:bg-stone-700 flex items-center gap-1 cursor-pointer transition ml-1"
                               title="Copy this response in original form without distortion"
@@ -1517,6 +1635,7 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                 </motion.div>
               )}
               <div ref={bottomRef} />
+            </div>
             </div>
           )}
 

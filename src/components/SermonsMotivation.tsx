@@ -101,13 +101,39 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     date: "2026-06-28",
     likesCount: 86,
     viewsCount: 194
+  },
+  {
+    id: "worship_1",
+    title: "Glorious Praise & Deep Worship Session",
+    speaker: "Zion Worship Team",
+    videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+    thumbnailUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=800&auto=format&fit=crop",
+    description: "An uplifting worship session featuring anointed praise songs, acoustic worship, and spiritual renewal for the body of Christ.",
+    category: "Worship Songs",
+    duration: "18:40",
+    date: "2026-07-01",
+    likesCount: 189,
+    viewsCount: 512
+  },
+  {
+    id: "worship_2",
+    title: "Acoustic Hymns of Faith & Restoration",
+    speaker: "Zion Praise Choir",
+    videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackBranding.mp4",
+    thumbnailUrl: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?q=80&w=800&auto=format&fit=crop",
+    description: "Heartfelt acoustic worship and traditional Christian hymns bringing peace, spiritual encouragement, and adoration to God.",
+    category: "Worship Songs",
+    duration: "16:20",
+    date: "2026-07-10",
+    likesCount: 156,
+    viewsCount: 410
   }
 ];
 
 export default function SermonsMotivation({ currentUser }: SermonsMotivationProps) {
   const [videos, setVideos] = useState<SermonVideo[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<SermonVideo | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Sermon' | 'Motivation' | 'Evangelism'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Sermon' | 'Motivation' | 'Evangelism' | 'Worship Songs'>('All');
   const [searchQuery, setSearchQuery] = useState("");
   
   // Comments states
@@ -122,7 +148,7 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
   const [newVideoUrl, setNewVideoUrl] = useState("");
   const [newThumbnailUrl, setNewThumbnailUrl] = useState(PRESET_THUMBNAILS[0]);
   const [newDescription, setNewDescription] = useState("");
-  const [newCategory, setNewCategory] = useState<'Sermon' | 'Motivation' | 'Evangelism'>('Sermon');
+  const [newCategory, setNewCategory] = useState<'Sermon' | 'Motivation' | 'Evangelism' | 'Worship Songs'>('Sermon');
   const [newDuration, setNewDuration] = useState("10:00");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -133,10 +159,7 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
   // Authenticate Admin level dynamically
   useEffect(() => {
     if (currentUser) {
-      const isUserAdmin = 
-        currentUser.role === 'admin' || 
-        currentUser.email === 'wafulak435@gmail.com' || 
-        currentUser.email === 'wafula435@gmail.com';
+      const isUserAdmin = ["main_admin", "admin", "sub_admin"].includes(currentUser.role);
       setIsAdmin(isUserAdmin);
     } else {
       setIsAdmin(false);
@@ -347,6 +370,29 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
 
   const handleDeleteVideo = async (videoId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+
+    const isMainAdmin = currentUser?.role === "main_admin";
+
+    if (!isMainAdmin) {
+      if (!window.confirm("Video deletion requires Main Admin clearance. Submit deletion approval request to Main Admin?")) {
+        return;
+      }
+      const pendingRequests = JSON.parse(localStorage.getItem("WAFULA_PENDING_VIDEO_DELETIONS") || "[]");
+      const targetVideo = videos.find(v => v.id === videoId);
+      const newReq = {
+        id: "del_vid_" + Date.now(),
+        videoId,
+        videoTitle: targetVideo?.title || "Video",
+        requestedBy: currentUser?.name || currentUser?.email || "Secondary Admin",
+        requestedEmail: currentUser?.email || "",
+        date: new Date().toLocaleString()
+      };
+      pendingRequests.push(newReq);
+      localStorage.setItem("WAFULA_PENDING_VIDEO_DELETIONS", JSON.stringify(pendingRequests));
+      alert("🔒 Deletion approval request submitted to Main Admin. Video remains published until Main Admin authorizes removal.");
+      return;
+    }
+
     if (!window.confirm("Are you sure you want to permanently delete this video sermon from the sanctuary catalog?")) {
       return;
     }
@@ -356,7 +402,7 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
       if (selectedVideo?.id === videoId) {
         setSelectedVideo(null);
       }
-      alert("✅ Video successfully removed from the index.");
+      alert("✅ Video successfully removed from the index by Main Admin.");
     } catch (err) {
       console.error("Failed to delete video from Firestore:", err);
       setVideos(prev => prev.filter(v => v.id !== videoId));
@@ -510,7 +556,17 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
                       onChange={() => setNewCategory("Evangelism")}
                       className="accent-blue-500 h-4 w-4"
                     />
-                    <span>Evangelism (3vangesm)</span>
+                    <span>Evangelism</span>
+                  </label>
+                  <label className="flex items-center space-x-2 text-xs text-white font-bold cursor-pointer">
+                    <input
+                      type="radio"
+                      name="category"
+                      checked={newCategory === "Worship Songs"}
+                      onChange={() => setNewCategory("Worship Songs")}
+                      className="accent-blue-500 h-4 w-4"
+                    />
+                    <span>Worship Songs</span>
                   </label>
                 </div>
               </div>
@@ -690,7 +746,7 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
           
           {/* Category Tabs */}
           <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
-            {(['All', 'Sermon', 'Motivation', 'Evangelism'] as const).map(filter => (
+            {(['All', 'Sermon', 'Motivation', 'Evangelism', 'Worship Songs'] as const).map(filter => (
               <button
                 key={filter}
                 onClick={() => setActiveFilter(filter)}
@@ -700,7 +756,7 @@ export default function SermonsMotivation({ currentUser }: SermonsMotivationProp
                     : "text-stone-550 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-850"
                 }`}
               >
-                {filter === "All" ? "All Videos" : filter === "Sermon" ? "Sermons & Bible" : filter === "Motivation" ? "Motivation" : "Evangelism (3vangesm)"}
+                {filter === "All" ? "All Media" : filter === "Sermon" ? "Sermons" : filter === "Motivation" ? "Motivational Videos" : filter === "Evangelism" ? "Evangelism" : "Worship Songs"}
               </button>
             ))}
           </div>

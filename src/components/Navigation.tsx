@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowDown, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Gamepad2, Search, Sparkles, Mail, Smartphone, Sun, Moon, Globe, Wifi, CreditCard, Megaphone, Monitor, GraduationCap, Settings, HardDrive, Trash2, Database, Video } from "lucide-react";
+import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowDown, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Gamepad2, Search, Sparkles, Mail, Smartphone, Sun, Moon, Globe, Wifi, CreditCard, Megaphone, Monitor, GraduationCap, Settings, HardDrive, Trash2, Database, Video, Crown, MapPin } from "lucide-react";
 import { User, Book, SavedDocument, CommunityMessage, AppSettings } from "../types";
 import { getCookie, setCookie } from "../utils/cookies";
 import { saveAppSettingsToFirestore } from "../lib/firestoreUtils";
 
-const appLogo = "/src/assets/images/zion_digital_logo_1781070536038.png";
+import appLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 
 const ZION_POST_DRAFT_PRESETS = [
   {
@@ -49,6 +49,9 @@ interface NavigationProps {
   onRestoreBanner?: () => void;
   offlineMode?: boolean;
   onToggleOfflineMode?: () => void;
+  sleekMode?: boolean;
+  onToggleSleekMode?: () => void;
+  onOpenUpgrade?: () => void;
 }
 
 export default function Navigation({
@@ -70,7 +73,10 @@ export default function Navigation({
   isBannerClosed = false,
   onRestoreBanner,
   offlineMode = false,
-  onToggleOfflineMode
+  onToggleOfflineMode,
+  sleekMode = false,
+  onToggleSleekMode,
+  onOpenUpgrade
 }: NavigationProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -78,11 +84,11 @@ export default function Navigation({
 
   // Collapsible navigational folders to optimize space on laptop and phone screens
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    "📚 LIBRARY & WORKSPACE": true,
-    "🎓 LEADERSHIP & LANGUAGE ACADEMY": true,
-    "🧬 RESEARCH & CREATIVE SYSTEMS": false,
-    "🤝 COMMUNITY & LEISURE": false,
-    "🌐 DEVICE & WEBSITE LAUNCHERS": false,
+    "📖 BOOKS, SERMONS & WORSHIP MEDIA": true,
+    "🎓 LEADERSHIP & BIBLE SCHOOL": true,
+    "💡 AI STUDY & PUBLISHING": false,
+    "🤝 FELLOWSHIP & CAMPUS": false,
+    "🌐 SERVICES & ADMIN": false,
   });
 
   const toggleSection = (cat: string) => {
@@ -92,21 +98,22 @@ export default function Navigation({
     }));
   };
 
-  const isAdmin = !!(currentUser && (
-    currentUser.role === 'admin' || 
-    currentUser.email?.toLowerCase()?.trim() === 'wafulak435@gmail.com' || 
-    currentUser.email?.toLowerCase()?.trim() === 'wafula435@gmail.com'
-  ));
+  const isAdmin = Boolean(
+    currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role)
+  );
+  const isManager = Boolean(
+    currentUser && (isAdmin || currentUser.role === "manager")
+  );
 
   // Dynamic user font selector preference state lookup
   const [selectedFont, setSelectedFont] = useState<string>(() => {
-    return localStorage.getItem("WAFULA_FONT_FAMILY") || "Inter";
+    return localStorage.getItem("WAFULA_FONT_FAMILY") || "Plus Jakarta Sans";
   });
 
   useEffect(() => {
-    let fontValue = '"Inter", ui-sans-serif, system-ui, sans-serif';
-    if (selectedFont === "Space Grotesk") {
-      fontValue = '"Space Grotesk", sans-serif';
+    let fontValue = '"Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif';
+    if (selectedFont === "Playfair Display") {
+      fontValue = '"Playfair Display", Georgia, serif';
     } else if (selectedFont === "JetBrains Mono") {
       fontValue = '"JetBrains Mono", ui-monospace, SFMono-Regular, monospace';
     }
@@ -225,14 +232,14 @@ export default function Navigation({
   };
 
   const handleApplyPresetIcon = async () => {
-    const isAdmin = currentUser && (
-      currentUser.role === 'admin' || 
-      currentUser.email === 'wafulak435@gmail.com' || 
-      currentUser.email === 'wafula435@gmail.com'
+    const canUpdateBrand = Boolean(
+      currentUser &&
+        (["main_admin", "admin"].includes(currentUser.role) ||
+          (currentUser.role === "sub_admin" && currentUser.permissions?.allowBroadcast))
     );
 
-    if (!isAdmin) {
-      alert("❌ Authentication Denied: The system logo cannot be changed without written confirmation from Chancellor Kelvin Wafula.");
+    if (!canUpdateBrand) {
+      alert("Authorization Denied: Only authorized Executive Administrators may update the Zion Digital emblem.");
       return;
     }
 
@@ -398,76 +405,67 @@ export default function Navigation({
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
   };
 
-  // Polished list of sidebar navigation items synced perfectly to view strings
+  // Polished list of sidebar navigation items
   const navItems = [
     { id: "dashboard", label: "My Library", icon: <Trophy className="h-4 w-4" /> },
-    { id: "store", label: "Digital Store", icon: <BookOpen className="h-4 w-4" /> },
-    { id: "sermons-motivation", label: "Sermons & Motivation", icon: <Video className="h-4 w-4" /> },
-    { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-rose-550" /> },
-    { id: "school", label: "Leadership School", icon: <Compass className="h-4 w-4" /> },
-    { id: "studio", label: "Doc Studio", icon: <FileText className="h-4 w-4" /> },
+    { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4" /> },
+    { id: "sermons-motivation", label: "Sermons, Motivation & Worship", icon: <Video className="h-4 w-4" /> },
+    { id: "school", label: "Leadership & Bible School", icon: <Compass className="h-4 w-4 text-blue-400" /> },
     { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4" /> },
-    { id: "language-teacher", label: "Language Tutor & Practice", icon: <GraduationCap className="h-4 w-4" /> },
-    { id: "offline-dictionary", label: "Offline Dictionary", icon: <BookOpen className="h-4 w-4 text-indigo-400" /> },
-    { id: "companion", label: "Interactive Study Chat", icon: <MessageSquare className="h-4 w-4" /> },
-    { id: "ai-media", label: "Media & Design Creative Hub", icon: <Monitor className="h-4 w-4" /> },
+    { id: "offline-dictionary", label: "Bible Dictionary", icon: <BookOpen className="h-4 w-4 text-indigo-400" /> },
+    { id: "companion", label: "Study Assistant Chat", icon: <MessageSquare className="h-4 w-4" /> },
+    { id: "studio", label: "Doc Studio Editor", icon: <FileText className="h-4 w-4" /> },
     { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-teal-500" /> },
-    { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-rose-550 dark:text-rose-400 animate-pulse" /> },
-    { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400 animate-pulse" /> },
-    { id: "home-apps", label: "Home Apps Launcher", icon: <Smartphone className="h-4 w-4 text-violet-500 animate-pulse" /> },
-    { id: "zion-wifi", label: "Zion Wi-Fi & Hotspots", icon: <Wifi className="h-4 w-4 text-cyan-500 animate-pulse" /> },
     { id: "community", label: "Community Forum", icon: <MessageSquare className="h-4 w-4" /> },
-    { id: "games", label: "Fun Zone & Games", icon: <Gamepad2 className="h-4 w-4" /> },
-    { id: "upload", label: "Member Uploads", icon: <UploadCloud className="h-4 w-4" /> },
+    { id: "announcements", label: "Campus Announcements", icon: <Megaphone className="h-4 w-4" /> },
+    { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-rose-500" /> },
+    { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400" /> },
+    { id: "campuses-map", label: "Campuses & Map Locator", icon: <MapPin className="h-4 w-4 text-[#FB923C]" /> },
     { id: "contact", label: "Contact Us", icon: <HelpCircle className="h-4 w-4" /> },
   ];
 
-  // Polished list of sidebar navigation items synced perfectly to view strings
+  // Grouped navigation for sidebar
   const groupedNavigation = [
     {
-      category: "📚 LIBRARY & WORKSPACE",
+      category: "📖 BOOKS, SERMONS & WORSHIP MEDIA",
       items: [
-        { id: "dashboard", label: "My Library Dashboard", icon: <Trophy className="h-4 w-4 text-amber-500" /> },
         { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
-        { id: "sermons-motivation", label: "Sermons & Motivation", icon: <Video className="h-4 w-4 text-amber-500" /> },
-        { id: "mpesa-api", label: "Safaricom M-Pesa Console", icon: <CreditCard className="h-4 w-4 text-[#34D399]" /> },
+        { id: "sermons-motivation", label: "Sermons, Motivation & Worship", icon: <Video className="h-4 w-4 text-amber-500" /> },
+        { id: "dashboard", label: "My Library Dashboard", icon: <Trophy className="h-4 w-4 text-amber-500" /> },
         { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-[#2DD4BF]" /> },
-        { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-[#F87171]" /> },
       ]
     },
     {
-      category: "🎓 LEADERSHIP & LANGUAGE ACADEMY",
+      category: "🎓 LEADERSHIP & BIBLE SCHOOL",
       items: [
-        { id: "language-teacher", label: "Language Tutor & Teacher", icon: <GraduationCap className="h-4 w-4 text-[#34D399]" /> },
-        { id: "school", label: "Leadership School", icon: <Compass className="h-4 w-4 text-[#60A5FA]" /> },
-        { id: "offline-dictionary", label: "Offline Dictionary", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
+        { id: "school", label: "Leadership & Bible School", icon: <Compass className="h-4 w-4 text-[#60A5FA]" /> },
         { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4 text-[#34D399]" /> },
+        { id: "offline-dictionary", label: "Bible & Theological Dictionary", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
       ]
     },
     {
-      category: "🧬 RESEARCH & CREATIVE SYSTEMS",
+      category: "💡 AI STUDY & PUBLISHING",
       items: [
         { id: "companion", label: "Study Assistant Chat", icon: <MessageSquare className="h-4 w-4 text-emerald-400" /> },
-        { id: "ai-media", label: "Creative Design Hub", icon: <Monitor className="h-4 w-4 text-[#C084FC]" /> },
-        { id: "studio", label: "Doc Studio Editor", icon: <FileText className="h-4 w-4 text-slate-400" /> },
+        { id: "studio", label: "Doc Studio & Publishing", icon: <FileText className="h-4 w-4 text-slate-400" /> },
       ]
     },
     {
-      category: "🤝 COMMUNITY & LEISURE",
+      category: "🤝 FELLOWSHIP & CAMPUS",
       items: [
         { id: "community", label: "Community Forum", icon: <MessageSquare className="h-4 w-4 text-[#34D399]" /> },
         { id: "announcements", label: "Campus Announcements", icon: <Megaphone className="h-4 w-4 text-[#F87171]" /> },
-        { id: "games", label: "Fun Zone & Games", icon: <Gamepad2 className="h-4 w-4 text-[#C084FC]" /> },
-        { id: "upload", label: "Member Uploads", icon: <UploadCloud className="h-4 w-4 text-amber-500" /> },
+        { id: "campuses-map", label: "Campuses & Map Locator", icon: <MapPin className="h-4 w-4 text-[#FB923C]" /> },
+        { id: "contact", label: "Contact Us", icon: <HelpCircle className="h-4 w-4 text-[#38BDF8]" /> },
       ]
     },
     {
-      category: "🌐 DEVICE & WEBSITE LAUNCHERS",
+      category: "🌐 SERVICES & ADMIN",
       items: [
+        { id: "mpesa-api", label: "Safaricom M-Pesa Console", icon: <CreditCard className="h-4 w-4 text-[#34D399]" /> },
+        { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-[#F87171]" /> },
         { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-[#60A5FA]" /> },
         { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400" /> },
-        { id: "home-apps", label: "Home Apps Launcher", icon: <Smartphone className="h-4 w-4 text-[#A78BFA]" /> },
-        { id: "zion-wifi", label: "Zion Wi-Fi & Hotspots", icon: <Wifi className="h-4 w-4 text-[#22D3EE]" /> },
       ]
     }
   ];
@@ -483,42 +481,41 @@ export default function Navigation({
       {/* 1. DESKTOP PERMANENT LEFT SIDEBAR */}
       <aside 
         id="desktop_left_sidebar" 
-        className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-52 bg-[#090A10] text-[#E2E8F0] flex-col h-full border-r border-[#151923] select-none text-left"
+        className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-52 bg-[#FAF8F4] dark:bg-[#141210] text-[#1F1B18] dark:text-[#F5F1EB] flex-col h-full border-r border-[#E7E1D8] dark:border-[#332C26] select-none text-left transition-colors"
       >
         {/* Brand Header */}
-        <div className="p-6 border-b border-[#141A29]">
+        <div className="p-5 border-b border-[#E7E1D8] dark:border-[#332C26]">
           <div className="flex items-center space-x-3 text-left">
             <div className="relative shrink-0">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 shadow-lg flex items-center justify-center border border-amber-300/20">
-                <span className="text-xl font-black text-slate-950 font-display select-none">Z</span>
-              </div>
+              <img
+                src={globalSettings?.customLogoUrl || appLogo}
+                alt="Zion Digital"
+                className="h-9 w-9 rounded-full object-cover border border-[#E7E1D8] dark:border-[#332C26] shadow-xs"
+              />
             </div>
             <button 
               onClick={() => handleItemClick("store")} 
-              className="text-left hover:opacity-90 flex-grow"
+              className="text-left hover:opacity-90 flex-grow cursor-pointer"
             >
-              <h1 className="text-base font-extrabold tracking-tight text-white font-display leading-tight">
-                Zion <span className="text-amber-500 font-bold">Digital App</span>
+              <h1 className="text-base font-bold tracking-tight text-[#1F1B18] dark:text-[#F5F1EB] font-serif leading-tight">
+                Zion <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#6E655E] dark:text-[#B6ABA0] font-semibold">DIGITAL</span>
               </h1>
               <div className="flex flex-col space-y-1 mt-0.5 text-left">
                 <div className="flex items-center space-x-1.5">
-                  <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">Bungoma, Kenya</p>
-                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse outline-emerald-400" : "bg-amber-500 outline-amber-400"} outline-2`} />
-                  <span className="text-[8px] font-mono uppercase font-bold text-slate-400 tracking-wider">
-                    {isOnline ? "Online" : "Offline"}
-                  </span>
+                  <p className="text-[9px] text-[#6E655E] dark:text-[#B6ABA0] uppercase tracking-widest font-mono">Bungoma, Kenya</p>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${isOnline ? "bg-emerald-600" : "bg-amber-600"}`} />
                 </div>
                 {onToggleOfflineMode && (
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); onToggleOfflineMode(); }}
-                    className={`mt-1 flex items-center justify-between px-2 py-1.5 rounded border text-[8px] font-mono font-black tracking-wider transition cursor-pointer select-none leading-none ${
+                    className={`mt-1 flex items-center justify-between px-2 py-1 rounded border text-[8.5px] font-mono font-bold tracking-wider transition cursor-pointer select-none leading-none ${
                       offlineMode
-                        ? "bg-red-950/50 text-red-400 border-red-500/30 hover:bg-red-900/30 animate-pulse"
-                        : "bg-stone-900/40 text-slate-400 border-slate-800 hover:bg-slate-800/40"
+                        ? "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                        : "bg-white dark:bg-[#1E1A17] text-[#6E655E] dark:text-[#B6ABA0] border-[#E7E1D8] dark:border-[#332C26] hover:border-[#A8421B]"
                     }`}
                   >
-                    <span>{offlineMode ? "🟢 OFFLINE AI ACTIVE" : "⚡ OFFLINE MODE (NO DATA)"}</span>
+                    <span>{offlineMode ? "Offline Study Active" : "Sync Mode"}</span>
                   </button>
                 )}
               </div>
@@ -526,31 +523,31 @@ export default function Navigation({
           </div>
         </div>
 
-        {/* Sidebar Navigation Options grouped beautifully into Folders / Sections */}
+        {/* Sidebar Navigation Options */}
         <nav className="flex-grow py-4 px-3 overflow-y-auto space-y-4 custom-scrollbar">
           {groupedNavigation.map((sec, idx) => {
             return (
-              <div key={idx} className="pb-2 border-b border-slate-900/40 last:border-0 last:pb-0">
+              <div key={idx} className="pb-2.5 border-b border-[#E7E1D8]/70 dark:border-[#332C26] last:border-0 last:pb-0">
                 {sec.category && (
-                  <div className="w-full flex items-center justify-between px-3 py-1.5 text-[9px] uppercase tracking-wider text-slate-500 font-black block mb-1 font-mono select-none">
+                  <div className="w-full flex items-center justify-between px-3 py-1 text-[9px] uppercase tracking-wider text-[#6E655E] dark:text-[#B6ABA0] font-bold mb-1 font-mono select-none">
                     <span>{sec.category}</span>
                   </div>
                 )}
-                <div className="space-y-0.5 animate-fade-in">
+                <div className="space-y-0.5">
                   {sec.items.map((item) => {
                     const isActive = currentView === item.id;
                     return (
                       <button
                         key={`${item.id}-${item.label}`}
                         onClick={() => handleItemClick(item.id)}
-                        className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                        className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                           isActive 
-                            ? "bg-blue-600 text-white shadow-md shadow-blue-600/30 font-black" 
-                            : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                            ? "bg-[#A8421B] text-white shadow-xs font-bold" 
+                            : "text-[#1F1B18]/80 dark:text-[#F5F1EB]/80 hover:text-[#1F1B18] dark:hover:text-white hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17]"
                         }`}
                       >
                         {item.icon && (
-                          <span className="flex shrink-0 items-center justify-center">
+                          <span className={`flex shrink-0 items-center justify-center ${isActive ? "[&_svg]:text-white" : ""}`}>
                             {item.icon}
                           </span>
                         )}
@@ -563,150 +560,125 @@ export default function Navigation({
             );
           })}
 
-          {/* Admin Panel Specific Block */}
-          {isAdmin && (
-            <div className="pt-2 mt-2 border-t border-slate-900">
+          {isManager && (
+            <div className="pt-2 mt-2 border-t border-[#E7E1D8] dark:border-[#332C26] space-y-1">
               <button
-                onClick={() => handleItemClick("admin")}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  currentView === "admin"
-                    ? "bg-blue-600 text-white shadow-md shadow-blue-500/30 font-black"
-                    : "text-amber-500 hover:text-white hover:bg-[#11131C]"
+                onClick={() => handleItemClick("manager-portal")}
+                className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  currentView === "manager-portal"
+                    ? "bg-[#A8421B] text-white shadow-xs"
+                    : "text-[#A8421B] dark:text-[#E5865E] hover:bg-[#A8421B]/10"
                 }`}
               >
-                <ShieldCheck className="h-4 w-4 shrink-0 text-red-500" />
-                <span>Admin Panel</span>
+                <Crown className="h-4 w-4 shrink-0" />
+                <span>Manager Portal</span>
               </button>
+              {isAdmin && (
+                <button
+                  onClick={() => handleItemClick("admin")}
+                  className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    currentView === "admin"
+                      ? "bg-[#1F1B18] dark:bg-[#D96B3E] text-white shadow-xs"
+                      : "text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17]"
+                  }`}
+                >
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-[#A8421B] dark:text-[#D96B3E]" />
+                  <span>Admin Panel</span>
+                </button>
+              )}
             </div>
           )}
         </nav>
 
-        {/* Permanent Sidebar Display Preferences */}
-        <div className="p-4 bg-[#07080D] border-t border-[#141A29] text-left space-y-3 select-none">
-          <span className="text-[9px] font-mono uppercase tracking-wider text-slate-500 font-bold block">
-            AESTHETIC PREFERENCE
+        {/* Display Preferences */}
+        <div className="p-4 bg-[#F7F4EE] dark:bg-[#1E1A17] border-t border-[#E7E1D8] dark:border-[#332C26] text-left space-y-3 select-none">
+          <span className="text-[9px] font-mono uppercase tracking-wider text-[#6E655E] dark:text-[#B6ABA0] font-bold block">
+            Reading Preferences
           </span>
 
           <div className="space-y-1">
-            <span className="text-[11px] font-semibold text-slate-400 block">Font Family settings:</span>
             <select
               value={selectedFont}
               onChange={(e) => setSelectedFont(e.target.value)}
-              className="w-full bg-[#11131C] text-slate-250 border border-slate-800 rounded px-2.5 py-1.5 text-[11.5px] font-bold focus:outline-none focus:border-amber-500 cursor-pointer"
+              className="w-full bg-white dark:bg-[#141210] text-[#1F1B18] dark:text-[#F5F1EB] border border-[#E7E1D8] dark:border-[#332C26] rounded-lg px-2.5 py-1.5 text-[11px] font-semibold focus:outline-none focus:border-[#A8421B] cursor-pointer"
             >
-              <option value="Inter">Inter (Sans-Serif)</option>
-              <option value="Space Grotesk">Space Grotesk (Modern)</option>
-              <option value="JetBrains Mono">JetBrains Mono (Technical)</option>
+              <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
+              <option value="Playfair Display">Playfair Display (Editorial)</option>
+              <option value="JetBrains Mono">JetBrains Mono</option>
             </select>
           </div>
 
-          <div className="space-y-1 pt-1">
-            <span className="text-[11px] font-semibold text-slate-400 block">Display Theme mode:</span>
-            <button
-              type="button"
-              onClick={toggleDarkMode}
-              className="w-full bg-[#11131C] hover:bg-[#161a26] text-slate-300 border border-slate-800 rounded px-2.5 py-1.5 text-[11px] font-bold focus:outline-none flex items-center justify-between cursor-pointer transition duration-150"
-            >
-              <span className="flex items-center space-x-2">
-                {isDarkMode ? <Sun className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : <Moon className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
-                <span>{isDarkMode ? "Dark Theme Mode" : "Light Theme Mode"}</span>
-              </span>
-              <span className="text-[8px] uppercase font-mono font-black text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">Toggle</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            className="w-full bg-white dark:bg-[#141210] hover:bg-[#FAF8F4] dark:hover:bg-[#26211D] text-[#1F1B18] dark:text-[#F5F1EB] border border-[#E7E1D8] dark:border-[#332C26] rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center justify-between cursor-pointer transition"
+          >
+            <span className="flex items-center space-x-2">
+              {isDarkMode ? <Sun className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : <Moon className="h-3.5 w-3.5 text-[#6E655E] shrink-0" />}
+              <span>{isDarkMode ? "Dark Mode" : "Warm Paper"}</span>
+            </span>
+            <span className="text-[9px] font-mono uppercase text-[#A8421B] dark:text-[#D96B3E] font-bold">Switch</span>
+          </button>
         </div>
 
-        {/* Brand Mission & Slogan footer */}
-        <div className="p-5 bg-[#07080D] border-t border-[#141A29] text-left space-y-1">
-          <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider leading-none">
-            VISION & GLOBAL COMMUNITY
+        {/* Vision Slogan footer */}
+        <div className="p-4 bg-[#FAF8F4] dark:bg-[#141210] border-t border-[#E7E1D8] dark:border-[#332C26] text-left space-y-1">
+          <p className="text-[9px] text-[#6E655E] dark:text-[#B6ABA0] font-bold uppercase tracking-wider">
+            Our Promise
           </p>
-          <p className="text-[9px] text-slate-400 italic font-medium leading-relaxed">
-            Empowering Bungoma through Digital Literacy and transformational guides.
+          <p className="text-[10px] text-[#6E655E] dark:text-[#B6ABA0] italic font-serif leading-relaxed">
+            Empowering leaders through scripture, knowledge, and fellowship.
           </p>
-          <div className="pt-2">
-            <span className="text-[9px] font-mono text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded font-bold">
-              KNOWLEDGE WITHOUT BORDERS
-            </span>
-          </div>
-
-          {/* Scalable Platform Counter */}
-          <div className="mt-3 bg-[#11131C] p-2.5 rounded-lg border border-slate-850 text-[9px] space-y-1 select-none">
-            <div className="flex items-center space-x-1.5 text-amber-500 font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse block shrink-0" />
-              <span className="uppercase tracking-widest text-[8px] font-mono leading-none">Active Enterprise Scale</span>
-            </div>
-            <p className="text-slate-250 font-black">200,000+ Members capacity</p>
-            <p className="text-slate-400 text-[8.5px] leading-tight font-medium">
-              High-speed cloud delivery & real-time offline serialization with local storage.
-            </p>
-          </div>
+          <span className="inline-block text-[9px] font-mono text-[#A8421B] dark:text-[#D96B3E] bg-[#A8421B]/10 px-2 py-0.5 rounded font-bold mt-1">
+            READ. LEAD. TRANSFORM.
+          </span>
         </div>
       </aside>
 
-      {/* 2. RESPONSIVE TOP HEADER BAR */}
+      {/* 2. RESPONSIVE TOP HEADER BAR (Matches Warm Editorial Brand Header) */}
       <header 
         id="app_top_header" 
-        className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md lg:pl-52 h-16 flex items-center justify-between px-3 sm:px-6 lg:px-8"
+        className="sticky top-0 z-40 w-full border-b border-[#E7E1D8] dark:border-[#332C26] bg-[#FAF8F4]/95 dark:bg-[#141210]/95 backdrop-blur-md lg:pl-52 h-16 safe-area-top flex items-center justify-between px-3 sm:px-6 lg:px-8 transition-colors"
       >
-        {/* Left Area: Adaptive Back Button & Mobile Logo Brand Combined */}
-        <div id="top_header_left_area" className="flex items-center space-x-2 max-w-[55vw] sm:max-w-none shrink-0">
-          {canGoBack ? (
+        {/* Left Area: Adaptive Back Button & Mobile Logo Brand */}
+        <div id="top_header_left_area" className="flex items-center space-x-2.5 shrink-0">
+          {canGoBack && (
             <button
               onClick={onBack}
-              className="flex items-center space-x-1 text-[11px] font-black uppercase tracking-wider text-slate-900 dark:text-white bg-amber-500 hover:bg-amber-600 dark:bg-amber-500/20 dark:hover:bg-amber-500/35 px-2.5 py-1.5 rounded-lg border border-amber-500/40 active:scale-95 transition-all shadow-sm cursor-pointer select-none shrink-0"
+              className="flex items-center space-x-1 text-[11px] font-bold text-[#1F1B18] dark:text-[#F5F1EB] bg-white dark:bg-[#1E1A17] hover:border-[#A8421B] px-2.5 py-1.5 rounded-lg border border-[#E7E1D8] dark:border-[#332C26] transition cursor-pointer select-none shrink-0"
               title="Return to previous screen"
             >
-              <ArrowLeft className="h-4 w-4 shrink-0 font-black" />
-              <span>Back</span>
-            </button>
-          ) : (
-            <button
-              disabled
-              className="hidden sm:flex items-center space-x-1 text-[11px] font-bold uppercase tracking-wider text-slate-300 dark:text-slate-700 bg-slate-50 dark:bg-slate-900/45 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800/60 select-none opacity-45 shrink-0"
-              title="No history"
-            >
-              <ArrowLeft className="h-4 w-4 shrink-0" />
-              <span>Back</span>
+              <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden sm:inline">Back</span>
             </button>
           )}
 
-          {/* Mobile Logo Brand */}
-          <div className="flex lg:hidden items-center space-x-1.5 truncate">
-            {globalSettings?.customLogoUrl ? (
-              <div className="relative shrink-0 select-none">
-                <img 
-                  src={globalSettings.customLogoUrl} 
-                  alt="Brand Logo" 
-                  className="h-8 w-8 object-cover rounded-lg border border-slate-200 dark:border-slate-800"
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-            ) : (
-              <div className="relative shrink-0 select-none">
-                <img 
-                  src={appLogo} 
-                  alt="Brand Logo" 
-                  className="h-8 w-8 object-cover rounded-lg border border-slate-200 dark:border-slate-850 shadow" 
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-            )}
-            <button 
-              type="button"
-              onClick={() => handleItemClick("store")} 
-              className={`text-left truncate ${canGoBack ? "hidden sm:block" : "block"}`}
-            >
-              <h1 className="text-xs font-bold tracking-tight text-neutral-900 dark:text-white leading-tight truncate">
-                Zion <span className="text-amber-500">Digital</span>
-              </h1>
-            </button>
-          </div>
+          {/* Brand Mark */}
+          <button 
+            type="button"
+            onClick={() => handleItemClick("store")} 
+            className="flex items-center space-x-2 text-left cursor-pointer group"
+          >
+            <img 
+              src={globalSettings?.customLogoUrl || appLogo} 
+              alt="Zion Digital" 
+              className="h-8 w-8 object-cover rounded-full border border-[#E7E1D8] dark:border-[#332C26] lg:hidden shadow-2xs" 
+              referrerPolicy="no-referrer"
+            />
+            <div className="flex items-baseline space-x-1.5">
+              <span className="font-serif text-base sm:text-lg font-bold tracking-tight text-[#1F1B18] dark:text-[#F5F1EB]">
+                Zion
+              </span>
+              <span className="font-mono text-[9px] sm:text-[10px] tracking-[0.22em] uppercase text-[#6E655E] dark:text-[#B6ABA0] font-semibold">
+                DIGITAL
+              </span>
+            </div>
+          </button>
         </div>
 
-        {/* Real-Time Interactive Global Search Bar */}
-        <div className="hidden md:flex items-center bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-full w-96 text-slate-500 dark:text-slate-400 focus-within:ring-2 focus-within:ring-red-500/30 transition shadow-xs">
-          <Search className="h-4 w-4 shrink-0 text-slate-400 mr-2" />
+        {/* Center Search Trigger (Desktop) */}
+        <div className="hidden md:flex items-center bg-white dark:bg-[#1E1A17] border border-[#E7E1D8] dark:border-[#332C26] px-3 py-1.5 rounded-full w-72 lg:w-80 text-[#6E655E] dark:text-[#B6ABA0] focus-within:border-[#A8421B] transition">
+          <Search className="h-3.5 w-3.5 shrink-0 mr-2" />
           <input
             type="text"
             value={searchQuery}
@@ -716,329 +688,306 @@ export default function Navigation({
                 setIsSearchOpen(true);
               }
             }}
-            placeholder="Search e-books, drafts, forums..."
-            className="w-full bg-transparent text-xs font-semibold outline-none text-slate-900 dark:text-slate-100 placeholder-slate-400/80 mr-1 cursor-text"
+            placeholder="Search books, courses, discussions..."
+            className="w-full bg-transparent text-xs font-medium outline-none text-[#1F1B18] dark:text-[#F5F1EB] placeholder-[#6E655E]/70 mr-1 cursor-text"
           />
           {searchQuery && (
             <button 
               type="button"
               onClick={() => setSearchQuery("")}
-              className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 mr-1.5 cursor-pointer font-bold"
+              className="text-[10px] text-[#6E655E] hover:text-[#1F1B18] mr-1.5 cursor-pointer font-bold"
             >
               Clear
             </button>
           )}
-          <kbd 
-            onClick={() => setIsSearchOpen(true)}
-            className="hidden lg:inline-block font-mono text-[9px] font-black bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded text-slate-500 shadow-xs leading-none shrink-0 select-none cursor-pointer"
-          >
-            Full
-          </kbd>
         </div>
 
-        {/* User context information and indicators */}
-        <div className="flex items-center space-x-2 sm:space-x-4">
-          
-          {/* Restorable admin announcement sticky bar trigger */}
-          {broadcastAnnouncement && (
+        {/* Right Controls (Matches Screenshot Header Actions) */}
+        <div className="flex items-center space-x-1.5 sm:space-x-2.5">
+          {broadcastAnnouncement && isBannerClosed && (
             <button
               type="button"
               onClick={() => onRestoreBanner?.()}
-              title={isBannerClosed ? "An announcement is active! Click to view updates & announcements" : "Sitewide announcement is open"}
-              className={`flex items-center space-x-1 sm:space-x-1.5 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-full text-[9px] sm:text-xs font-black transition-all cursor-pointer select-none shrink-0 border ${
-                isBannerClosed
-                  ? "bg-amber-400 text-stone-900 border-amber-500 animate-pulse font-extrabold shadow-xs shadow-amber-400/30"
-                  : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-350 border-slate-200 dark:border-slate-800"
-              }`}
+              title="View campus updates"
+              className="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#A8421B]/10 text-[#A8421B] border border-[#A8421B]/30 cursor-pointer"
             >
-              <Megaphone className={`h-2.5 w-2.5 sm:h-3.5 sm:w-3.5 shrink-0 ${isBannerClosed ? "text-red-700 animate-bounce" : "text-amber-500"}`} />
-              <span>{isBannerClosed ? "Show Updates" : "Admin News"}</span>
+              <Megaphone className="h-3 w-3" />
+              <span>Updates</span>
             </button>
           )}
 
-          {/* Mobile Search Icon Button */}
+          {/* Quick Search Icon */}
           <button
+            type="button"
             onClick={() => setIsSearchOpen(true)}
-            className="flex md:hidden items-center justify-center h-8 w-8 rounded-full border border-stone-200 bg-white text-stone-600 hover:bg-stone-50 transition cursor-pointer shrink-0"
-            title="Search database"
+            className="flex md:hidden items-center justify-center h-8 w-8 rounded-full text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17] transition cursor-pointer shrink-0"
+            title="Search library"
           >
             <Search className="h-4 w-4" />
           </button>
 
-          {/* Status Indicator / Offline Switch */}
-          {onToggleOfflineMode && (
+          {/* Wishlist Shortcut */}
+          <button
+            type="button"
+            onClick={() => handleItemClick("dashboard")}
+            className="flex items-center justify-center h-8 w-8 rounded-full text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17] transition cursor-pointer shrink-0"
+            title="Saved books & library"
+          >
+            <BookOpen className="h-4 w-4" />
+          </button>
+
+          {/* Profile / Auth Button */}
+          {currentUser && currentUser.role !== "guest" ? (
             <button
               type="button"
-              onClick={onToggleOfflineMode}
-              className={`hidden sm:flex items-center space-x-1.5 border px-2.5 py-1.5 rounded-full text-[10.5px] font-bold transition active:scale-95 cursor-pointer ${
-                offlineMode
-                  ? "bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-900/30 animate-pulse"
-                  : "bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/30"
-              }`}
-              title="Toggle offline execution mode"
+              onClick={() => handleItemClick("dashboard")}
+              title="Open My Library & Profile"
+              className="flex items-center justify-center h-8 w-8 rounded-full border border-[#E7E1D8] dark:border-[#332C26] bg-white dark:bg-[#1E1A17] text-[#1F1B18] dark:text-[#F5F1EB] hover:border-[#A8421B] transition cursor-pointer shrink-0"
             >
-              <div className={`w-2 h-2 rounded-full ${offlineMode ? "bg-red-500 animate-pulse" : "bg-emerald-500"}`} />
-              <span className="font-semibold">{offlineMode ? "Offline Core (No Data)" : "Online Live Sync"}</span>
+              <UserIcon className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onLogIn}
+              className="px-3 py-1 rounded-full bg-[#A8421B] hover:bg-[#8F3614] text-white text-[11px] font-bold transition cursor-pointer shrink-0"
+            >
+              Sign In
             </button>
           )}
 
-          {/* Download & Install Native App PWA trigger */}
+          {/* Green-tinted WhatsApp / Community Channel pill */}
           <button
-            onClick={handleInstallApp}
-            className="hidden sm:flex items-center space-x-1.5 bg-gradient-to-r from-orange-600 to-red-700 text-white font-bold text-[11px] px-3 py-1.5 rounded-full hover:shadow-md hover:brightness-110 active:scale-95 transition-all cursor-pointer select-none shrink-0"
-            title="Download/Install Zion Digital onto your PC, Android, iPhone, Mac"
+            type="button"
+            onClick={() => handleItemClick("community")}
+            title="Open Community Rooms"
+            className="hidden xs:flex sm:flex items-center px-2.5 py-1 rounded-lg border border-emerald-600/25 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition cursor-pointer shrink-0"
           >
-            <Smartphone className="h-3.5 w-3.5 shrink-0" />
-            <span>Download App</span>
+            WhatsApp
           </button>
 
-          {/* Theme Switcher Button */}
-          <button
-            onClick={toggleDarkMode}
-            title={isDarkMode ? "Toggle Light mode style" : "Toggle Dark mode style"}
-            className="hidden sm:flex items-center justify-center h-8.5 w-8.5 rounded-full border border-stone-200 dark:border-stone-800 bg-[#FAFAF9] dark:bg-stone-900 text-stone-600 dark:text-stone-300 hover:bg-stone-105 dark:hover:bg-stone-850 hover:text-stone-900 dark:hover:text-white transition-all cursor-pointer select-none shrink-0"
-          >
-            {isDarkMode ? (
-              <Sun className="h-4 w-4 text-amber-500 shrink-0" />
-            ) : (
-              <Moon className="h-4 w-4 text-stone-705 dark:text-slate-200 shrink-0" />
-            )}
-          </button>
-
-          {/* Unified Settings & Offline Management Button */}
-          <button
-            onClick={() => {
-              setIsSettingsModalOpen(true);
-              setActiveSettingsTab("offline");
-            }}
-            title="Open settings and offline storage manager"
-            className="flex items-center justify-center h-8.5 w-8.5 rounded-full border border-stone-200 dark:border-stone-800 bg-[#FAFAF9] dark:bg-stone-900 text-stone-600 dark:text-stone-300 hover:bg-stone-105 dark:hover:bg-stone-850 hover:text-stone-900 dark:hover:text-white transition-all cursor-pointer select-none shrink-0"
-          >
-            <Settings className="h-4 w-4 shrink-0" />
-          </button>
-
-          {/* Streak indicator badge */}
-          {streakDays ? (
-            <div 
-              title="Active study days streak"
-              onClick={() => handleItemClick("dashboard")}
-              className="hidden sm:flex items-center space-x-1 border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-950/20 px-2.5 py-1 rounded-full text-[10px] font-bold text-amber-700 dark:text-amber-400 cursor-pointer transition select-none"
+          {/* Manager Portal pill for authorized staff */}
+          {isManager && (
+            <button
+              type="button"
+              onClick={() => handleItemClick("manager-portal")}
+              className={`flex items-center px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition cursor-pointer shrink-0 ${
+                currentView === "manager-portal"
+                  ? "bg-[#A8421B] text-white border-[#A8421B]"
+                  : "bg-white dark:bg-[#1E1A17] text-[#1F1B18] dark:text-[#F5F1EB] border-[#E7E1D8] dark:border-[#332C26] hover:border-[#A8421B]"
+              }`}
             >
-              <Trophy className="h-3 w-3 text-amber-600 dark:text-amber-500 shrink-0" />
-              <span>{streakDays} Days</span>
-            </div>
-          ) : null}
-
-          {/* User Sign In and profile container */}
-          {currentUser && currentUser.role !== "guest" ? (
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => handleItemClick("dashboard")}
-                title="Open user dashboard"
-                className="flex items-center space-x-2 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-1 pr-1 sm:pr-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              >
-                <div className="h-7 w-7 rounded-full bg-orange-700 text-white flex items-center justify-center text-xs font-bold shadow-sm shrink-0">
-                  {currentUser.name[0].toUpperCase()}
-                </div>
-                <div className="hidden md:block text-left">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block leading-tight truncate max-w-[90px]">
-                    {currentUser.name.split(" ")[0]}
-                  </span>
-                  <span className="text-[9px] text-slate-400 block font-mono capitalize">
-                    {currentUser.role}
-                  </span>
-                </div>
-              </button>
-
-              <button
-                onClick={onLogOut}
-                className="hidden sm:inline-block text-[10px] font-mono uppercase bg-slate-100 dark:bg-slate-850 font-bold hover:bg-slate-250 dark:hover:bg-slate-800 px-2.5 py-1 rounded text-red-700 dark:text-red-400 transition cursor-pointer"
-              >
-                Logout
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-2">
-              <div className="flex items-center space-x-1 px-1 sm:px-2 py-1 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
-                <div className="h-6 w-6 rounded-full bg-slate-400 text-white flex items-center justify-center text-[10px] font-bold shadow-sm shrink-0">
-                  G
-                </div>
-                <div className="hidden md:block text-left">
-                  <span className="text-[10px] font-bold text-slate-700 dark:text-slate-350 block leading-none">
-                    Guest Mode
-                  </span>
-                </div>
-              </div>
-              <button
-                onClick={onLogIn}
-                className="flex items-center space-x-1.5 rounded-full bg-orange-700 hover:bg-orange-850 px-2.5 sm:px-4 py-1.5 text-[10px] sm:text-xs font-bold text-white shadow-sm transition cursor-pointer"
-              >
-                <span>Sign In</span>
-              </button>
-            </div>
+              Manager Portal
+            </button>
           )}
 
-          {/* Mobile hamburger navigation drawer trigger */}
+          {/* Sleek Mode Quick Toggle (Desktop) */}
+          {onToggleSleekMode && (
+            <button
+              type="button"
+              onClick={onToggleSleekMode}
+              title={sleekMode ? "Sleek Mode active" : "Switch to Sleek Mode"}
+              className={`hidden xl:flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10.5px] font-semibold border transition cursor-pointer shrink-0 ${
+                sleekMode
+                  ? "bg-[#A8421B] text-white border-[#A8421B]"
+                  : "bg-white dark:bg-[#1E1A17] text-[#6E655E] dark:text-[#B6ABA0] border-[#E7E1D8] dark:border-[#332C26] hover:text-[#1F1B18]"
+              }`}
+            >
+              <Sparkles className="h-3 w-3 shrink-0" />
+              <span>Sleek</span>
+            </button>
+          )}
+
+          {/* Menu Drawer Trigger (Accessible on all screen sizes like Screenshot 1) */}
           <button
+            type="button"
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="rounded-lg p-2 text-neutral-700 hover:bg-neutral-100 lg:hidden"
-            title="Open side menu drawer"
+            className="rounded-lg p-1.5 text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17] transition cursor-pointer shrink-0"
+            title="Open navigation menu"
           >
-            {isSidebarOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </header>
 
-      {/* 3. DYNAMIC SUB-HEADER BACK ACTION helpers */}
+      {/* 3. SUB-HEADER QUICK BAR */}
       {currentView !== "store" && (
-        <div id="quick_back_navigation_bar" className="w-full bg-slate-100 border-b border-slate-200 py-1.5 lg:pl-52 text-left">
-          <div className="mr-auto ml-0 max-w-5xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div id="quick_back_navigation_bar" className="w-full bg-[#F7F4EE] dark:bg-[#1E1A17] border-b border-[#E7E1D8] dark:border-[#332C26] py-1.5 lg:pl-52 text-left">
+          <div className="mr-auto ml-0 max-w-6xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
             <button
               onClick={() => handleItemClick("store")}
-              className="flex items-center space-x-1.5 text-xs font-bold text-stone-600 hover:text-orange-700 transition"
+              className="flex items-center space-x-1.5 text-xs font-semibold text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#A8421B] transition cursor-pointer"
             >
-              <Home className="h-3.5 w-3.5 text-slate-400" />
-              <span>Digital Store</span>
+              <Home className="h-3.5 w-3.5" />
+              <span>Back to Home</span>
             </button>
 
-            {canGoBack && (
-              <button
-                onClick={onBack}
-                className="flex items-center space-x-1 text-xs font-bold text-slate-700 hover:text-slate-900 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-sm transition"
-              >
-                <ArrowLeft className="h-3.5 w-3.5 text-slate-400" />
-                <span>Go Back</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {onOpenUpgrade && currentUser && currentUser.role !== "guest" && (
+                <button
+                  type="button"
+                  onClick={onOpenUpgrade}
+                  className="text-[11px] font-semibold text-[#A8421B] dark:text-[#D96B3E] hover:underline cursor-pointer"
+                >
+                  {currentUser.credits ?? 20} credits • Top Up (KES)
+                </button>
+              )}
+              {canGoBack && (
+                <button
+                  onClick={onBack}
+                  className="flex items-center space-x-1 text-xs font-semibold text-[#1F1B18] dark:text-[#F5F1EB] bg-white dark:bg-[#141210] border border-[#E7E1D8] dark:border-[#332C26] rounded-lg px-2.5 py-1 cursor-pointer transition"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Previous</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* 4. MOBILE DRAWER OVERLAY SIDEBAR */}
+      {/* 4. RIGHT EDITORIAL SLIDE-OVER MENU DRAWER (Matches Screenshot 1) */}
       {isSidebarOpen && (
-        <div id="mobile_sidebar_backdrop" className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs" onClick={() => setIsSidebarOpen(false)} />
-          <aside id="mobile_sidebar_content" className="relative flex w-80 max-w-[85vw] flex-col bg-[#090A10] p-6 shadow-2xl h-full text-left border-r border-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-900 pb-4 mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 shadow flex items-center justify-center">
-                  <span className="text-base font-black text-slate-950 font-display select-none">Z</span>
-                </div>
-                <span className="font-display font-black text-white">Zion Digital App</span>
+        <div id="mobile_sidebar_backdrop" className="fixed inset-0 z-50 flex justify-end">
+          <div className="fixed inset-0 bg-[#1F1B18]/45 backdrop-blur-xs" onClick={() => setIsSidebarOpen(false)} />
+          <aside id="mobile_sidebar_content" className="relative flex w-80 max-w-[85vw] flex-col bg-[#FAF8F4] dark:bg-[#141210] p-6 safe-area-top safe-area-bottom shadow-2xl h-full text-left border-l border-[#E7E1D8] dark:border-[#332C26]">
+            <div className="flex items-center justify-between border-b border-[#E7E1D8] dark:border-[#332C26] pb-4 mb-4">
+              <div className="flex items-center space-x-2.5">
+                <img
+                  src={globalSettings?.customLogoUrl || appLogo}
+                  alt="Zion Digital"
+                  className="h-7 w-7 rounded-full object-cover border border-[#E7E1D8] dark:border-[#332C26]"
+                />
+                <span className="font-serif font-bold text-[#1F1B18] dark:text-[#F5F1EB] text-sm">Zion Digital</span>
               </div>
-              <button onClick={() => setIsSidebarOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800/50 cursor-pointer">
-                <X className="h-5 w-5" />
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                className="rounded-full h-8 w-8 border border-[#E7E1D8] dark:border-[#332C26] flex items-center justify-center text-[#6E655E] hover:text-[#1F1B18] dark:text-[#B6ABA0] dark:hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            <nav className="flex-grow space-y-4 overflow-y-auto pr-2 custom-scrollbar">
-              {groupedNavigation.map((sec, idx) => {
+            <nav className="flex-grow space-y-1 overflow-y-auto pr-1 custom-scrollbar">
+              {[
+                { id: "store", label: "Store" },
+                { id: "community", label: "Community" },
+                { id: "announcements", label: "Social & Notices" },
+                { id: "school", label: "Leadership School" },
+                { id: "companion", label: "AI Study Chat" },
+                { id: "devotional", label: "Holy Bible (NIV)" },
+                { id: "offline-dictionary", label: "Bible Dictionary" },
+                { id: "sermons-motivation", label: "Sermons & Media" },
+                { id: "threed-loft", label: "3D Bookstore Loft" },
+                { id: "studio", label: "Doc Studio" },
+                { id: "dashboard", label: "My Library" },
+                { id: "campuses-map", label: "Campuses & Map" },
+                { id: "contact", label: "Contact" },
+                { id: "website-center", label: "Website & App Hub" },
+                { id: "playstore-hub", label: "Android & Windows Apps" },
+              ].map((item) => {
+                const isActive = currentView === item.id;
                 return (
-                  <div key={idx} className="pb-2.5 border-b border-slate-900/40 last:border-0 last:pb-0">
-                    {sec.category && (
-                      <div className="w-full flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wider text-slate-500 font-extrabold block mb-1.5 label text-left font-mono select-none">
-                        <span>{sec.category}</span>
-                      </div>
-                    )}
-                    <div className="space-y-0.5 animate-fade-in">
-                      {sec.items.map((item) => {
-                        const isActive = currentView === item.id;
-                        return (
-                          <button
-                            key={item.id}
-                            onClick={() => handleItemClick(item.id)}
-                            className={`flex w-full items-center space-x-3 rounded-lg px-3 py-1.5 text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                              isActive 
-                                ? "bg-blue-600 text-white shadow-md shadow-blue-900/40 font-black" 
-                                : "text-slate-400 hover:text-white hover:bg-slate-800/40"
-                            }`}
-                          >
-                            {item.icon && <span className="shrink-0">{item.icon}</span>}
-                            <span className="text-left whitespace-normal break-words leading-tight py-0.5">{item.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <button
+                    key={item.id}
+                    onClick={() => handleItemClick(item.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                      isActive
+                        ? "bg-[#A8421B]/10 text-[#A8421B] dark:text-[#D96B3E] font-bold"
+                        : "text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17]"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
                 );
               })}
 
+              {isManager && (
+                <button
+                  onClick={() => handleItemClick("manager-portal")}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-[#A8421B] dark:text-[#D96B3E] hover:bg-[#A8421B]/10 transition cursor-pointer mt-2"
+                >
+                  Manager Portal
+                </button>
+              )}
+
               {isAdmin && (
-                <div className="pt-2 border-t border-slate-900">
-                  <button
-                    onClick={() => handleItemClick("admin")}
-                    className={`flex w-full items-center space-x-3 rounded-lg px-4 py-2 text-xs font-black transition-all cursor-pointer ${
-                      currentView === "admin" 
-                        ? "bg-blue-600 text-white shadow-md shadow-blue-500/30" 
-                        : "text-amber-500 hover:bg-amber-500/10"
-                    }`}
-                  >
-                    <ShieldCheck className="h-4 w-4 shrink-0 text-red-500" />
-                    <span>Admin Panel</span>
-                  </button>
-                </div>
+                <button
+                  onClick={() => handleItemClick("admin")}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-bold text-[#1F1B18] dark:text-[#F5F1EB] hover:bg-[#EFECE6] dark:hover:bg-[#1E1A17] transition cursor-pointer"
+                >
+                  Admin Panel
+                </button>
               )}
             </nav>
 
-            {/* Mobile Typography Font Selection */}
-            <div className="border-t border-slate-900 pt-3 space-y-3 px-2 text-xs font-bold text-slate-200">
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block">Typography Font:</span>
-                <select
-                   value={selectedFont}
-                   onChange={(e) => setSelectedFont(e.target.value)}
-                   className="w-full bg-[#11131C] text-slate-200 border border-slate-800 rounded px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+            {/* Drawer Display Controls */}
+            <div className="border-t border-[#E7E1D8] dark:border-[#332C26] pt-3 space-y-2.5 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={toggleDarkMode}
+                  className="bg-white dark:bg-[#1E1A17] border border-[#E7E1D8] dark:border-[#332C26] text-[#1F1B18] dark:text-[#F5F1EB] text-[11px] font-semibold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
                 >
-                  <option value="Inter">Inter (Sans-Serif)</option>
-                  <option value="Space Grotesk">Space Grotesk (Modern)</option>
-                  <option value="JetBrains Mono">JetBrains Mono (Technical)</option>
-                </select>
+                  {isDarkMode ? <Sun className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : <Moon className="h-3.5 w-3.5 text-[#6E655E] shrink-0" />}
+                  <span>{isDarkMode ? "Light" : "Dark"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsModalOpen(true);
+                    setIsSidebarOpen(false);
+                  }}
+                  className="bg-white dark:bg-[#1E1A17] border border-[#E7E1D8] dark:border-[#332C26] text-[#1F1B18] dark:text-[#F5F1EB] text-[11px] font-semibold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                >
+                  <Settings className="h-3.5 w-3.5 shrink-0" />
+                  <span>Storage</span>
+                </button>
               </div>
 
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-500 block">System Controls:</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={toggleDarkMode}
-                    className="bg-[#11131C] hover:bg-slate-900 border border-slate-800 text-slate-200 text-[10px] uppercase font-bold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
-                  >
-                    {isDarkMode ? <Sun className="h-3.5 w-3.5 text-amber-500 shrink-0" /> : <Moon className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
-                    <span>{isDarkMode ? "Light" : "Dark"}</span>
-                  </button>
+              <button
+                type="button"
+                onClick={handleInstallApp}
+                className="w-full bg-[#1F1B18] dark:bg-[#D96B3E] hover:opacity-90 text-white text-xs font-bold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
+              >
+                <Smartphone className="h-3.5 w-3.5 shrink-0" />
+                <span>Install App (Android / PC)</span>
+              </button>
 
-                  <button
-                    type="button"
-                    onClick={handleInstallApp}
-                    className="bg-gradient-to-r from-orange-600 to-red-700 text-white text-[10px] uppercase font-bold rounded-lg py-2 flex items-center justify-center space-x-1 transition cursor-pointer"
-                  >
-                    <Smartphone className="h-3.5 w-3.5 shrink-0" />
-                    <span>Get App</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-900 pt-4 mt-1 space-y-3">
-              {currentUser ? (
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-3 px-2">
-                    <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white font-heavy text-xs shadow">
+              {currentUser && currentUser.role !== "guest" ? (
+                <div className="space-y-2 pt-2 border-t border-[#E7E1D8] dark:border-[#332C26]">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="h-8 w-8 rounded-full bg-[#A8421B] flex items-center justify-center text-white font-bold text-xs">
                       {currentUser.name[0].toUpperCase()}
                     </div>
-                    <div>
-                      <p className="text-xs font-black text-slate-100">{currentUser.name}</p>
-                      <p className="text-[10px] text-slate-400 font-extrabold truncate">{currentUser.email}</p>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#1F1B18] dark:text-[#F5F1EB] truncate">{currentUser.name}</p>
+                      <p className="text-[10px] text-[#6E655E] dark:text-[#B6ABA0] truncate">{currentUser.email}</p>
                     </div>
                   </div>
+                  {onOpenUpgrade && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenUpgrade();
+                        setIsSidebarOpen(false);
+                      }}
+                      className="flex w-full items-center justify-center space-x-2 rounded-lg bg-[#A8421B] hover:bg-[#8F3614] py-2 text-xs font-bold text-white cursor-pointer"
+                    >
+                      <CreditCard className="h-3.5 w-3.5" />
+                      <span>M-Pesa / Card Top-Up (KES)</span>
+                    </button>
+                  )}
                   <button
+                    type="button"
                     onClick={() => {
                       onLogOut();
                       setIsSidebarOpen(false);
                     }}
-                    className="flex w-full justify-center rounded-lg border border-slate-850 py-2.5 text-xs font-black text-slate-300 hover:bg-slate-900 cursor-pointer"
+                    className="flex w-full justify-center rounded-lg border border-rose-300 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 py-2 text-xs font-bold text-rose-700 dark:text-rose-300 cursor-pointer"
                   >
-                    Logout
+                    Sign Out
                   </button>
                 </div>
               ) : (
@@ -1047,9 +996,9 @@ export default function Navigation({
                     onLogIn();
                     setIsSidebarOpen(false);
                   }}
-                  className="flex w-full justify-center rounded-lg bg-blue-600 py-2.5 text-xs font-black text-white hover:bg-blue-700 shadow shrink-x cursor-pointer"
+                  className="flex w-full justify-center rounded-lg bg-[#A8421B] py-2.5 text-xs font-bold text-white hover:bg-[#8F3614] cursor-pointer"
                 >
-                  Authenticate Me
+                  Sign In to Zion Digital
                 </button>
               )}
             </div>
@@ -1667,57 +1616,57 @@ export default function Navigation({
       {/* 5. SECURE THUMB-REACHABLE MOBILE BOTTOM NAVIGATION BAR */}
       <div 
         id="mobile_bottom_navigation" 
-        className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-[#090A10] border-t border-slate-200 dark:border-slate-800 flex items-center justify-around px-2 z-40 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+        className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#FAF8F4] dark:bg-[#141210] border-t border-[#E7E1D8] dark:border-[#332C26] flex items-center justify-around px-2 z-40 shadow-[0_-4px_12px_rgba(31,27,24,0.06)]"
       >
         <button
-          onClick={() => handleItemClick("dashboard")}
+          onClick={() => handleItemClick("store")}
           className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "dashboard" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+            currentView === "store" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
           }`}
         >
           <Home className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Library</span>
-          {currentView === "dashboard" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Home</span>
+          {currentView === "store" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
           )}
         </button>
 
         <button
-          onClick={() => handleItemClick("language-teacher")}
+          onClick={() => handleItemClick("school")}
           className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "language-teacher" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+            currentView === "school" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
           }`}
         >
-          <GraduationCap className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Tutor</span>
-          {currentView === "language-teacher" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          <Compass className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">School</span>
+          {currentView === "school" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
           )}
         </button>
 
         <button
-          onClick={() => handleItemClick("offline-dictionary")}
+          onClick={() => handleItemClick("community")}
           className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "offline-dictionary" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+            currentView === "community" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
           }`}
         >
-          <BookOpen className="h-4.5 w-4.5 shrink-0" />
-          <span className="text-[10.5px] font-semibold tracking-tight">Dictionary</span>
-          {currentView === "offline-dictionary" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+          <MessageSquare className="h-4.5 w-4.5 shrink-0" />
+          <span className="text-[10.5px] font-semibold tracking-tight">Community</span>
+          {currentView === "community" && (
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
           )}
         </button>
 
         <button
           onClick={() => handleItemClick("devotional")}
           className={`flex flex-row items-center justify-center gap-1.5 flex-grow h-full px-2 py-1 transition-all relative ${
-            currentView === "devotional" ? "text-amber-500 font-bold" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+            currentView === "devotional" ? "text-[#A8421B] dark:text-[#D96B3E] font-bold" : "text-[#6E655E] dark:text-[#B6ABA0] hover:text-[#1F1B18]"
           }`}
         >
-          <HelpCircle className="h-4.5 w-4.5 shrink-0" />
+          <BookOpen className="h-4.5 w-4.5 shrink-0" />
           <span className="text-[10.5px] font-semibold tracking-tight">Bible</span>
           {currentView === "devotional" && (
-            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-amber-500 rounded-full animate-pulse" />
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#A8421B] rounded-full" />
           )}
         </button>
       </div>

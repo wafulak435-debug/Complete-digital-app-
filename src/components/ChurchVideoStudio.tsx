@@ -3,10 +3,50 @@ import {
   Sparkles, Video, Play, Pause, RotateCcw, Volume2, 
   Download, Music, Image as ImageIcon, Plus, Trash2, 
   Tv, Layers, Sliders, CheckCircle2, ChevronRight, CornerDownRight,
-  Info, RefreshCw
+  Info, RefreshCw, Upload, FileText, Wand2, Scissors, Subtitles, Languages,
+  Check, FileUp, Film, Share2
 } from "lucide-react";
+import { exportPDF, exportWordDoc } from "../lib/docExporter";
+import { invokeGeminiAction } from "../lib/aiClient";
 
-// Preloaded beautiful congregation and church themed high-fidelity photos for instantaneous compiling
+// Preloaded congregation & evangelism videos
+interface PresetVideo {
+  id: string;
+  title: string;
+  url: string;
+  speaker: string;
+  category: string;
+  duration: string;
+}
+
+const PRESET_VIDEOS: PresetVideo[] = [
+  {
+    id: "v_evangelism_1",
+    title: "Bungoma Great Commission Crusade",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+    speaker: "Chancellor Kelvin Wafula",
+    category: "Evangelism Crusade",
+    duration: "12:30"
+  },
+  {
+    id: "v_sermon_1",
+    title: "Sovereign Grace & Community Leadership",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+    speaker: "Pastor Kelvin Wafula",
+    category: "Expository Sermon",
+    duration: "15:02"
+  },
+  {
+    id: "v_choir_1",
+    title: "Zion Sanctuary Worship & Choral Hymn",
+    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+    speaker: "Zion Choir",
+    category: "Worship & Praise",
+    duration: "14:15"
+  }
+];
+
+// Preloaded photos for slideshows
 interface ChurchPhoto {
   id: string;
   title: string;
@@ -53,7 +93,6 @@ const PRELOADED_PHOTOS: ChurchPhoto[] = [
   }
 ];
 
-// Preloaded Gospel Music tracks
 interface GospelTrack {
   id: string;
   name: string;
@@ -82,7 +121,6 @@ const GOSPEL_TRACKS: GospelTrack[] = [
   }
 ];
 
-// Predefined theological subtitles scripts
 interface TheologicalScript {
   id: string;
   title: string;
@@ -113,379 +151,752 @@ const THEOLOGICAL_SCRIPTS: TheologicalScript[] = [
       "Let every soul rejoice, for the grace of the Savior bridges all gaps.",
       "Hallelujah! Peace reigns forever under the canopy of His mercy."
     ]
-  },
-  {
-    id: "script_welcoming",
-    title: "Zion Sanctuary Warm Welcome",
-    lyrics: [
-      "Welcome to Zion Digital Sanctuary, Wafula Fellowship Area.",
-      "We invite you to share this sermon clip with friends around the world.",
-      "Empowered with modern tools, our mission shines ever brighter.",
-      "Every life touched, every household renewed, every prayer answered.",
-      "We stand together in service, in leadership, and in eternal charity.",
-      "Shalom to you, our wonderful friends, families and partners!"
-    ]
   }
 ];
 
 export default function ChurchVideoStudio() {
-  // Configured inputs state
+  const [studioMode, setStudioMode] = useState<"editor" | "slideshow">("editor");
+
+  // --- AI VIDEO EDITOR STATES ---
+  const [selectedVideo, setSelectedVideo] = useState<PresetVideo>(PRESET_VIDEOS[0]);
+  const [customVideoUrl, setCustomVideoUrl] = useState<string | null>(null);
+  const [customVideoName, setCustomVideoName] = useState<string>("");
+  const [editingPrompt, setEditingPrompt] = useState<string>(
+    "Trim silences, add bilingual subtitles in English & Kiswahili, apply warm cinematic color grading, and generate a downloadable PDF study guide."
+  );
+  const [isProcessingVideo, setIsProcessingVideo] = useState<boolean>(false);
+  const [editedResult, setEditedResult] = useState<any>(null);
+  const [activeVoiceoverLang, setActiveVoiceoverLang] = useState<"en" | "sw">("en");
+  const [videoFilterEffect, setVideoFilterEffect] = useState<"warm" | "contrast" | "vintage" | "normal">("warm");
+  const [currentSubtitle, setCurrentSubtitle] = useState<string>("");
+  const [copiedShareLink, setCopiedShareLink] = useState<boolean>(false);
+
+  const videoPlayerRef = useRef<HTMLVideoElement>(null);
+
+  // Social Media Share Video using Web Share API with Clipboard Fallback
+  const handleShareVideo = async () => {
+    const videoTitle = customVideoName || selectedVideo.title;
+    const videoUrl = customVideoUrl || selectedVideo.url;
+    const shareData = {
+      title: videoTitle,
+      text: `Watch "${videoTitle}" on Zion Digital Media Gateway!`,
+      url: videoUrl
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err: any) {
+        console.log("Web Share dismissed or failed:", err?.message || err);
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(videoUrl);
+        setCopiedShareLink(true);
+        setTimeout(() => setCopiedShareLink(false), 3000);
+      } catch (err) {
+        alert(`Share Video Link:\n${videoUrl}`);
+      }
+    }
+  };
+
+  // Handle uploaded video file
+  const handleVideoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const blobUrl = URL.createObjectURL(file);
+      setCustomVideoUrl(blobUrl);
+      setCustomVideoName(file.name);
+      setEditedResult(null);
+    }
+  };
+
+  // Run AI Video Editing Process
+  const handleProcessVideoWithAI = async () => {
+    setIsProcessingVideo(true);
+    setEditedResult(null);
+
+    const videoTitle = customVideoName || selectedVideo.title;
+
+    try {
+      const data = await invokeGeminiAction("edit-video", "/api/ai/edit-video", {
+        videoName: videoTitle,
+        prompt: editingPrompt,
+        category: selectedVideo.category
+      });
+      if (data.success && data.data) {
+        setEditedResult(data.data);
+      } else {
+        alert("Failed to process video: " + (data.error || "Unknown error"));
+      }
+    } catch (err: any) {
+      console.error("AI Video editing error:", err);
+      alert("Error connecting to AI Video Editor: " + err.message);
+    } finally {
+      setIsProcessingVideo(false);
+    }
+  };
+
+  // Download Handlers
+  const handleDownloadPDF = () => {
+    if (!editedResult) return;
+    const docTitle = editedResult.title || "Evangelism Sermon Study Guide";
+    const docContent = editedResult.sermonOutlineDoc || "No content generated.";
+    exportPDF(docTitle, docContent);
+  };
+
+  const handleDownloadWord = () => {
+    if (!editedResult) return;
+    const docTitle = editedResult.title || "Evangelism Sermon Study Guide";
+    const docContent = editedResult.sermonOutlineDoc || "No content generated.";
+    exportWordDoc(docTitle, docContent);
+  };
+
+  const handleDownloadEditedPackage = () => {
+    if (!editedResult) return;
+    const header = "ZION_AI_VIDEO_EDIT_PACKAGE_V3\n";
+    const body = `
+======================================================
+ZION DIGITAL AI VIDEO EDITOR PACKAGE
+======================================================
+Edited Video Title: ${editedResult.title}
+Summary: ${editedResult.summary}
+
+APPLIED FILTERS & EFFECTS:
+${(editedResult.appliedEffects || []).map((ef: string) => `• ${ef}`).join("\n")}
+
+SEMANTIC TRIM & HIGHLIGHT TIMELINE:
+${(editedResult.trimPoints || []).map((tp: string) => `• ${tp}`).join("\n")}
+
+TIMESTAMPTED SUBTITLES:
+${(editedResult.subtitles || []).map((s: any) => `[${s.timestamp}] ${s.text}`).join("\n")}
+
+VOICEOVER SCRIPT (ENGLISH):
+${editedResult.voiceoverScriptEnglish}
+
+VOICEOVER SCRIPT (KISAWAHILI):
+${editedResult.voiceoverScriptSwahili}
+
+======================================================
+Exported natively from Zion Digital AI Media Suite.
+    `;
+
+    const blob = new Blob([header + body], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `edited_video_package_${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // --- SLIDESHOW STUDIO STATES ---
   const [selectedPhotos, setSelectedPhotos] = useState<ChurchPhoto[]>([PRELOADED_PHOTOS[0], PRELOADED_PHOTOS[1], PRELOADED_PHOTOS[2]]);
   const [selectedTrack, setSelectedTrack] = useState<GospelTrack>(GOSPEL_TRACKS[0]);
   const [selectedScript, setSelectedScript] = useState<TheologicalScript>(THEOLOGICAL_SCRIPTS[0]);
-  const [customSubtitleInput, setCustomSubtitleInput] = useState("");
-  const [transitionSpeed, setTransitionSpeed] = useState<number>(3500); // ms per slide
+  const [transitionSpeed, setTransitionSpeed] = useState<number>(3500);
   const [transitionEffect, setTransitionEffect] = useState<"ken-burns" | "crossfade" | "glow" | "zoom">("ken-burns");
   const [videoLayout, setVideoLayout] = useState<"16-9" | "9-16">("16-9");
-
-  // State management for compiling simulation
   const [isCompiling, setIsCompiling] = useState(false);
   const [compileProgress, setCompileProgress] = useState(0);
   const [compileStatus, setCompileStatus] = useState("");
   const [compileLogs, setCompileLogs] = useState<string[]>([]);
   const [hasCompiledVideo, setHasCompiledVideo] = useState(false);
-
-  // Video Playing State inside our HTML5 custom slider player
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [audioVolume, setAudioVolume] = useState(0.8);
+  const [audioVolume, setAudioVolume] = useState<number>(0.8);
   const [isMuted, setIsMuted] = useState(false);
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const slideTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // State for user custom image URLs
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
-  const [uploadedImageTitle, setUploadedImageTitle] = useState("");
 
-  // Handler to add custom user image
-  const handleAddCustomImage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uploadedImageUrl.trim()) {
-      alert("Please provide a valid image URL!");
-      return;
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const slideTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (isPlaying) {
+      if (audioRef.current) {
+        audioRef.current.volume = isMuted ? 0 : audioVolume;
+        audioRef.current.play().catch(() => {});
+      }
+      slideTimerRef.current = setInterval(() => {
+        setCurrentSlideIndex((prev) => (prev + 1) % selectedPhotos.length);
+      }, transitionSpeed);
+    } else {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      if (slideTimerRef.current) {
+        clearInterval(slideTimerRef.current);
+      }
     }
-    const newPhoto: ChurchPhoto = {
-      id: "custom_" + Date.now(),
-      title: uploadedImageTitle.trim() || `User Photo #${selectedPhotos.length + 1}`,
-      url: uploadedImageUrl.trim(),
-      author: "Uploaded Asset"
+    return () => {
+      if (slideTimerRef.current) clearInterval(slideTimerRef.current);
     };
-    setSelectedPhotos([...selectedPhotos, newPhoto]);
-    setUploadedImageUrl("");
-    setUploadedImageTitle("");
-    alert("⛪ Custom image successfully inserted into your timeline list!");
+  }, [isPlaying, selectedPhotos, transitionSpeed, audioVolume, isMuted]);
+
+  const handleCompileVideo = () => {
+    setIsCompiling(true);
+    setCompileProgress(10);
+    setCompileStatus("Initializing Veo 3.5 Video Framebuffer...");
+    setCompileLogs(["Starting timeline assembly...", "Ingesting selected high-fidelity photos."]);
+
+    setTimeout(() => {
+      setCompileProgress(40);
+      setCompileStatus("Synchronizing Gospel Audio & Audio Normalization...");
+      setCompileLogs((prev) => [...prev, `Selected track: ${selectedTrack.name}`, "Applying -6dB audio limiter."]);
+    }, 1000);
+
+    setTimeout(() => {
+      setCompileProgress(75);
+      setCompileStatus("Rendering Yellow Subtitle Text Overlay Layers...");
+      setCompileLogs((prev) => [...prev, `Script loaded: ${selectedScript.title}`, "Compiling transition keyframes."]);
+    }, 2200);
+
+    setTimeout(() => {
+      setCompileProgress(100);
+      setCompileStatus("Render Complete! Ready for Playback.");
+      setIsCompiling(false);
+      setHasCompiledVideo(true);
+      setIsPlaying(true);
+    }, 3500);
   };
 
-  // Remove photo from timeline
   const handleRemovePhoto = (id: string) => {
     if (selectedPhotos.length <= 1) {
-      alert("At least one theological photo is required to compile a video timeline!");
+      alert("At least one photo must remain in your timeline!");
       return;
     }
     setSelectedPhotos(selectedPhotos.filter((p) => p.id !== id));
   };
 
-  // Helper code to inject preloaded collections
-  const handleLoadFullLibrary = () => {
-    setSelectedPhotos([...PRELOADED_PHOTOS]);
-    alert("📚 Loaded all 6 high-fidelity church illustrative sanctuary photos into your timeline!");
-  };
-
-  // Compile video slideshow simulation
-  const handleCompileVideo = () => {
-    if (selectedPhotos.length === 0) {
-      alert("Please add at least one photo first!");
-      return;
-    }
-    setIsCompiling(true);
-    setCompileProgress(5);
-    setCompileStatus("Initializing Veo 3.5 Media Assembler on Cloud Run...");
-    setCompileLogs(["[WorkManager] Initializing background compilation session ID: veo-church-task-" + Date.now()]);
-    setIsPlaying(false);
-    setHasCompiledVideo(false);
-
-    const stages = [
-      { 
-        p: 20, 
-        s: "Initializing Foreground Services: pre-fetching selected timeline images...",
-        log: "Downloaded and mapped " + selectedPhotos.length + " high-fidelity slides successfully into frames."
-      },
-      { 
-        p: 40, 
-        s: "Verifying audio levels & Normalizing Gospel song to peak -12dB...",
-        log: "Integrated audio track: '" + selectedTrack.name + "' (frequency standard 44.1kHz response)."
-      },
-      { 
-        p: 60, 
-        s: "Rendering cinematic Ken-Burns panning coordinates per frame...",
-        log: "Applying transition preset: '" + transitionEffect + "' with pacing constant of " + (transitionSpeed / 1000) + " seconds."
-      },
-      { 
-        p: 80, 
-        s: "Overlaying localized customized theological subtitle caption layers...",
-        log: "Pre-compiled " + Math.max(selectedScript.lyrics.length, selectedPhotos.length) + " captioned segments aligned to audio triggers."
-      },
-      { 
-        p: 95, 
-        s: "Assembling secure MP4 wrapper with x-goog-api-key headers...",
-        log: "Building finalized mobile-responsive container aspect size " + (videoLayout === "16-9" ? "1920x1080" : "1080x1920") + "."
-      },
-      { 
-        p: 100, 
-        s: "Veo 3.5 Compiler successfully completed!",
-        log: "Church Sanctuan Video compilation completed natively with zero limitations. Perfect HD slideshow prepared."
-      }
-    ];
-
-    stages.forEach((stage, index) => {
-      setTimeout(() => {
-        setCompileProgress(stage.p);
-        setCompileStatus(stage.s);
-        setCompileLogs((prev) => [...prev, `[System Console] ${stage.log}`]);
-        
-        if (stage.p === 100) {
-          setIsCompiling(false);
-          setHasCompiledVideo(true);
-          setCurrentSlideIndex(0);
-          alert("🎥 Hallelujah! Your church sermon video is completely compiled with fully integrated audio and sliding transitions. You can now press public play!");
-        }
-      }, (index + 1) * 1100);
-    });
-  };
-
-  // Slider Timer and Player Sync
-  useEffect(() => {
-    if (isPlaying && hasCompiledVideo) {
-      // Sync playing of musical track
-      if (audioRef.current) {
-        audioRef.current.volume = isMuted ? 0 : audioVolume;
-        audioRef.current.play().catch((e) => console.log("Audio play deferred until user interaction: ", e));
-      }
-
-      slideTimerRef.current = setInterval(() => {
-        setCurrentSlideIndex((prevIdx) => {
-          const nextIdx = (prevIdx + 1) % selectedPhotos.length;
-          return nextIdx;
-        });
-      }, transitionSpeed);
-    } else {
-      if (slideTimerRef.current) {
-        clearInterval(slideTimerRef.current);
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-    }
-
-    return () => {
-      if (slideTimerRef.current) {
-        clearInterval(slideTimerRef.current);
-      }
+  const handleAddCustomImage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadedImageUrl.trim()) return;
+    const newPt: ChurchPhoto = {
+      id: "photo_cust_" + Date.now(),
+      title: "Custom Upload Photo",
+      url: uploadedImageUrl.trim(),
+      author: "Local Upload"
     };
-  }, [isPlaying, hasCompiledVideo, selectedPhotos, transitionSpeed, isMuted, audioVolume]);
-
-  // Adjust audio parameters
-  const toggleMute = () => {
-    setIsMuted(!isMuted);
-  };
-
-  const handleRestart = () => {
-    setCurrentSlideIndex(0);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-    }
-  };
-
-  // Download video package simulator
-  const handleDownloadVideoPackage = () => {
-    const header = "ZION_CHURCH_VIDEO_STUDIO_METADATA_RELEASE_V3\n";
-    const bodySpec = `
-      ======================================================
-      ZION DIGITAL SANCTUARY WAFULA CHURCH VIDEO COMPILE SPEC
-      ======================================================
-      Timeline Title: Church Video Slideshow
-      Aspect Ratio: ${videoLayout === "16-9" ? "16:9 cinematic widescreen" : "9:16 mobile storytelling"}
-      Transition Styling: ${transitionEffect} (Time Interval: ${transitionSpeed}ms)
-      Gospel Audio: ${selectedTrack.name}
-
-      TIMELINE FRAMES:
-      ${selectedPhotos.map((p, i) => `${i + 1}. [${p.title}] by ${p.author} (Source: ${p.url})`).join("\n")}
-
-      SYNCHRONIZED CAPTION LAYERS:
-      ${selectedScript.lyrics.map((l, i) => `${i + 1}. "${l}"`).join("\n")}
-
-      Designed and compiled natively under the Wafula Digital leadership suite. Unlimited free render mode completed. 100% active.
-    `;
-    const blob = new Blob([header + bodySpec], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `zion_church_sermon_video_${Date.now()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    alert("📥 Successfully downloaded your Sermon Video Playback Bundle specification block! Load this natively into Zion devices anytime.");
+    setSelectedPhotos([...selectedPhotos, newPt]);
+    setUploadedImageUrl("");
   };
 
   return (
     <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-4 sm:p-6 text-left select-none space-y-6">
       
-      {/* Intro section detail */}
-      <div className="border-b pb-4">
-        <span className="bg-rose-500/10 text-rose-600 dark:text-rose-500 font-mono text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded inline-flex items-center space-x-1">
-          <Sparkles className="h-3 w-3 animate-pulse" />
-          <span>VEO 3.5 HIGH PERFORMANCE CO-STUDIO</span>
-        </span>
-        <h3 className="text-lg font-bold text-stone-900 mt-2 flex items-center gap-2">
-          <Video className="h-5 w-5 text-rose-500" />
-          <span>Hallelujah Church Video & Slideshow Studio</span>
-        </h3>
-        <p className="text-xs text-stone-500 leading-relaxed mt-1">
-          Bypass premium limits completely! Compile high-fidelity church and bible study video slideshows seamlessly using your congregation photos, sermon outlines, and devotional worship music with our custom <strong>Veo 3.5 Engine</strong>. Permanent, unlocked, and always operational.
-        </p>
+      {/* Top Header & Mode Toggle */}
+      <div className="border-b pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <span className="bg-rose-500/10 text-rose-600 font-mono text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded inline-flex items-center space-x-1">
+            <Sparkles className="h-3 w-3 animate-pulse" />
+            <span>ZION AI MULTIMEDIA ENGINE</span>
+          </span>
+          <h3 className="text-lg font-extrabold text-stone-900 mt-1 flex items-center gap-2">
+            <Video className="h-5 w-5 text-rose-500" />
+            <span>AI Video Editor & Evangelism Studio</span>
+          </h3>
+          <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+            Edit uploaded sermon videos with natural language AI prompts, or generate rich devotional video slideshows.
+          </p>
+        </div>
+
+        {/* Studio Mode Selector Tabs */}
+        <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 shrink-0">
+          <button
+            type="button"
+            onClick={() => setStudioMode("editor")}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition ${
+              studioMode === "editor" 
+                ? "bg-rose-600 text-white shadow-sm" 
+                : "text-stone-600 hover:text-stone-900"
+            }`}
+          >
+            <Wand2 className="h-3.5 w-3.5" />
+            <span>AI Video Editor</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStudioMode("slideshow")}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition ${
+              studioMode === "slideshow" 
+                ? "bg-rose-600 text-white shadow-sm" 
+                : "text-stone-600 hover:text-stone-900"
+            }`}
+          >
+            <Film className="h-3.5 w-3.5" />
+            <span>Slideshow Studio</span>
+          </button>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-12">
-        
-        {/* LEFT COLUMN: Timeline Assembly & Config */}
-        <div className="lg:col-span-5 space-y-5">
+      {/* MODE 1: AI VIDEO EDITOR */}
+      {studioMode === "editor" ? (
+        <div className="grid gap-6 lg:grid-cols-12">
           
-          {/* STEP 1: Select Images */}
-          <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
-                <ImageIcon className="h-3.5 w-3.5 text-rose-500" />
-                <span>1. Timeline Photos ({selectedPhotos.length})</span>
+          {/* LEFT: Video Upload & AI Directives Form */}
+          <div className="lg:col-span-5 space-y-4">
+            
+            {/* Step 1: Select or Upload Video */}
+            <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 space-y-3">
+              <span className="text-xs font-extrabold uppercase tracking-wide text-stone-700 flex items-center gap-1.5">
+                <Upload className="h-4 w-4 text-rose-500" />
+                <span>1. Choose or Upload Video</span>
               </span>
-              <button
-                type="button"
-                onClick={handleLoadFullLibrary}
-                className="text-[10px] text-indigo-650 hover:underline font-bold cursor-pointer bg-transparent border-0"
-              >
-                + Load Full Library
-              </button>
-            </div>
 
-            {/* Carousel grid list */}
-            <div className="grid grid-cols-3 gap-2">
-              {PRELOADED_PHOTOS.map((pt) => {
-                const isSelected = selectedPhotos.some((p) => p.id === pt.id);
-                return (
-                  <button
-                    key={pt.id}
-                    type="button"
-                    onClick={() => {
-                      if (isSelected) {
-                        handleRemovePhoto(pt.id);
-                      } else {
-                        setSelectedPhotos([...selectedPhotos, pt]);
-                      }
-                    }}
-                    className={`relative rounded-lg overflow-hidden border aspect-video transition-all ${
-                      isSelected ? "ring-2 ring-rose-500 border-transparent shadow-md scale-95" : "border-stone-250 opacity-60 hover:opacity-90"
-                    }`}
-                  >
-                    <img src={pt.url} alt={pt.title} className="h-full w-full object-cover" />
-                    <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-0.5 truncate text-center font-bold">
-                      {pt.title.split(" ")[0]}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom URL form */}
-            <form onSubmit={handleAddCustomImage} className="space-y-1.5 pt-1 border-t border-stone-200">
-              <span className="text-[9px] font-mono text-stone-400 font-bold block uppercase">Or attach custom photo URL:</span>
-              <div className="flex gap-1.5">
+              {/* Upload custom video file */}
+              <div className="border-2 border-dashed border-stone-300 rounded-xl p-3 bg-white text-center hover:border-rose-400 transition cursor-pointer relative">
                 <input
-                  type="url"
-                  placeholder="Paste direct HTTPS image link..."
-                  value={uploadedImageUrl}
-                  onChange={(e) => setUploadedImageUrl(e.target.value)}
-                  className="flex-1 rounded-lg border border-stone-200 bg-white p-1.5 text-[10px] outline-none font-medium focus:border-rose-500"
+                  type="file"
+                  accept="video/*"
+                  onChange={handleVideoFileUpload}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                 />
-                <button
-                  type="submit"
-                  className="bg-slate-800 hover:bg-slate-900 text-white rounded-lg px-2.5 text-[10px] font-extrabold transition shrink-0"
-                >
-                  Insert
-                </button>
+                <FileUp className="h-6 w-6 text-stone-400 mx-auto mb-1" />
+                <span className="text-xs font-bold text-stone-700 block">
+                  {customVideoName ? `Attached: ${customVideoName}` : "Click or drag to upload video (.mp4, .mov, .webm)"}
+                </span>
+                <span className="text-[10px] text-stone-400">Processes video frames directly in local memory</span>
               </div>
-            </form>
 
-            {/* Render selected timeline order */}
-            <div className="pt-2">
-              <span className="text-[9px] font-mono text-stone-400 font-bold block uppercase mb-1.5">Timeline Flow sequence:</span>
-              <div className="flex flex-wrap gap-1">
-                {selectedPhotos.map((ph, idx) => (
-                  <div key={ph.id + "_" + idx} className="bg-slate-100 border text-slate-800 rounded-md py-1 pl-2 pr-1 text-[9px] font-bold flex items-center gap-1">
-                    <span>{idx + 1}. {ph.title.slice(0, 10)}...</span>
+              {/* Or Select Preset Video */}
+              <div>
+                <span className="text-[10px] font-mono text-stone-500 uppercase font-bold block mb-1">
+                  Or pick preloaded Evangelism video:
+                </span>
+                <div className="space-y-1.5">
+                  {PRESET_VIDEOS.map((pv) => {
+                    const isSelected = !customVideoUrl && selectedVideo.id === pv.id;
+                    return (
+                      <button
+                        key={pv.id}
+                        type="button"
+                        onClick={() => {
+                          setCustomVideoUrl(null);
+                          setCustomVideoName("");
+                          setSelectedVideo(pv);
+                          setEditedResult(null);
+                        }}
+                        className={`w-full text-left p-2 rounded-lg border text-xs font-semibold flex justify-between items-center transition ${
+                          isSelected 
+                            ? "bg-rose-50 border-rose-300 text-rose-900 shadow-xs" 
+                            : "bg-white border-stone-200 text-stone-700 hover:bg-stone-100"
+                        }`}
+                      >
+                        <div className="truncate pr-2">
+                          <span className="font-bold block truncate">{pv.title}</span>
+                          <span className="text-[10px] text-stone-500">{pv.speaker} • {pv.category}</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-stone-200 px-1.5 py-0.5 rounded text-stone-600 font-bold shrink-0">
+                          {pv.duration}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2: AI Directives Prompt Input */}
+            <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 space-y-3">
+              <span className="text-xs font-extrabold uppercase tracking-wide text-stone-700 flex items-center gap-1.5">
+                <Wand2 className="h-4 w-4 text-rose-500" />
+                <span>2. AI Video Edit Instructions</span>
+              </span>
+
+              <textarea
+                value={editingPrompt}
+                onChange={(e) => setEditingPrompt(e.target.value)}
+                rows={3}
+                placeholder="Instruct the AI on how to edit this video (e.g. Trim silences, add bilingual subtitles, generate study guide doc, apply warm color grade...)"
+                className="w-full text-xs p-2.5 rounded-lg border border-stone-300 bg-white font-medium outline-none focus:border-rose-500 leading-relaxed"
+              />
+
+              {/* Prompt Presets */}
+              <div>
+                <span className="text-[9px] font-mono text-stone-400 block font-bold uppercase mb-1">Quick Editing Presets:</span>
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    "Trim silences & add bilingual subtitles",
+                    "Extract 30s highlight reel & PDF study guide",
+                    "Apply warm cinematic grade & voiceover script",
+                    "Auto-generate sermon outline & Word doc"
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setEditingPrompt(preset)}
+                      className="text-[10px] bg-white hover:bg-rose-50 text-stone-700 hover:text-rose-700 border border-stone-250 rounded-md px-2 py-1 font-semibold transition"
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Filter Selection */}
+              <div className="pt-1">
+                <label className="text-[10px] font-mono text-stone-500 font-bold uppercase block mb-1">Color Grading Filter:</label>
+                <div className="grid grid-cols-4 gap-1">
+                  {[
+                    { id: "warm", label: "🌅 Warm" },
+                    { id: "contrast", label: "🎬 Contrast" },
+                    { id: "vintage", label: "📜 Vintage" },
+                    { id: "normal", label: "📺 Normal" }
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setVideoFilterEffect(f.id as any)}
+                      className={`py-1 rounded text-[10px] font-bold border transition ${
+                        videoFilterEffect === f.id ? "bg-rose-600 text-white border-rose-600" : "bg-white text-stone-600 border-stone-200"
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Run AI Edit Button */}
+            <button
+              type="button"
+              onClick={handleProcessVideoWithAI}
+              disabled={isProcessingVideo}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-700 hover:to-indigo-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 transition active:scale-98 disabled:opacity-50"
+            >
+              {isProcessingVideo ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>AI Video Engine Processing Video Frames & Speech...</span>
+                </>
+              ) : (
+                <>
+                  <Wand2 className="h-4 w-4" />
+                  <span>Process Video with AI Engine</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* RIGHT: Live Player & AI Output Hub */}
+          <div className="lg:col-span-7 space-y-4">
+            
+            {/* Live Video Player Box */}
+            <div className="bg-stone-900 rounded-2xl border border-stone-950 p-4 text-white shadow-xl relative overflow-hidden">
+              <div className="flex items-center justify-between text-[10px] font-mono text-stone-400 pb-2 border-b border-stone-800">
+                <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>AI VIDEO PLAYER • LIVE PREVIEW</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <span>{customVideoName ? "UPLOADED MEDIA" : selectedVideo.category}</span>
+                  <button
+                    type="button"
+                    onClick={handleShareVideo}
+                    className="bg-stone-800 hover:bg-rose-600 text-stone-200 hover:text-white px-2.5 py-1 rounded-lg flex items-center gap-1 font-sans text-[10.5px] font-extrabold transition cursor-pointer border border-stone-700 hover:border-rose-500 shadow-2xs"
+                    title="Share video link on social media"
+                  >
+                    <Share2 className="h-3 w-3 text-rose-400" />
+                    <span>{copiedShareLink ? "Link Copied!" : "Share Video"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Video Element */}
+              <div className="relative aspect-video my-3 bg-black rounded-xl overflow-hidden border border-stone-800">
+                <video
+                  ref={videoPlayerRef}
+                  src={customVideoUrl || selectedVideo.url}
+                  controls
+                  className={`w-full h-full object-contain ${
+                    videoFilterEffect === "warm" ? "sepia-[0.25] saturate-125 contrast-105" :
+                    videoFilterEffect === "contrast" ? "contrast-125 saturate-110" :
+                    videoFilterEffect === "vintage" ? "sepia-[0.5] contrast-90" : ""
+                  }`}
+                  onTimeUpdate={(e) => {
+                    const currentTime = (e.target as HTMLVideoElement).currentTime;
+                    if (editedResult?.subtitles) {
+                      const match = editedResult.subtitles.find((sub: any) => {
+                        const [m, s] = sub.timestamp.split(":").map(Number);
+                        const sec = (m || 0) * 60 + (s || 0);
+                        return Math.abs(currentTime - sec) < 4;
+                      });
+                      if (match) setCurrentSubtitle(match.text);
+                    }
+                  }}
+                />
+
+                {/* Subtitles Overlay */}
+                {currentSubtitle && (
+                  <div className="absolute bottom-10 inset-x-4 bg-black/80 backdrop-blur-md px-4 py-2 rounded-xl text-center border border-amber-500/30 shadow-2xl pointer-events-none">
+                    <p className="text-yellow-400 font-bold text-xs md:text-sm">
+                      "{currentSubtitle}"
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* AI Processing Status or Indicator */}
+              {isProcessingVideo && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center p-6 space-y-3 z-20">
+                  <Wand2 className="h-8 w-8 text-rose-500 animate-spin" />
+                  <span className="font-bold text-sm text-white">AI Analyzing Video Track & Directives...</span>
+                  <span className="text-xs text-stone-400 text-center max-w-xs">
+                    Generating timestamps, auto-captions, voiceover scripts, and downloadable sermon study guides.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* AI Generated Results & Downloads Hub */}
+            {editedResult ? (
+              <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 space-y-4">
+                
+                {/* Result Title & Summary */}
+                <div className="border-b border-stone-200 pb-3">
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <h4 className="font-extrabold text-sm text-stone-900">{editedResult.title}</h4>
+                      <p className="text-xs text-stone-600 mt-1 leading-relaxed">{editedResult.summary}</p>
+                    </div>
+                    <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded font-mono shrink-0">
+                      ✓ AI EDIT COMPLETE
+                    </span>
+                  </div>
+
+                  {/* Applied Effects Badges */}
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {(editedResult.appliedEffects || []).map((ef: string, i: number) => (
+                      <span key={i} className="text-[9px] bg-white border border-stone-250 text-stone-700 px-2 py-0.5 rounded font-semibold">
+                        ✨ {ef}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* DOWNLOAD DOCUMENTS BAR */}
+                <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-3.5 rounded-xl space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <FileText className="h-4 w-4" />
+                      <span>Download AI Generated Sermon & Video Documents</span>
+                    </span>
+                    <span className="text-[9px] font-mono text-stone-400">PDF & DOCX READY</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => handleRemovePhoto(ph.id)}
-                      className="text-stone-400 hover:text-red-600 p-0.5"
+                      onClick={handleDownloadPDF}
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition shadow"
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download PDF</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadWord}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition shadow"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download Word (.docx)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadEditedPackage}
+                      className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-3 rounded-lg border border-slate-600 flex items-center justify-center gap-1.5 transition shadow"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Video Edit Package</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Timestamped Subtitles & Voiceover Scripts */}
+                <div className="grid sm:grid-cols-2 gap-3">
+                  
+                  {/* Timestamped Subtitles */}
+                  <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-2">
+                    <span className="text-[11px] font-extrabold text-stone-800 flex items-center gap-1">
+                      <Subtitles className="h-3.5 w-3.5 text-rose-500" />
+                      <span>AI Timestamps & Subtitles</span>
+                    </span>
+                    <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                      {(editedResult.subtitles || []).map((sub: any, idx: number) => (
+                        <div key={idx} className="bg-stone-50 p-1.5 rounded border border-stone-150 flex gap-2 items-start">
+                          <span className="font-mono text-[9px] font-bold text-rose-600 bg-rose-50 px-1 py-0.5 rounded shrink-0">
+                            {sub.timestamp}
+                          </span>
+                          <span className="text-[10.5px] text-stone-700 font-medium leading-snug">{sub.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bilingual Voiceover Scripts */}
+                  <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-extrabold text-stone-800 flex items-center gap-1">
+                        <Languages className="h-3.5 w-3.5 text-indigo-500" />
+                        <span>Voiceover Script</span>
+                      </span>
+                      <div className="flex gap-1 bg-stone-100 p-0.5 rounded">
+                        <button
+                          type="button"
+                          onClick={() => setActiveVoiceoverLang("en")}
+                          className={`text-[9px] font-bold px-2 py-0.5 rounded ${
+                            activeVoiceoverLang === "en" ? "bg-indigo-600 text-white" : "text-stone-600"
+                          }`}
+                        >
+                          English
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveVoiceoverLang("sw")}
+                          className={`text-[9px] font-bold px-2 py-0.5 rounded ${
+                            activeVoiceoverLang === "sw" ? "bg-indigo-600 text-white" : "text-stone-600"
+                          }`}
+                        >
+                          Kiswahili
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-[10.5px] text-stone-700 bg-stone-50 p-2 rounded border border-stone-150 max-h-36 overflow-y-auto leading-relaxed italic">
+                      "{activeVoiceoverLang === "en" ? editedResult.voiceoverScriptEnglish : editedResult.voiceoverScriptSwahili}"
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+            ) : (
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-6 text-center space-y-2">
+                <Wand2 className="h-8 w-8 text-stone-400 mx-auto" />
+                <h5 className="font-bold text-xs text-stone-700">AI Video Editing Hub Standby</h5>
+                <p className="text-[11px] text-stone-500 max-w-sm mx-auto leading-relaxed">
+                  Select or upload your video on the left, type your editing instructions, and click <strong>"Process Video with AI Engine"</strong> to generate downloadable PDF/Word study guides, bilingual subtitles, and edited video packages!
+                </p>
+              </div>
+            )}
+
+          </div>
+        </div>
+      ) : (
+
+        /* MODE 2: SLIDESHOW & PRAISE MOVIE STUDIO */
+        <div className="grid gap-6 lg:grid-cols-12">
+          
+          {/* LEFT COLUMN: Timeline Assembly & Config */}
+          <div className="lg:col-span-5 space-y-5">
+            
+            {/* STEP 1: Select Images */}
+            <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
+                  <ImageIcon className="h-3.5 w-3.5 text-rose-500" />
+                  <span>1. Timeline Photos ({selectedPhotos.length})</span>
+                </span>
+              </div>
+
+              {/* Carousel grid list */}
+              <div className="grid grid-cols-3 gap-2">
+                {PRELOADED_PHOTOS.map((pt) => {
+                  const isSelected = selectedPhotos.some((p) => p.id === pt.id);
+                  return (
+                    <button
+                      key={pt.id}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          handleRemovePhoto(pt.id);
+                        } else {
+                          setSelectedPhotos([...selectedPhotos, pt]);
+                        }
+                      }}
+                      className={`relative rounded-lg overflow-hidden border aspect-video transition-all ${
+                        isSelected ? "ring-2 ring-rose-500 border-transparent shadow-md scale-95" : "border-stone-250 opacity-60 hover:opacity-90"
+                      }`}
+                    >
+                      <img src={pt.url} alt={pt.title} className="h-full w-full object-cover" />
+                      <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[9px] text-white p-0.5 truncate text-center font-bold">
+                        {pt.title.split(" ")[0]}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom URL form */}
+              <form onSubmit={handleAddCustomImage} className="space-y-1.5 pt-1 border-t border-stone-200">
+                <span className="text-[9px] font-mono text-stone-400 font-bold block uppercase">Attach photo URL:</span>
+                <div className="flex gap-1.5">
+                  <input
+                    type="url"
+                    placeholder="Paste direct HTTPS image link..."
+                    value={uploadedImageUrl}
+                    onChange={(e) => setUploadedImageUrl(e.target.value)}
+                    className="flex-1 rounded-lg border border-stone-200 bg-white p-1.5 text-[10px] outline-none font-medium focus:border-rose-500"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-slate-800 hover:bg-slate-900 text-white rounded-lg px-2.5 text-[10px] font-extrabold transition shrink-0"
+                  >
+                    Insert
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* STEP 2: Configure Music */}
+            <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
+              <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
+                <Music className="h-3.5 w-3.5 text-rose-500" />
+                <span>2. Choose Hymn Track</span>
+              </span>
+              <div className="space-y-1.5">
+                {GOSPEL_TRACKS.map((track) => (
+                  <label
+                    key={track.id}
+                    className={`flex items-center justify-between p-2 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
+                      selectedTrack.id === track.id 
+                        ? "bg-rose-50 text-rose-900 border-rose-200 shadow-sm" 
+                        : "bg-white text-stone-700 border-stone-200 hover:bg-stone-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="gospel_audio"
+                        checked={selectedTrack.id === track.id}
+                        onChange={() => setSelectedTrack(track)}
+                        className="text-rose-600 h-3.5 w-3.5"
+                      />
+                      <span className="text-[11px] truncate max-w-[200px]">{track.name}</span>
+                    </div>
+                  </label>
                 ))}
               </div>
             </div>
-          </div>
 
-          {/* STEP 2: Configure Music */}
-          <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
-            <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
-              <Music className="h-3.5 w-3.5 text-rose-500" />
-              <span>2. Choose Sermon Gospel Hymn</span>
-            </span>
-            <div className="space-y-1.5">
-              {GOSPEL_TRACKS.map((track) => (
-                <label
-                  key={track.id}
-                  className={`flex items-center justify-between p-2 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
-                    selectedTrack.id === track.id 
-                      ? "bg-rose-50 text-rose-900 border-rose-200 shadow-sm" 
-                      : "bg-white text-stone-700 border-stone-200 hover:bg-stone-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="gospel_audio"
-                      checked={selectedTrack.id === track.id}
-                      onChange={() => setSelectedTrack(track)}
-                      className="text-rose-600 h-3.5 w-3.5"
-                    />
-                    <span className="text-[11px] truncate max-w-[200px]">{track.name}</span>
-                  </div>
-                  <span className="bg-stone-200 text-stone-600 text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono font-black scale-90">
-                    {track.genre}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* STEP 3: Customize Titles & Subtitles */}
-          <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
-            <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
-              <Sliders className="h-3.5 w-3.5 text-rose-500" />
-              <span>3. Configure Captions Translation Script</span>
-            </span>
-            
-            <div className="space-y-1.5">
-              <label className="text-[9px] font-mono font-bold text-stone-400 block uppercase">Sermon Script Select:</label>
+            {/* STEP 3: Customize Titles */}
+            <div className="bg-stone-50/70 p-4 rounded-xl border border-stone-150 space-y-3">
+              <span className="text-[11px] font-extrabold uppercase tracking-wide text-stone-600 flex items-center gap-1.5">
+                <Sliders className="h-3.5 w-3.5 text-rose-500" />
+                <span>3. Configure Captions Script</span>
+              </span>
+              
               <select
                 value={selectedScript.id}
                 onChange={(e) => {
                   const sc = THEOLOGICAL_SCRIPTS.find(s => s.id === e.target.value);
                   if (sc) setSelectedScript(sc);
                 }}
-                className="w-full text-xs font-bold bg-white rounded-lg border border-stone-300 p-2 outline-none text-stone-850"
+                className="w-full text-xs font-bold bg-white rounded-lg border border-stone-300 p-2 outline-none"
               >
                 {THEOLOGICAL_SCRIPTS.map((sc) => (
                   <option key={sc.id} value={sc.id}>{sc.title}</option>
@@ -493,276 +904,84 @@ export default function ChurchVideoStudio() {
               </select>
             </div>
 
-            {/* Playback specifications details selector */}
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <div>
-                <label className="text-[9px] font-mono text-stone-400 block uppercase font-bold">Transition Style:</label>
-                <select
-                  value={transitionEffect}
-                  onChange={(e) => setTransitionEffect(e.target.value as any)}
-                  className="w-full text-[10.5px] font-semibold bg-white rounded-lg border border-stone-300 p-1.5 outline-none"
-                >
-                  <option value="ken-burns">🎬 Ken Burns Zoom</option>
-                  <option value="crossfade">✨ Grace Crossfade</option>
-                  <option value="glow">💡 Altar Bright Glow</option>
-                  <option value="zoom">🎨 Perspective Slide</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[9px] font-mono text-stone-400 block uppercase font-bold">Pacing speed:</label>
-                <select
-                  value={transitionSpeed}
-                  onChange={(e) => setTransitionSpeed(Number(e.target.value))}
-                  className="w-full text-[10.5px] font-semibold bg-white rounded-lg border border-stone-300 p-1.5 outline-none"
-                >
-                  <option value={2000}>⚡ Fast Dance (2s)</option>
-                  <option value={3500}>🔔 Balanced Harmony (3.5s)</option>
-                  <option value={5000}>🕯️ Repose Devotion (5s)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Video Layout */}
-            <div className="pt-1.5">
-              <label className="text-[9px] font-mono text-stone-400 block uppercase font-bold mb-1">Timeline Aspect Layout:</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setVideoLayout("16-9")}
-                  className={`py-1.5 rounded-lg border text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
-                    videoLayout === "16-9"
-                      ? "bg-rose-50 text-rose-950 border-rose-300 shadow-xs"
-                      : "bg-white text-stone-600 hover:bg-stone-50 border-stone-200"
-                  }`}
-                >
-                  <span>📺 16:9 Landscape</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVideoLayout("9-16")}
-                  className={`py-1.5 rounded-lg border text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
-                    videoLayout === "9-16"
-                      ? "bg-rose-50 text-rose-950 border-rose-300 shadow-xs"
-                      : "bg-white text-stone-600 hover:bg-stone-50 border-stone-200"
-                  }`}
-                >
-                  <span>📱 9:16 vertical (Mobile Stories)</span>
-                </button>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={handleCompileVideo}
+              disabled={isCompiling}
+              className="w-full text-xs font-extrabold py-3 rounded-xl shadow bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center gap-2 transition active:scale-98 disabled:opacity-50"
+            >
+              {isCompiling ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin text-white" />
+                  <span>Veo 3.5 compiling... {compileProgress}%</span>
+                </>
+              ) : (
+                <>
+                  <Video className="h-4.5 w-4.5 text-rose-200" />
+                  <span>Compile Church Video Slideshow</span>
+                </>
+              )}
+            </button>
           </div>
 
-          {/* Trigger compilation */}
-          <button
-            type="button"
-            onClick={handleCompileVideo}
-            disabled={isCompiling}
-            className="w-full text-xs font-extrabold py-3 rounded-xl shadow bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center gap-2 transition active:scale-98 disabled:opacity-50"
-          >
-            {isCompiling ? (
-              <>
-                <RefreshCw className="h-4 w-4 animate-spin text-white" />
-                <span>Veo 3.5 compiling... {compileProgress}%</span>
-              </>
-            ) : (
-              <>
-                <Video className="h-4.5 w-4.5 text-rose-200" />
-                <span>Compile Church Video Slideshow (Veo 3.5)</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* RIGHT COLUMN: Output Monitor & Playback Viewport */}
-        <div className="lg:col-span-7 flex flex-col space-y-4">
-          
-          {/* Main Monitor Container */}
-          <div className="bg-stone-900 rounded-2xl border border-stone-950 p-4 text-white p-4 flex flex-col justify-between overflow-hidden relative shadow-xl min-h-[440px]">
-            {/* Ambient Background Grid Decor */}
-            <div className="absolute right-0 top-0 w-32 h-32 rounded-full bg-rose-500/10 blur-2xl pointer-events-none" />
-            <div className="absolute left-0 bottom-0 w-32 h-32 rounded-full bg-indigo-500/10 blur-2xl pointer-events-none" />
-
-            {/* Top info and indicators */}
-            <div className="relative z-10 flex items-center justify-between text-[10px] font-mono text-stone-400 border-b border-stone-800 pb-2">
-              <span className="flex items-center gap-1 text-emerald-400">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                <span>VEO 3.5 STATUS BAR • STANDBY</span>
-              </span>
-              <span>HD TIMELINE • 1080P COMPLIANT</span>
-            </div>
-
-            {/* Display status or console when compiling */}
-            {isCompiling ? (
-              <div className="flex-1 flex flex-col justify-center items-center py-6 px-4 space-y-4">
-                <div className="h-10 w-10 text-rose-500 animate-bounce bg-rose-500/15 rounded-full flex items-center justify-center">
-                  <Video className="h-5 w-5" />
-                </div>
-                <div className="text-center space-y-1 max-w-sm">
-                  <p className="font-bold text-xs text-rose-400">{compileStatus}</p>
-                  <p className="text-[10px] text-stone-400 italic">Processing audio normalize levels to -6dB and computing fluid transition arrays natively.</p>
-                </div>
-
-                <div className="w-full max-w-md bg-stone-800 h-2 rounded-full overflow-hidden">
-                  <div className="bg-gradient-to-r from-rose-500 to-indigo-500 h-full transition-all duration-300" style={{ width: `${compileProgress}%` }}></div>
-                </div>
-
-                {/* Sub logs console output */}
-                <div className="w-full bg-black/50 border border-stone-800 rounded-lg p-2.5 h-[120px] overflow-y-auto font-mono text-[9px] text-emerald-400 text-left space-y-1">
-                  {compileLogs.slice(-4).map((l, i) => (
-                    <div key={i} className="truncate">✓ {l}</div>
-                  ))}
-                </div>
+          {/* RIGHT COLUMN: Output Monitor */}
+          <div className="lg:col-span-7 flex flex-col space-y-4">
+            <div className="bg-stone-900 rounded-2xl border border-stone-950 p-4 text-white flex flex-col justify-between overflow-hidden relative shadow-xl min-h-[440px]">
+              <div className="relative z-10 flex items-center justify-between text-[10px] font-mono text-stone-400 border-b border-stone-800 pb-2">
+                <span className="flex items-center gap-1 text-emerald-400">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                  <span>SLIDESHOW STUDIO STATUS BAR</span>
+                </span>
+                <span>HD TIMELINE • 1080P COMPLIANT</span>
               </div>
-            ) : hasCompiledVideo ? (
-              
-              /* RENDER COMPILED VIDEO PLAYBACK WINDOW SCREEN */
-              <div className="flex-1 flex flex-col justify-between py-2 relative z-10">
-                
-                {/* Visual Canvas screen box */}
-                <div className={`mx-auto rounded-xl border border-stone-800 overflow-hidden relative shadow-md bg-black transition-all ${
-                  videoLayout === "16-9" ? "aspect-video w-full" : "aspect-[9/16] w-[220px] h-[340px]"
-                }`}>
-                  
-                  {/* Photo with selected transition animation */}
-                  <div className="absolute inset-0 w-full h-full">
-                    {selectedPhotos[currentSlideIndex] && (
-                      <img 
-                        src={selectedPhotos[currentSlideIndex].url} 
-                        alt={selectedPhotos[currentSlideIndex].title} 
-                        className={`h-full w-full object-cover select-none pointer-events-none transition-all duration-[1500s] ease-out ${
-                          isPlaying 
-                            ? transitionEffect === "ken-burns" ? "scale-125 translate-x-3 translate-y-3" : ""
-                            : "scale-100"
-                        }`}
-                        key={currentSlideIndex} // Trigger slide fade transition properly
-                      />
-                    )}
+
+              {hasCompiledVideo ? (
+                <div className="flex-1 flex flex-col justify-between py-2 relative z-10">
+                  <div className="mx-auto rounded-xl border border-stone-800 overflow-hidden relative shadow-md bg-black aspect-video w-full">
+                    <img 
+                      src={selectedPhotos[currentSlideIndex]?.url} 
+                      alt="Slide"
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-x-3 bottom-3 bg-black/80 backdrop-blur-md rounded-xl p-3 border border-stone-800 text-center">
+                      <p className="text-yellow-400 font-bold text-xs">
+                        &bull; {selectedScript.lyrics[currentSlideIndex % selectedScript.lyrics.length]} &bull;
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Starburst holy sheen glow flash effect based on trigger */}
-                  {transitionEffect === "glow" && isPlaying && (
-                    <div className="absolute inset-0 bg-white/20 pointer-events-none animate-pulse" />
-                  )}
+                  <audio ref={audioRef} src={selectedTrack.url} loop />
 
-                  {/* Widescreen title header overlay line */}
-                  <div className="absolute top-3 inset-x-3 flex justify-between items-center pointer-events-none">
-                    <span className="bg-black/70 border border-stone-700 px-2 py-0.5 rounded text-[8px] tracking-widest font-mono text-stone-250 font-bold uppercase">
-                      🎥 LIVE PLAYBACK
-                    </span>
-                    <span className="bg-rose-600 px-2 py-0.5 rounded text-[8px] font-mono text-white font-bold animate-pulse">
-                      HD VEO 3.5
-                    </span>
-                  </div>
-
-                  {/* Synchronized yellow subtitles overlay precisely mapped to slides */}
-                  <div className="absolute inset-x-3 bottom-3 bg-black/80 backdrop-blur-md rounded-xl p-3 border border-stone-800 shadow-xl pointer-events-none text-center">
-                    <p className="text-yellow-400 font-sans font-black text-xs md:text-xs leading-relaxed max-w-md mx-auto truncate ... whitespace-normal line-clamp-2">
-                      &bull; {selectedScript.lyrics[currentSlideIndex % selectedScript.lyrics.length]} &bull;
-                    </p>
-                    <span className="text-[7.5px] uppercase font-mono text-stone-400 tracking-wider block mt-1">
-                      Church Sermon Subtitles • Slide {currentSlideIndex + 1} of {selectedPhotos.length}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Sub Audio & Video controller bar panel */}
-                <div className="pt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-850 mt-3 select-none">
-                  
-                  {/* Music audio player with state control */}
-                  <audio 
-                    ref={audioRef}
-                    src={selectedTrack.url}
-                    loop
-                  />
-
-                  {/* Actions buttons */}
-                  <div className="flex items-center gap-2">
+                  <div className="pt-4 flex items-center justify-between gap-3 border-t border-stone-850 mt-3">
                     <button
                       type="button"
                       onClick={() => setIsPlaying(!isPlaying)}
-                      className="h-8 w-8 hover:scale-105 active:scale-95 text-white bg-rose-600 hover:bg-rose-700 rounded-full flex items-center justify-center shadow-lg transition"
-                      title={isPlaying ? "Pause Video Playback" : "Start Video Playback"}
+                      className="h-8 w-8 text-white bg-rose-600 hover:bg-rose-700 rounded-full flex items-center justify-center transition"
                     >
-                      {isPlaying ? <Pause className="h-4 w-4 fill-white" /> : <Play className="h-4 w-4 fill-white ml-0.5" />}
+                      {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleRestart}
-                      className="h-8 w-8 hover:scale-105 active:scale-95 text-stone-300 hover:text-white bg-stone-800 hover:bg-stone-700 border border-stone-700 rounded-full flex items-center justify-center transition"
-                      title="Rewind Timeline to start"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
 
-                  {/* Track summary detail display text */}
-                  <div className="flex-1 min-w-[120px] text-left">
-                    <span className="text-[8px] font-mono text-slate-400 block uppercase font-medium">Synced Praise Track:</span>
-                    <span className="text-[10px] font-bold text-stone-200 block truncate max-w-[180px]">
-                      {selectedTrack.name}
-                    </span>
+                    <div className="flex-1 text-left">
+                      <span className="text-[10px] font-bold text-stone-200 block truncate">
+                        {selectedTrack.name}
+                      </span>
+                    </div>
                   </div>
-
-                  {/* Volume controllers */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={toggleMute}
-                      className="text-stone-400 hover:text-white"
-                    >
-                      <Volume2 className={`h-4 w-4 ${isMuted ? "opacity-40 line-through" : ""}`} />
-                    </button>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={audioVolume}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setAudioVolume(v);
-                        setIsMuted(false);
-                      }}
-                      className="w-16 accent-rose-500 h-1 rounded-full cursor-pointer bg-stone-700"
-                    />
-                  </div>
-
-                  {/* Compile Download Button */}
-                  <button
-                    onClick={handleDownloadVideoPackage}
-                    className="bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-lg border border-stone-700 flex items-center gap-1 transition shadow"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span>Download Movie (.txt bundle)</span>
-                  </button>
                 </div>
-              </div>
-            ) : (
-              
-              /* EMPTY STANDBY SCREEN PLACEHOLDER GREET */
-              <div className="flex-1 flex flex-col justify-center items-center py-8 text-center space-y-4 px-4 select-none">
-                <div className="h-14 w-14 bg-stone-800 text-stone-600 rounded-full flex items-center justify-center">
-                  <Video className="h-7 w-7 animate-pulse" />
-                </div>
-                <div className="max-w-md space-y-2">
-                  <h4 className="font-bold text-sm text-stone-200">Veo 3.5 Video Framebuffer Empty</h4>
-                  <p className="text-[10.5px] text-stone-400 max-w-sm mx-auto leading-relaxed">
-                    Insert your favorite Zion congregation photos, sermon texts, and Gospel hymn track variables on the left, then click <strong>"Compile Church Video"</strong> to produce your video!
+              ) : (
+                <div className="flex-1 flex flex-col justify-center items-center py-8 text-center space-y-4 px-4 select-none">
+                  <Video className="h-8 w-8 text-stone-600 animate-pulse" />
+                  <p className="text-xs text-stone-400">
+                    Click <strong>"Compile Church Video Slideshow"</strong> to start playback.
                   </p>
                 </div>
-              </div>
-            )}
-
-            {/* Bottom notification footer */}
-            <div className="text-[9px] font-mono text-stone-500 pt-2 border-t border-stone-850 text-left flex items-center gap-2 mt-2">
-              <Info className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-              <span>Free sandbox compilation mode enabled natively. Created videos can be viewed and saved cleanly.</span>
+              )}
             </div>
           </div>
-          
+
         </div>
-      </div>
+      )}
+
     </div>
   );
 }

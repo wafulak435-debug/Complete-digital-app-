@@ -25,25 +25,31 @@ import Bible from "./components/Bible";
 import LeadershipSchool from "./components/LeadershipSchool";
 import DocStudio from "./components/DocStudio";
 import AIChat from "./components/AIChat";
-import Upload from "./components/Upload";
 import Community from "./components/Community";
 import Contact from "./components/Contact";
 import AdminPanel from "./components/AdminPanel";
 import Dashboard from "./components/Dashboard";
-import Games from "./components/Games";
 import GmailConsole from "./components/GmailConsole";
-import AIMedia from "./components/AIMedia";
 import BookThreedViewer from "./components/BookThreedViewer";
 import PlayStoreHub from "./components/PlayStoreHub";
-import HomeApps from "./components/HomeApps";
-import ZionWifi from "./components/ZionWifi";
-import LanguageTeacher from "./components/LanguageTeacher";
 import OfflineDictionary from "./components/OfflineDictionary";
 import WebsiteCenter from "./components/WebsiteCenter";
 import MpesaApiConsole from "./components/MpesaApiConsole";
 import Announcements from "./components/Announcements";
 import SermonsMotivation from "./components/SermonsMotivation";
 import CertificateVerificationView from "./components/CertificateVerificationView";
+import AuthScreen from "./components/AuthScreen";
+import UpgradeModal from "./components/UpgradeModal";
+import ManagerPortal from "./components/ManagerPortal";
+import CampusesMap from "./components/CampusesMap";
+import { secureApiFetch, setSessionToken } from "./lib/aiClient";
+import {
+  supabase,
+  isSupabaseConfigured,
+  isPaystackConfigured,
+  ensureUserProfile,
+  mapProfileToAppUser,
+} from "./lib/supabaseClient";
 import { savePdfToOfflineDb, getAllOfflinePdfs } from "./utils/pdfDb";
 
 export default function App() {
@@ -98,6 +104,9 @@ export default function App() {
   const [offlineMode, setOfflineMode] = useState<boolean>(() => {
     return localStorage.getItem("WAFULA_OFFLINE_MODE") === "true";
   });
+  const [sleekMode, setSleekMode] = useState<boolean>(() => {
+    return localStorage.getItem("WAFULA_SLEEK_MODE") === "true";
+  });
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
 
   const effectiveIsOnline = isOnline && !offlineMode;
@@ -107,6 +116,12 @@ export default function App() {
     setOfflineMode(nextVal);
     localStorage.setItem("WAFULA_OFFLINE_MODE", String(nextVal));
     window.dispatchEvent(new Event("storage"));
+  };
+
+  const handleToggleSleekMode = () => {
+    const nextVal = !sleekMode;
+    setSleekMode(nextVal);
+    localStorage.setItem("WAFULA_SLEEK_MODE", String(nextVal));
   };
 
   // Monitor network status change in real time
@@ -145,6 +160,16 @@ export default function App() {
     };
   }, []);
 
+  // Google Maps quota defense state & event listener
+  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
+  useEffect(() => {
+    const handleQuotaExceeded = () => setGmpQuotaExceeded(true);
+    window.addEventListener("gmp-quota-exceeded", handleQuotaExceeded);
+    return () => {
+      window.removeEventListener("gmp-quota-exceeded", handleQuotaExceeded);
+    };
+  }, []);
+
   // Fetch current aesthetics configuration coordinate on mount
   useEffect(() => {
     fetchAppSettingsFromFirestore()
@@ -166,12 +191,16 @@ export default function App() {
     }
   }, [globalSettings]);
 
-  // Current user state (Admin default mock credentials for seamless demonstration out of the box!)
+  // Current user state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [showUpgradeModal, setShowUpgradeModal] = useState<boolean>(false);
+  const [dismissedSetupBanner, setDismissedSetupBanner] = useState<boolean>(false);
+  const [adminAccessState, setAdminAccessState] = useState<"idle" | "checking" | "granted" | "denied">("idle");
+  const [adminAccessError, setAdminAccessError] = useState<string>("");
 
   // Custom Authentication Modal state variables
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showGoogleSelectorSim, setShowGoogleSelectorSim] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -183,7 +212,7 @@ export default function App() {
   const [checkoutBook, setCheckoutBook] = useState<Book | null>(null);
   const [checkoutPhoneNumber, setCheckoutPhoneNumber] = useState("");
   const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<"mpesa" | "ecitizen_foreign" | "ecitizen_local">("mpesa");
-  const [checkoutStep, setCheckoutStep] = useState<"form" | "sending_stk" | "waiting_pin" | "completed">("form");
+  const [checkoutStep, setCheckoutStep] = useState<"form" | "sending_stk" | "waiting_pin" | "searching_payment" | "completed">("form");
   const [checkoutCountdown, setCheckoutCountdown] = useState(15);
   const [checkoutAccountDetails, setCheckoutAccountDetails] = useState(""); 
   const [checkoutRef, setCheckoutRef] = useState("");
@@ -191,8 +220,15 @@ export default function App() {
   const [checkoutCustomerNameInput, setCheckoutCustomerNameInput] = useState("");
   const [checkoutMpesaPin, setCheckoutMpesaPin] = useState("");
 
-  // View state history routing (Fulfills: "improve on navigation especially going back")
+  // View state history routing (respects /admin, /manager-portal, and ?view=...)
   const [currentView, setCurrentView] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const p = window.location.pathname.toLowerCase();
+      if (p.startsWith("/admin")) return "admin";
+      if (p.startsWith("/manager-portal")) return "manager-portal";
+      const qView = new URLSearchParams(window.location.search).get("view");
+      if (qView) return qView;
+    }
     return localStorage.getItem("WAFULA_CURRENT_VIEW") || "store";
   });
   const [initialBookId, setInitialBookId] = useState<string | null>(null);
@@ -236,7 +272,61 @@ export default function App() {
   );
   const [isBannerClosed, setIsBannerClosed] = useState(false);
 
-  // Automated Lipa Na M-Pesa & eCitizen Global Checkout Gateway Simulator
+  // Synchronize orders & paid book entitlements from trusted server backend
+  const syncOrdersFromServer = async () => {
+    try {
+      const res = await secureApiFetch("/api/orders");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && Array.isArray(data.orders)) {
+        setBookOrders(data.orders);
+        localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(data.orders));
+        const approvedBookIds = data.orders
+          .filter((o: any) => o.status === "approved")
+          .map((o: any) => String(o.bookId));
+        if (approvedBookIds.length > 0) {
+          setPurchasedBookIds((prev) => {
+            const merged = Array.from(new Set([...prev, ...approvedBookIds]));
+            localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(merged));
+            return merged;
+          });
+        }
+      }
+    } catch {
+      // Offline resilient fallback
+    }
+  };
+
+  // Verify admin authorization on server whenever navigating to /admin
+  useEffect(() => {
+    if (currentView !== "admin" || !currentUser) {
+      setAdminAccessState("idle");
+      return;
+    }
+    let mounted = true;
+    setAdminAccessState("checking");
+    secureApiFetch("/api/admin/access-check")
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!mounted) return;
+        if (!res.ok || !data.success) {
+          setAdminAccessState("denied");
+          setAdminAccessError(data?.error || "Access Restricted (403): Verified administrator privileges required.");
+        } else {
+          setAdminAccessState("granted");
+          setAdminAccessError("");
+        }
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setAdminAccessState("denied");
+        setAdminAccessError("Unable to verify administrator privileges with backend server.");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [currentView, currentUser?.email, currentUser?.role]);
+
+  // Record pending M-Pesa / Card book order on server (paid access unlocks ONLY after trusted confirmation)
   useEffect(() => {
     if (checkoutStep !== "searching_payment") return;
 
@@ -244,47 +334,65 @@ export default function App() {
       setCheckoutCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          
+
           if (checkoutBook && currentUser) {
-            const orderId = "ord_" + Date.now();
-            const newOrder: BookOrder = {
-              id: orderId,
+            const fallbackOrder: BookOrder = {
+              id: "ord_" + Date.now(),
               userId: checkoutCustomerIDInput || currentUser.email,
+              userEmail: currentUser.email,
               userName: checkoutCustomerNameInput || currentUser.name,
               bookId: checkoutBook.id,
               bookTitle: checkoutBook.title,
               price: checkoutBook.price || 200,
-              status: "approved", 
-              date: new Date().toISOString().split("T")[0]
+              status: "pending",
+              date: new Date().toISOString().split("T")[0],
             };
 
-            setBookOrders((prevOrders) => {
-              const next = [newOrder, ...prevOrders];
-              localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
-              return next;
-            });
+            secureApiFetch("/api/orders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                bookId: checkoutBook.id,
+                bookTitle: checkoutBook.title,
+                price: checkoutBook.price || 200,
+                paymentReference:
+                  checkoutPhoneNumber || checkoutAccountDetails || checkoutCustomerIDInput || "MPESA",
+              }),
+            })
+              .then((res) => res.json())
+              .then((data) => {
+                const savedOrder: BookOrder = data?.order || fallbackOrder;
+                setBookOrders((prevOrders) => {
+                  const next = [savedOrder, ...prevOrders];
+                  localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
+                  return next;
+                });
+                if (savedOrder.status === "approved" || (checkoutBook.price || 0) <= 0) {
+                  setPurchasedBookIds((prevIds) => {
+                    const next = prevIds.includes(checkoutBook.id) ? prevIds : [...prevIds, checkoutBook.id];
+                    localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(next));
+                    return next;
+                  });
+                }
+                saveBookOrderToFirestore(savedOrder).catch(() => {});
+              })
+              .catch(() => {
+                setBookOrders((prevOrders) => {
+                  const next = [fallbackOrder, ...prevOrders];
+                  localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
+                  return next;
+                });
+              });
 
-            setPurchasedBookIds((prevIds) => {
-              const next = prevIds.includes(checkoutBook.id) ? prevIds : [...prevIds, checkoutBook.id];
-              localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(next));
-              return next;
-            });
-
-            saveBookOrderToFirestore(newOrder).catch((e) => console.log("Offline saving order fallback active.", e));
-
-            if (currentUser && checkoutBook) {
-              logUserActivity(
-                currentUser.email,
-                currentUser.name,
-                "Purchase Book",
-                `Ordered and unlocked eBook access: "${checkoutBook.title}" (ID: ${checkoutBook.id}) for KES ${checkoutBook.price}`
-              );
-            }
+            logUserActivity(
+              currentUser.email,
+              currentUser.name,
+              "Submit Book Order",
+              `Submitted payment order for "${checkoutBook.title}" (ID: ${checkoutBook.id}, KES ${checkoutBook.price}) awaiting confirmation.`
+            );
 
             setCheckoutStep("completed");
-            
-            // Auto unlock badges
-            handleUnlockBadge("badge_2"); 
+            handleUnlockBadge("badge_2");
           }
           return 0;
         }
@@ -293,30 +401,126 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [checkoutStep, checkoutBook, currentUser, checkoutCustomerIDInput, checkoutCustomerNameInput]);
+  }, [checkoutStep, checkoutBook, currentUser, checkoutCustomerIDInput, checkoutCustomerNameInput, checkoutPhoneNumber, checkoutAccountDetails]);
 
-  // Initialize and reload from localStorage & cookies to stay resilient online & offline!
+  // Hydrate & verify active session against Express server (/api/auth/me) or Supabase Auth
   useEffect(() => {
-    // 1. User cookie & localStorage lookup
-    const cookieUser = getCookie("WAFULA_CURRENT_USER");
-    const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
-    if (savedUser) {
+    let mounted = true;
+
+    const verifyServerCookieSession = async () => {
       try {
-        const parsed = JSON.parse(savedUser);
-        const lowerEm = parsed?.email?.toLowerCase()?.trim();
-        if (lowerEm === "wafulak435@gmail.com" || lowerEm === "wafula435@gmail.com") {
-          parsed.role = "admin";
+        const res = await secureApiFetch("/api/auth/me");
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (mounted && data?.success && data?.user) {
+            setCurrentUser(data.user);
+            localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(data.user));
+            setCookie("WAFULA_CURRENT_USER", JSON.stringify(data.user), 7);
+            recordUserSession(data.user, "Verified Server Session");
+            syncOrdersFromServer();
+            setIsCheckingAuth(false);
+            return true;
+          }
         }
-        setCurrentUser(parsed);
-        setCookie("WAFULA_CURRENT_USER", JSON.stringify(parsed), 7);
-        recordUserSession(parsed, "Auto-Login Restore");
-      } catch (err) {
-        // Fallback safely
+      } catch {
+        // Ignore offline fallback
       }
-    } else {
-      // Do not auto-login as admin by default. Everyday users should see lock screen to register/login first.
-      setCurrentUser(null);
+      return false;
+    };
+
+    if (!isSupabaseConfigured || !supabase) {
+      verifyServerCookieSession().then((restored) => {
+        if (!mounted) return;
+        if (!restored) {
+          // Never auto-promote unverified local cache to admin/manager
+          const cookieUser = getCookie("WAFULA_CURRENT_USER");
+          const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
+          if (savedUser) {
+            try {
+              const parsed = JSON.parse(savedUser);
+              if (parsed && ["admin", "main_admin", "sub_admin", "manager"].includes(parsed.role)) {
+                parsed.role = "member";
+                delete parsed.permissions;
+                delete parsed.isMainAdmin;
+              }
+              setCurrentUser(parsed);
+            } catch {
+              setCurrentUser(null);
+            }
+          } else {
+            setCurrentUser(null);
+          }
+        }
+        setIsCheckingAuth(false);
+      });
+      return () => {
+        mounted = false;
+      };
     }
+
+    const hydrateSupabaseUser = async (session: any) => {
+      const sessionUser = session?.user;
+      if (!mounted) return;
+      if (!sessionUser) {
+        setCurrentUser(null);
+        setSessionToken(null);
+        setIsCheckingAuth(false);
+        return;
+      }
+      const profile = await ensureUserProfile(sessionUser);
+      let appUser = mapProfileToAppUser(sessionUser, profile);
+      if (session?.access_token) {
+        try {
+          const syncRes = await secureApiFetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "supabase", accessToken: session.access_token }),
+          });
+          const syncData = await syncRes.json().catch(() => ({}));
+          if (syncRes.ok && syncData?.success && syncData?.user) {
+            if (syncData.sessionToken) setSessionToken(syncData.sessionToken);
+            appUser = {
+              ...appUser,
+              role: syncData.user.role,
+              isMainAdmin: syncData.user.isMainAdmin,
+              permissions: syncData.user.permissions,
+              authorizedCourses: syncData.user.authorizedCourses,
+            };
+          }
+        } catch {
+          // Non-fatal in preview
+        }
+      }
+      if (!mounted) return;
+      setCurrentUser(appUser);
+      localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(appUser));
+      setCookie("WAFULA_CURRENT_USER", JSON.stringify(appUser), 7);
+      recordUserSession(appUser, "Supabase Session");
+      syncOrdersFromServer();
+      setIsCheckingAuth(false);
+    };
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => hydrateSupabaseUser(data?.session || null))
+      .catch(() => {
+        if (mounted) setIsCheckingAuth(false);
+      });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      hydrateSupabaseUser(session || null);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load books & cached files on mount
+  useEffect(() => {
 
     // 2. Books Database
     const savedBooks = localStorage.getItem("WAFULA_BOOKS");
@@ -871,97 +1075,44 @@ export default function App() {
 
     try {
       setAuthError("");
-      const lowerEmail = authEmail.trim().toLowerCase();
-      const isAdminByEmail = lowerEmail === "wafulak435@gmail.com" || 
-                             lowerEmail === "wafula435@gmail.com";
+      const trimmedEmail = authEmail.trim();
+      const trimmedPassword = authPassword.trim();
+      const mappedName = regName.trim() || trimmedEmail.split("@")[0];
 
-      if (authMode === "register") {
-        let userProfile: User;
-        try {
-          // Create user with Firebase Auth
-          const cred = await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword.trim());
-          const mappedName = regName.trim() || authEmail.trim().split("@")[0].replace(/\d+/g, "");
-          userProfile = await syncUserSession(cred.user.uid, authEmail.trim(), mappedName);
-        } catch (fbErr: any) {
-          console.warn("Firebase Auth registration offline/fallback mode:", fbErr.message);
-          const mappedName = regName.trim() || authEmail.trim().split("@")[0].replace(/\d+/g, "");
-          
-          userProfile = {
-            id: "loc_" + Date.now(),
-            email: authEmail.trim(),
-            name: mappedName,
-            role: isAdminByEmail ? "admin" : "member",
-            readingStreak: 1,
-            dailyGoalMinutes: regGoal || 30
-          };
-
-          const localAccounts = JSON.parse(localStorage.getItem("WAFULA_LOCAL_ACCOUNTS") || "[]");
-          if (!localAccounts.some((a: any) => a.email.toLowerCase() === lowerEmail)) {
-            localAccounts.push({
-              email: lowerEmail,
-              password: authPassword.trim(),
-              profile: userProfile
-            });
-            localStorage.setItem("WAFULA_LOCAL_ACCOUNTS", JSON.stringify(localAccounts));
-          }
-        }
-        
-        setCurrentUser(userProfile);
-        localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(userProfile));
-        setCookie("WAFULA_CURRENT_USER", JSON.stringify(userProfile), 7);
-        recordUserSession(userProfile, "Email Register");
-        logUserActivity(
-          userProfile.email,
-          userProfile.name || userProfile.email.split("@")[0],
-          "Email Register",
-          `Registered academic member account and signed in successfully.`
-        );
-        setShowAuthModal(false);
-        alert(`Welcome to Wafula Reads Hub! Your account for "${userProfile.name}" was successfully registered worldwide!`);
-        return;
+      // Authenticate via server-side session verification (never assigns admin by email string on client)
+      const res = await secureApiFetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: authMode === "register" ? "register" : "login",
+          email: trimmedEmail,
+          password: trimmedPassword,
+          name: mappedName,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.user) {
+        throw new Error(data?.error || "Invalid credentials. Please verify your email and password.");
       }
 
-      // Regular user/admin firebase login
-      let userProfile: User;
-      try {
-        const cred = await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword.trim());
-        userProfile = await syncUserSession(cred.user.uid, authEmail.trim(), "");
-      } catch (fbErr: any) {
-        console.warn("Firebase Login offline/fallback mode, checking local registry:", fbErr.message);
-        const localAccounts = JSON.parse(localStorage.getItem("WAFULA_LOCAL_ACCOUNTS") || "[]");
-        const matched = localAccounts.find((a: any) => a.email.toLowerCase() === lowerEmail && a.password === authPassword.trim());
-        
-        if (matched) {
-          userProfile = matched.profile;
-        } else if (isAdminByEmail) {
-          userProfile = {
-            id: "loc_admin_" + Date.now(),
-            email: authEmail.trim(),
-            name: authEmail.trim().split("@")[0],
-            role: "admin",
-            readingStreak: 1,
-            dailyGoalMinutes: 30
-          };
-        } else {
-          throw new Error(fbErr.message || "Invalid credentials or username. Please check your credentials.");
-        }
+      if (data.sessionToken) {
+        setSessionToken(data.sessionToken);
       }
+
+      const userProfile: User = {
+        ...data.user,
+        readingStreak: 1,
+        dailyGoalMinutes: regGoal || 30,
+      };
 
       setCurrentUser(userProfile);
       localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(userProfile));
       setCookie("WAFULA_CURRENT_USER", JSON.stringify(userProfile), 7);
-      recordUserSession(userProfile, "Email Login");
-      logUserActivity(
-        userProfile.email,
-        userProfile.name || userProfile.email.split("@")[0],
-        "Email Login",
-        `Successfully logged in using standard credentials.`
-      );
+      recordUserSession(userProfile, authMode === "register" ? "Verified Register" : "Verified Login");
+      syncOrdersFromServer();
       setShowAuthModal(false);
-      alert(`Authenticated successfully as: ${userProfile.name || authEmail.trim().split("@")[0]}!`);
     } catch (error: any) {
-      console.error(error);
-      setAuthError(error.message || "Authentication failed. Check your credentials.");
+      setAuthError(error?.message || "Authentication failed. Check your credentials.");
     }
   };
 
@@ -969,30 +1120,35 @@ export default function App() {
     try {
       setAuthError("");
       const res = await googleSignIn();
-      if (res) {
-        const userProfile = await syncUserSession(res.user.uid, res.user.email!, res.user.displayName || "Google User");
+      if (res?.user) {
+        const idToken = await res.user.getIdToken();
+        const verifyRes = await secureApiFetch("/api/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "firebase", idToken }),
+        });
+        const verifyData = await verifyRes.json().catch(() => ({}));
+        if (!verifyRes.ok || !verifyData?.success || !verifyData?.user) {
+          throw new Error(verifyData?.error || "Server rejected Google token verification.");
+        }
+        if (verifyData.sessionToken) {
+          setSessionToken(verifyData.sessionToken);
+        }
+        const userProfile = verifyData.user as User;
         setCurrentUser(userProfile);
         localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(userProfile));
         setCookie("WAFULA_CURRENT_USER", JSON.stringify(userProfile), 7);
-        recordUserSession(userProfile, "Google Account Link");
-        logUserActivity(
-          userProfile.email,
-          userProfile.name,
-          "Google Account Link",
-          `Logged in via Google Account federation.`
-        );
+        recordUserSession(userProfile, "Verified Google Account");
+        syncOrdersFromServer();
         setShowAuthModal(false);
-        alert(`Authenticated successfully using secure Google Account integration as ${userProfile.name}!`);
       }
     } catch (error: any) {
-      console.warn("Google authentication popup error, initiating account simulation selection:", error.message);
-      setShowAuthModal(false);
-      setShowGoogleSelectorSim(true);
+      setAuthError(error?.message || "Google sign-in unavailable. Please sign in with verified email credentials.");
     }
   };
 
   const handleContinueAsGuest = () => {
-    const guestUser = {
+    const guestUser: User = {
       id: "guest_" + Date.now(),
       email: "guest@zionreads.com",
       name: "Guest Reader",
@@ -1000,71 +1156,25 @@ export default function App() {
       readingStreak: 1,
       dailyGoalMinutes: 30
     };
+    setSessionToken(null);
     setCurrentUser(guestUser);
     localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(guestUser));
     setCookie("WAFULA_CURRENT_USER", JSON.stringify(guestUser), 7);
-    logUserActivity(
-      guestUser.email,
-      guestUser.name,
-      "Guest Login",
-      "Browsing catalog anonymously under temporary guest access."
-    );
     setShowAuthModal(false);
-    alert("Welcome! You are now browsing in Guest Mode. Registration is optional, but needed for admin features.");
   };
 
   const handlePasswordReset = async () => {
     if (!authEmail.trim()) {
-      setAuthError("Please fill in your email address above first, then click 'Reset Password' to send the reset link.");
+      setAuthError("Please fill in your email address first to send a password reset link.");
       return;
     }
 
     try {
       setAuthError("");
       await sendPasswordResetEmail(auth, authEmail.trim());
-      alert(`📬 A secure password reset link has been dispatched to ${authEmail.trim()}! Please inspect your email inbox (and spam folder) to reset your passphrase.`);
-    } catch (error: any) {
-      console.warn("sendPasswordResetEmail failed, launching simulated/local bypass reset trigger:", error);
-      const lowerEmail = authEmail.trim().toLowerCase();
-      const isAdminByEmail = lowerEmail === "wafulak435@gmail.com" || 
-                             lowerEmail === "wafula435@gmail.com";
-
-      if (isAdminByEmail) {
-        alert(`📬 [SIMULATED RESET TRIGGERED] Admin account confirmed!\nWe have dispatched a secure emergency bypass reset request to your administrative console email inbox: ${authEmail.trim()}.\n\nFor sandbox test convenience, you can reset your local password instantly!`);
-        const nextPass = prompt("Please set your new secure password immediately for offline/sandbox access:");
-        if (nextPass && nextPass.trim().length >= 4) {
-          const localAccounts = JSON.parse(localStorage.getItem("WAFULA_LOCAL_ACCOUNTS") || "[]");
-          const updated = localAccounts.filter((a: any) => a.email.toLowerCase() !== lowerEmail);
-          updated.push({
-            email: lowerEmail,
-            password: nextPass.trim(),
-            profile: {
-              id: "loc_admin",
-              email: authEmail.trim(),
-              name: authEmail.trim().split("@")[0],
-              role: "admin",
-              readingStreak: 1,
-              dailyGoalMinutes: 30
-            }
-          });
-          localStorage.setItem("WAFULA_LOCAL_ACCOUNTS", JSON.stringify(updated));
-          alert(`Success! Offline Admin password for ${authEmail.trim()} updated to "${nextPass.trim()}" successfully!`);
-        }
-      } else {
-        const localAccounts = JSON.parse(localStorage.getItem("WAFULA_LOCAL_ACCOUNTS") || "[]");
-        const matched = localAccounts.find((a: any) => a.email.toLowerCase() === lowerEmail);
-        if (matched) {
-          alert(`📬 [SIMULATED RESET TRIGGERED] Dispatching a reset link for account "${authEmail.trim()}"!\nFor convenience, you can update your offline sandbox password right now!`);
-          const nextPass = prompt("Enter your new secure password directly:", matched.password);
-          if (nextPass && nextPass.trim().length >= 4) {
-            matched.password = nextPass.trim();
-            localStorage.setItem("WAFULA_LOCAL_ACCOUNTS", JSON.stringify(localAccounts));
-            alert(`Success! Password for "${authEmail.trim()}" is now updated to "${nextPass.trim()}"!`);
-          }
-        } else {
-          alert(`📬 [EMAIL DISPATCHED] Simulated password reset link sent to ${authEmail.trim()} successfully!`);
-        }
-      }
+      alert(`A password reset link has been dispatched to ${authEmail.trim()}.`);
+    } catch {
+      setAuthError("Live password reset requires Firebase/Supabase email delivery configuration.");
     }
   };
 
@@ -1073,17 +1183,32 @@ export default function App() {
       markSessionOffline(currentUser.email);
     }
     try {
+      await secureApiFetch("/api/auth/logout", { method: "POST" });
+      if (isSupabaseConfigured && supabase) {
+        await supabase.auth.signOut();
+      }
       await googleLogout();
       await auth.signOut();
     } catch (_) {}
+    setSessionToken(null);
     setCurrentUser(null);
     localStorage.removeItem("WAFULA_CURRENT_USER");
     eraseCookie("WAFULA_CURRENT_USER");
-    alert("Successfully checked out securely. Visit again soon!");
   };
 
-  // View navigator with history trace tracking (Enables exact going back request)
+  // View navigator with history trace tracking and URL synchronization
   const navigateTo = (viewStr: string) => {
+    if (typeof window !== "undefined") {
+      const targetUrl =
+        viewStr === "admin"
+          ? "/admin"
+          : viewStr === "manager-portal"
+          ? "/manager-portal"
+          : "/";
+      if (window.location.pathname !== targetUrl) {
+        window.history.pushState({ view: viewStr }, "", targetUrl);
+      }
+    }
     if (viewStr === currentView) return;
     setViewHistory((prev) => [...prev, viewStr]);
     setCurrentView(viewStr);
@@ -1092,12 +1217,12 @@ export default function App() {
   const handlePopBackHistory = () => {
     if (viewHistory.length > 1) {
       const popped = [...viewHistory];
-      popped.pop(); // remove active view
+      popped.pop();
       const prev = popped[popped.length - 1];
       setViewHistory(popped);
       setCurrentView(prev);
     } else {
-      setCurrentView("store"); // base category fallback
+      navigateTo("store");
     }
   };
 
@@ -1219,7 +1344,7 @@ export default function App() {
     setCheckoutCountdown(15);
   };
 
-  // Quick save eBook directly to personal 'My Books' library
+  // Quick save FREE eBook directly to personal 'My Books' library (paid books go through verified checkout)
   const handleQuickSaveToLibrary = (id: string) => {
     if (!currentUser) {
       handleLogIn();
@@ -1227,6 +1352,11 @@ export default function App() {
     }
     const targetBook = books.find(b => b.id === id);
     if (!targetBook) return;
+
+    if ((targetBook.price || 0) > 0) {
+      handlePurchaseBook(id);
+      return;
+    }
 
     if (purchasedBookIds.includes(id)) {
       return;
@@ -1238,14 +1368,14 @@ export default function App() {
       return next;
     });
 
-    // Create a matching zero-price order record so they can see order history or invoice
     const newOrder: BookOrder = {
       id: `lib_quick_${Date.now()}`,
       userId: currentUser.email,
+      userEmail: currentUser.email,
       userName: currentUser.name || currentUser.email.split("@")[0],
       bookId: targetBook.id,
       bookTitle: targetBook.title,
-      price: targetBook.price || 0,
+      price: 0,
       status: "approved",
       date: new Date().toISOString().split("T")[0]
     };
@@ -1256,13 +1386,13 @@ export default function App() {
       return next;
     });
 
-    saveBookOrderToFirestore(newOrder).catch((e) => console.log("Offline saving quick-order fallback active.", e));
+    saveBookOrderToFirestore(newOrder).catch(() => {});
 
     logUserActivity(
       currentUser.email,
       currentUser.name,
       "Quick Add Library",
-      `Quickly saved eBook to personal My Books section: "${targetBook.title}" (ID: ${targetBook.id})`
+      `Saved free eBook to My Books: "${targetBook.title}" (ID: ${targetBook.id})`
     );
   };
 
@@ -1291,13 +1421,9 @@ export default function App() {
     actualFile?: File,
     category?: string
   ) => {
-    const isAdmin = currentUser && (
-      currentUser.role === 'admin' || 
-      currentUser.email === 'wafulak435@gmail.com' || 
-      currentUser.email === 'wafula435@gmail.com'
-    );
+    const isAdmin = currentUser && ["admin", "main_admin", "sub_admin"].includes(currentUser.role);
 
-    // Auto approve and auto pay only if user is Admin, general members require administrative approval confirmation
+    // Auto approve and auto pay only if user is verified Admin
     const shouldAutoApprove = !!isAdmin;
     const fileId = "upl_" + Date.now();
 
@@ -1647,40 +1773,65 @@ export default function App() {
     });
   };
 
-  // Admin approves purchase verification order
-  const handleApproveBookOrder = (id: string) => {
-    setBookOrders((prev) => {
-      const updated = prev.map((o) => {
-        if (o.id === id) {
-          const updatedItem = { ...o, status: 'approved' as const };
-          saveBookOrderToFirestore(updatedItem).catch((err) => {
-            console.warn("Could not sync approved book order to Firestore:", err);
-          });
-          return updatedItem;
-        }
-        return o;
+  // Finance Admin / Manager approves purchase verification order on server
+  const handleApproveBookOrder = async (id: string) => {
+    try {
+      const res = await secureApiFetch(`/api/orders/${encodeURIComponent(id)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "approved" }),
       });
-      localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(updated));
-      return updated;
-    });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || "Permission denied: finance administrator authorization required.");
+        return;
+      }
+      setBookOrders((prev) => {
+        const updated = prev.map((o) => {
+          if (o.id === id) {
+            const updatedItem = { ...o, status: "approved" as const };
+            saveBookOrderToFirestore(updatedItem).catch(() => {});
+            return updatedItem;
+          }
+          return o;
+        });
+        localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(updated));
+        return updated;
+      });
+      syncOrdersFromServer();
+    } catch {
+      alert("Could not reach order verification server.");
+    }
   };
 
-  // Admin rejects purchase verification order
-  const handleRejectBookOrder = (id: string) => {
-    setBookOrders((prev) => {
-      const updated = prev.map((o) => {
-        if (o.id === id) {
-          const updatedItem = { ...o, status: 'rejected' as const };
-          saveBookOrderToFirestore(updatedItem).catch((err) => {
-            console.warn("Could not sync rejected book order to Firestore:", err);
-          });
-          return updatedItem;
-        }
-        return o;
+  // Finance Admin / Manager rejects purchase verification order on server
+  const handleRejectBookOrder = async (id: string) => {
+    try {
+      const res = await secureApiFetch(`/api/orders/${encodeURIComponent(id)}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "rejected" }),
       });
-      localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(updated));
-      return updated;
-    });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || "Permission denied: finance administrator authorization required.");
+        return;
+      }
+      setBookOrders((prev) => {
+        const updated = prev.map((o) => {
+          if (o.id === id) {
+            const updatedItem = { ...o, status: "rejected" as const };
+            saveBookOrderToFirestore(updatedItem).catch(() => {});
+            return updatedItem;
+          }
+          return o;
+        });
+        localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(updated));
+        return updated;
+      });
+    } catch {
+      alert("Could not reach order verification server.");
+    }
   };
 
   // Admin toggles member Visibility checkbox (Allows/Hides public posts)
@@ -1747,11 +1898,10 @@ export default function App() {
     }
   };
 
-  // Main Bookstore Admin inventory functions
+  // Main Bookstore Admin inventory functions (synced to Express + Firestore)
   const handleAddNewBook = (newBook: Book) => {
-    let finalBook = { ...newBook, isSynced: false };
-    
-    // Base64 helper to convert to physical Blob inside IndexedDB offline caches
+    let finalBook = { ...newBook, authorEmail: currentUser?.email, isSynced: false };
+
     if (newBook.pdfUrl && newBook.pdfUrl.startsWith("data:application/pdf;base64,")) {
       try {
         const parts = newBook.pdfUrl.split(";base64,");
@@ -1763,18 +1913,35 @@ export default function App() {
           uInt8Array[i] = raw.charCodeAt(i);
         }
         const blob = new Blob([uInt8Array], { type: contentType });
-        
-        finalBook.pdfUrl = "indexeddb://" + newBook.id;
-        
-        savePdfToOfflineDb(newBook.id, blob).then(() => {
-          console.log("PDF saved offline to IndexedDB successfully for book:", newBook.id);
-        }).catch((err) => {
-          console.error("Failed to save PDF to IndexedDB:", err);
-        });
+        finalBook.pdfUrl = `/api/books/pdf/${newBook.id}`;
+        savePdfToOfflineDb(newBook.id, blob).catch(() => {});
+
+        secureApiFetch("/api/books/pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: newBook.id, pdfBase64: newBook.pdfUrl }),
+        }).catch(() => {});
       } catch (e) {
-        console.error("Base64 to Blob conversion failed:", e);
+        console.error("Base64 conversion failed:", e);
       }
     }
+
+    secureApiFetch("/api/books", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: finalBook.id,
+        title: finalBook.title,
+        author: finalBook.author,
+        price: finalBook.price,
+        status: finalBook.status,
+        category: finalBook.category,
+        allowPreview: finalBook.allowPreview !== false,
+        previewDuration: finalBook.previewDuration || 30,
+        content: finalBook.content,
+        pdfUrl: finalBook.pdfUrl,
+      }),
+    }).catch(() => {});
 
     setBooks((prev) => {
       const updated = [finalBook, ...prev];
@@ -1782,51 +1949,64 @@ export default function App() {
       return updated;
     });
 
-    // Record instantly to remote live collection
-    const safeFirestoreBook = { ...finalBook, pdfUrl: newBook.pdfUrl || finalBook.pdfUrl, isSynced: true };
+    const safeFirestoreBook = { ...finalBook, pdfUrl: finalBook.pdfUrl, isSynced: true };
     saveBookToFirestore(safeFirestoreBook)
       .then(() => {
         setBooks((current) =>
           current.map((item) => (item.id === finalBook.id ? { ...item, isSynced: true } : item))
         );
-        const saved = localStorage.getItem("WAFULA_BOOKS");
-        if (saved) {
-          const parsed = JSON.parse(saved) as Book[];
-          const updated = parsed.map((item) =>
-            item.id === finalBook.id ? { ...item, isSynced: true } : item
-          );
-          localStorage.setItem("WAFULA_BOOKS", JSON.stringify(updated));
-        }
       })
-      .catch((err) => {
-        console.warn("Offline: New item cataloged locally, live upload scheduled on network reconnect:", err);
-      });
+      .catch(() => {});
   };
 
-  const handleDeleteBook = (id: string) => {
+  const handleDeleteBook = async (id: string) => {
+    try {
+      const res = await secureApiFetch(`/api/books/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        alert(data?.error || "Permission denied: authorized book manager role required to delete books.");
+        return;
+      }
+    } catch {
+      // Proceed locally if server unreachable
+    }
     setBooks((prev) => {
       const updated = prev.filter((b) => b.id !== id);
       localStorage.setItem("WAFULA_BOOKS", JSON.stringify(updated));
       return updated;
     });
-    // Remove instantly from remote live collection
-    deleteBookFromFirestore(id).catch((err) => {
-      console.warn("Offline: Book removed locally, live deletion scheduled on network reconnect:", err);
-    });
+    deleteBookFromFirestore(id).catch(() => {});
   };
 
-  // Community discussion message submission (with replies, edits, and rich attachments)
-  const handleSendCommunityMessage = (
+  // Community discussion message submission with server RBAC & channel membership checks
+  const handleSendCommunityMessage = async (
     text: string, 
     parentId?: string, 
     channelName?: string,
     extras?: { imageContent?: string; attachedFile?: { name: string; type: string; dataUrl?: string; sizeStr?: string; url?: string }; stickerEmoji?: string }
   ) => {
+    const channel = channelName || "#generatechat";
+    try {
+      const res = await secureApiFetch("/api/community/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, text, parentId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data?.error || `Membership is required to post in ${channel}.`);
+        return;
+      }
+    } catch {
+      // Allow local fallback if offline
+    }
+
     const fresh: CommunityMessage = {
       id: "msg_" + Date.now(),
-      channel: channelName || "#generatechat",
-      userId: currentUser?.email || "anonymous",
-      userName: currentUser?.name || "Bungoma Guest",
+      channel,
+      userId: currentUser?.id || currentUser?.email || "anonymous",
+      userEmail: currentUser?.email,
+      userName: currentUser?.name || "Bungoma Member",
       text,
       role: currentUser?.role || "member",
       date: new Date().toLocaleDateString(),
@@ -1841,40 +2021,28 @@ export default function App() {
       return updated;
     });
 
-    // Real synchronization: write directly to Cloud Firestore database
-    saveCommunityMessageToFirestore(fresh).catch((err) => {
-      console.warn("Offline: local chat queued, cloud ledger synchronization scheduled on connect:", err);
-    });
-
-    if (currentUser) {
-      logUserActivity(
-        currentUser.email,
-        currentUser.name,
-        "Post Message",
-        `Posted in ${channelName || "#General"}: "${text.length > 55 ? text.substring(0, 55) + "..." : text}"`
-      );
-    }
+    saveCommunityMessageToFirestore(fresh).catch(() => {});
   };
 
-  const handleEditCommunityMessage = (id: string, nextText: string) => {
+  const handleEditCommunityMessage = async (id: string, nextText: string) => {
+    try {
+      const res = await secureApiFetch(`/api/community/messages/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: nextText }),
+      });
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        alert(data?.error || "Only the message owner or an authorized moderator may edit this message.");
+        return;
+      }
+    } catch {}
+
     setCommunityMessages((prev) => {
       const updated = prev.map((m) => {
         if (m.id === id) {
           const updatedMsg = { ...m, text: nextText, isEdited: true };
-          // Real synchronization: overwrite directly in Cloud Firestore
-          saveCommunityMessageToFirestore(updatedMsg).catch((err) => {
-            console.warn("Offline: local edit stored, cloud overwrite scheduled on reconnect:", err);
-          });
-
-          if (currentUser) {
-            logUserActivity(
-              currentUser.email,
-              currentUser.name,
-              "Edit Message",
-              `Edited message content to: "${nextText.length > 55 ? nextText.substring(0, 55) + "..." : nextText}"`
-            );
-          }
-
+          saveCommunityMessageToFirestore(updatedMsg).catch(() => {});
           return updatedMsg;
         }
         return m;
@@ -1884,18 +2052,25 @@ export default function App() {
     });
   };
 
-  const handleDeleteCommunityMessage = (id: string) => {
+  const handleDeleteCommunityMessage = async (id: string) => {
+    try {
+      const res = await secureApiFetch(`/api/community/messages/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        alert(data?.error || "Only the message owner or an authorized moderator may delete this message.");
+        return;
+      }
+    } catch {}
+
     setCommunityMessages((prev) => {
-      // Filter out this message and any sub-threaded replies
       const updated = prev.filter((m) => m.id !== id && m.parentId !== id);
       localStorage.setItem("WAFULA_CHAT_MESSAGES", JSON.stringify(updated));
       return updated;
     });
 
-    // Real synchronization: remove directly from Cloud Firestore database
-    deleteCommunityMessageFromFirestore(id).catch((err) => {
-      console.warn("Offline: chat deleted, cloud ledger synchronization scheduled on connect:", err);
-    });
+    deleteCommunityMessageFromFirestore(id).catch(() => {});
   };
 
   // Vault Saved Document additions
@@ -1915,144 +2090,38 @@ export default function App() {
     });
   };
 
-  if (!currentUser) {
+  if (isCheckingAuth) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-stone-100 text-stone-900 p-4 font-sans select-none antialiased">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(37,99,235,0.05),transparent_60%)] pointer-events-none" />
-        
-        <div className="w-full max-w-md bg-white rounded-2xl border border-stone-200 p-6 sm:p-8 shadow-2xl relative overflow-hidden transition-all duration-300">
-          <div className="absolute right-0 top-0 w-32 h-32 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
-          
-          {/* Brand header */}
-          <div className="flex flex-col items-center text-center space-y-2 mb-6">
-            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white font-black text-lg shadow-xl shadow-blue-900/30">
-              W
-            </span>
-            <div>
-              <h1 className="font-sans font-black text-xl tracking-tight text-stone-900 uppercase sm:text-2xl">Wafula Reads Hub</h1>
-              <p className="text-[10px] text-blue-600 font-mono tracking-widest uppercase mt-0.5">Bungoma Digital Library Portal</p>
-            </div>
-            <p className="text-[11px] text-stone-600 mt-2 max-w-xs leading-relaxed">
-              Read, publish, study mathematical proofs, and consult scholarly digital companion AI. Create an account to gain instant access.
-            </p>
-          </div>
-
-          {/* Form */}
-          <form onSubmit={handleProcessSubmitAuth} className="space-y-4">
-            {authMode === "register" && (
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-550 text-left">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Calvin Opara"
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  className="w-full rounded-lg border border-stone-250 bg-stone-50 p-2.5 text-xs text-stone-900 outline-none focus:border-blue-500 font-bold"
-                />
-              </div>
-            )}
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-550 text-left">Email Address</label>
-              <input
-                type="email"
-                required
-                placeholder="you@domain.com"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                className="w-full rounded-lg border border-stone-250 bg-stone-50 p-2.5 text-xs text-stone-900 outline-none focus:border-blue-500 font-bold"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-550 text-left">Security Password</label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                className="w-full rounded-lg border border-stone-250 bg-stone-50 p-2.5 text-xs text-stone-900 outline-none focus:border-blue-500 font-bold"
-              />
-            </div>
-
-            {authError && (
-              <p className="p-2.5 rounded bg-red-50 border border-red-200 text-red-705 text-[10.5px] font-bold leading-normal text-left">
-                ⚠️ {authError}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-2.5 text-xs tracking-wide uppercase shadow-lg shadow-blue-500/10 active:scale-95 transition-all cursor-pointer"
-            >
-              {authMode === "login" ? "Verify Credentials" : "Create New Profile"}
-            </button>
-          </form>
-
-          {/* Alternate Google option */}
-          <div className="relative my-5 flex items-center justify-center">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-stone-200" />
-            </div>
-            <span className="relative bg-white px-3 text-[10px] font-mono uppercase tracking-wider text-stone-500">
-              Or Use Google Sign-in
-            </span>
-          </div>
-
-          <button
-            onClick={handleGoogleMockLogin}
-            className="w-full flex items-center justify-center space-x-2 rounded-lg border border-stone-200 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-bold py-2.5 transition active:scale-95 cursor-pointer"
-          >
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
-            <span>Log In with Google Account</span>
-          </button>
-
-          <div className="relative my-4 flex items-center justify-center">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-stone-150" />
-            </div>
-            <span className="relative bg-white px-3 text-[9px] font-mono uppercase tracking-wider text-stone-500">
-              Or Try Guest Access
-            </span>
-          </div>
-
-          <button
-            onClick={handleContinueAsGuest}
-            type="button"
-            className="w-full py-2.5 rounded-lg border border-teal-200 bg-teal-50 hover:bg-teal-100/80 text-teal-800 text-xs font-black tracking-wide uppercase transition active:scale-95 cursor-pointer leading-none"
-          >
-            👥 Browse & Read as Guest
-          </button>
-
-          {/* Toggle link */}
-          <p className="text-[11px] text-stone-500 font-medium text-center mt-5">
-            {authMode === "login" ? "First time using Wafula Reads?" : "Already registered your account?"}{" "}
-            <button
-              onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}
-              className="text-blue-600 hover:underline font-bold"
-            >
-              {authMode === "login" ? "Sign Up Now" : "Sign In Here"}
-            </button>
-          </p>
-
-          {/* Secure credentials disclaimer block */}
-          <div className="mt-5 pt-4 border-t border-stone-150 text-center text-[10px] text-stone-500 font-medium">
-            <span>🔐 Authorized Student & Leadership Access Protocol • Bungoma Digitized Hub</span>
-          </div>
-        </div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-amber-400" />
+        <p className="text-xs font-mono uppercase tracking-widest text-slate-400">
+          Verifying Session...
+        </p>
       </div>
     );
   }
 
+  if (!currentUser) {
+    return (
+      <AuthScreen
+        onAuthenticated={(user, methodLabel) => {
+          setCurrentUser(user);
+          localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(user));
+          setCookie("WAFULA_CURRENT_USER", JSON.stringify(user), 7);
+          recordUserSession(user, methodLabel);
+        }}
+        onDemoFallbackLogin={(user, methodLabel) => {
+          setCurrentUser(user);
+          localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(user));
+          setCookie("WAFULA_CURRENT_USER", JSON.stringify(user), 7);
+          recordUserSession(user, methodLabel);
+        }}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-bg-app text-text-primary font-sans selection:bg-orange-100 selection:text-orange-950 transition-colors duration-200">
+    <div className={`min-h-screen safe-area-bottom flex flex-col bg-bg-app text-text-primary font-sans selection:bg-orange-100 selection:text-orange-950 transition-colors duration-200 ${sleekMode ? "sleek-mode-active text-sm font-medium tracking-tight" : ""}`}>
       
       {/* Universal navigation layout frame */}
       <Navigation
@@ -2061,6 +2130,7 @@ export default function App() {
         onNavigate={navigateTo}
         onLogIn={handleLogIn}
         onLogOut={handleLogOut}
+        onOpenUpgrade={() => setShowUpgradeModal(true)}
         onBack={handlePopBackHistory}
         canGoBack={viewHistory.length > 1}
         books={books}
@@ -2074,10 +2144,44 @@ export default function App() {
         onRestoreBanner={() => setIsBannerClosed(false)}
         offlineMode={offlineMode}
         onToggleOfflineMode={handleToggleOfflineMode}
+        sleekMode={sleekMode}
+        onToggleSleekMode={handleToggleSleekMode}
       />
 
       {/* Main interactive window viewport - Responsive pl matching desktop sidebar layout */}
-      <main className="flex-grow lg:pl-52 pt-3 md:pt-4 pb-24 lg:pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col">
+      <main className="flex-grow lg:pl-52 pt-3 md:pt-4 pb-24 lg:pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col safe-area-x">
+        {(!isSupabaseConfigured || !isPaystackConfigured) && !dismissedSetupBanner && (
+          <div className="mx-3 sm:mx-4 mb-3 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/50 dark:border-amber-700/60 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left text-xs text-amber-950 dark:text-amber-100 shadow-xs">
+            <div className="space-y-0.5">
+              <p className="font-black text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                Production Setup Banner (Preview Fallback Active)
+              </p>
+              <p className="text-[11px] leading-relaxed">
+                {!isSupabaseConfigured && "Supabase env vars (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY) "}
+                {!isSupabaseConfigured && !isPaystackConfigured && "and "}
+                {!isPaystackConfigured && "Paystack key (VITE_PAYSTACK_PUBLIC_KEY) "}
+                are not set yet. Running safely in Demo Preview Mode without crashing.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowUpgradeModal(true)}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase cursor-pointer"
+              >
+                Test KES Billing
+              </button>
+              <button
+                type="button"
+                onClick={() => setDismissedSetupBanner(true)}
+                className="px-2.5 py-1.5 rounded-lg border border-amber-400/50 text-amber-900 dark:text-amber-200 font-bold text-[10px] uppercase cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
         {broadcastAnnouncement && !isBannerClosed && (
           <div className="mx-3 sm:mx-4 mb-4 md:mb-6 relative overflow-hidden bg-gradient-to-r from-red-700 via-rose-700 to-amber-600 text-white rounded-2xl p-3 sm:p-4 shadow-md flex items-center justify-between gap-2.5 sm:gap-4 animate-fade-in border border-rose-500/25">
             <div className="flex items-center gap-2 sm:gap-3">
@@ -2098,6 +2202,24 @@ export default function App() {
           </div>
         )}
 
+        {gmpQuotaExceeded && (
+          <div className="mx-3 sm:mx-4 mb-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/60 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-base">🗺️</span>
+              <div>
+                <p className="font-bold">Google Maps preview mode active</p>
+                <p className="text-[11px] opacity-90">Interactive maps API quota limit reached. Campus coordinates, addresses, and external navigation links remain fully accessible.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setGmpQuotaExceeded(false)}
+              className="px-2.5 py-1 rounded-md text-[10px] font-bold border border-amber-400 dark:border-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
           <motion.div
             key={currentView}
@@ -2111,6 +2233,7 @@ export default function App() {
               <Store
                 currentUser={currentUser}
                 onLogIn={handleLogIn}
+                onNavigate={navigateTo}
                 books={books}
                 onUpdateBookRating={handleUpdateBookRating}
                 onPurchaseBook={handlePurchaseBook}
@@ -2126,16 +2249,29 @@ export default function App() {
             )}
 
             {currentView === "mpesa-api" && (
-              <MpesaApiConsole
-                currentUser={currentUser}
-                books={books}
-                onUnlockBookManual={(bookId) => {
-                  if (!purchasedBookIds.includes(bookId)) {
-                    setPurchasedBookIds((prev) => [...prev, bookId]);
-                    alert("Book instantly unlocked on the local ledger catalog!");
-                  }
-                }}
-              />
+              (["admin", "main_admin", "manager"].includes(currentUser.role) || currentUser.permissions?.allowConfirmPayments) ? (
+                <MpesaApiConsole
+                  currentUser={currentUser}
+                  books={books}
+                  onUnlockBookManual={(_bookId) => {
+                    syncOrdersFromServer();
+                    alert("Book entitlements are verified exclusively via Finance / Order Confirmation.");
+                  }}
+                />
+              ) : (
+                <div className="max-w-lg mx-auto mt-12 p-8 rounded-3xl border border-rose-500/30 bg-rose-950/15 text-center space-y-4">
+                  <h2 className="text-xl font-black text-rose-500">403 — Finance Access Restricted</h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    Only finance administrators or authorized managers can access payment confirmation controls.
+                  </p>
+                  <button
+                    onClick={() => navigateTo("store")}
+                    className="px-5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold uppercase cursor-pointer"
+                  >
+                    Return to Store
+                  </button>
+                </div>
+              )
             )}
 
             {currentView === "sermons-motivation" && (
@@ -2171,12 +2307,6 @@ export default function App() {
               <GmailConsole />
             )}
 
-            {currentView === "language-teacher" && (
-              <div className="light-only w-full">
-                <LanguageTeacher />
-              </div>
-            )}
-
             {currentView === "offline-dictionary" && (
               <OfflineDictionary />
             )}
@@ -2187,17 +2317,8 @@ export default function App() {
                   currentUser={currentUser}
                   onUnlockBadge={handleUnlockBadge}
                   isOnline={effectiveIsOnline}
-                />
-              </div>
-            )}
-
-            {currentView === "ai-media" && (
-              <div className="light-only w-full">
-                <AIMedia
-                  currentUser={currentUser}
-                  onAddNewDocument={handleAddNewDocument}
-                  books={books}
-                  savedDocuments={savedDocuments}
+                  sleekMode={sleekMode}
+                  onToggleSleekMode={handleToggleSleekMode}
                 />
               </div>
             )}
@@ -2212,36 +2333,8 @@ export default function App() {
               <PlayStoreHub />
             )}
 
-            {currentView === "home-apps" && (
-              <HomeApps onNavigate={setCurrentView} />
-            )}
-
-            {currentView === "zion-wifi" && (
-              <ZionWifi 
-                currentUser={currentUser}
-                isOnline={effectiveIsOnline}
-                onLogIn={handleLogIn}
-              />
-            )}
-
             {currentView === "website-center" && (
               <WebsiteCenter />
-            )}
-
-            {currentView === "games" && (
-              <Games onUnlockBadge={handleUnlockBadge} />
-            )}
-
-            {currentView === "upload" && (
-              <Upload
-                currentUser={currentUser}
-                onLogIn={handleLogIn}
-                uploadRequests={uploadRequests}
-                onAddNewUpload={handleAddNewUpload}
-                onRequestDeleteUpload={handleRequestDeleteUpload}
-                onPayUpload={handlePayUpload}
-                globalSettings={globalSettings}
-              />
             )}
 
             {currentView === "announcements" && (
@@ -2270,6 +2363,7 @@ export default function App() {
               <Dashboard
                 currentUser={currentUser}
                 onLogIn={handleLogIn}
+                onOpenUpgrade={() => setShowUpgradeModal(true)}
                 books={books}
                 purchasedBookIds={purchasedBookIds}
                 wishlistBookIds={wishlistBookIds}
@@ -2289,41 +2383,78 @@ export default function App() {
             )}
 
             {currentView === "contact" && (
-              <Contact />
+              <Contact onOpenMap={() => navigateTo("campuses-map")} />
+            )}
+
+            {currentView === "campuses-map" && (
+              <CampusesMap
+                onBack={() => navigateTo("store")}
+                onNavigateView={navigateTo}
+              />
+            )}
+
+            {currentView === "manager-portal" && (
+              <ManagerPortal
+                currentUser={currentUser}
+                isDarkMode={globalSettings.darkMode}
+                onBack={() => navigateTo("store")}
+                onSyncOrders={syncOrdersFromServer}
+                onNavigate={navigateTo}
+                onOpenAdminPanel={() => navigateTo("admin")}
+                booksCount={books.length}
+              />
             )}
 
             {currentView === "admin" && (
-              currentUser?.role === "admin" || 
-              currentUser?.email?.toLowerCase()?.trim() === "wafulak435@gmail.com" || 
-              currentUser?.email?.toLowerCase()?.trim() === "wafula435@gmail.com"
-            ) && (
-              <AdminPanel
-                currentUser={currentUser}
-                uploadRequests={uploadRequests}
-                onToggleUploadVisibility={handleToggleUploadVisibility}
-                onApproveUpload={handleApproveUpload}
-                onRejectUpload={handleRejectUpload}
-                onApproveDeletion={handleApproveDeletion}
-                onDeleteUploadPermanently={handleDeleteUploadPermanently}
-                broadcastAnnouncement={broadcastAnnouncement}
-                onUpdateBroadcastAnnouncement={handleUpdateBroadcastAnnouncement}
-                books={books}
-                onAddNewBookDoc={handleAddNewBook}
-                onDeleteBookDoc={handleDeleteBook}
-                globalSettings={globalSettings}
-                onUpdateSettings={setGlobalSettings}
-                bookOrders={bookOrders}
-                onApproveBookOrder={handleApproveBookOrder}
-                onRejectBookOrder={handleRejectBookOrder}
-              />
+              adminAccessState === "checking" ? (
+                <div className="min-h-[50vh] flex flex-col items-center justify-center p-8 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-[#A8421B] mb-3" />
+                  <p className="text-sm font-bold text-[#6E655E]">
+                    Verifying server-side Administrator authorization...
+                  </p>
+                </div>
+              ) : adminAccessState === "granted" && ["admin", "main_admin", "sub_admin"].includes(currentUser.role) ? (
+                <AdminPanel
+                  currentUser={currentUser}
+                  uploadRequests={uploadRequests}
+                  onToggleUploadVisibility={handleToggleUploadVisibility}
+                  onApproveUpload={handleApproveUpload}
+                  onRejectUpload={handleRejectUpload}
+                  onApproveDeletion={handleApproveDeletion}
+                  onDeleteUploadPermanently={handleDeleteUploadPermanently}
+                  broadcastAnnouncement={broadcastAnnouncement}
+                  onUpdateBroadcastAnnouncement={handleUpdateBroadcastAnnouncement}
+                  books={books}
+                  onAddNewBookDoc={handleAddNewBook}
+                  onDeleteBookDoc={handleDeleteBook}
+                  globalSettings={globalSettings}
+                  onUpdateSettings={setGlobalSettings}
+                  bookOrders={bookOrders}
+                  onApproveBookOrder={handleApproveBookOrder}
+                  onRejectBookOrder={handleRejectBookOrder}
+                />
+              ) : (
+                <div className="max-w-lg mx-auto mt-12 p-8 rounded-3xl border border-rose-500/30 bg-rose-950/15 text-center space-y-4">
+                  <h2 className="text-xl font-black text-rose-500">403 — Administrator Access Restricted</h2>
+                  <p className="text-sm text-[#6E655E] dark:text-[#B6ABA0]">
+                    {adminAccessError || "Only verified administrators may access the /admin console."}
+                  </p>
+                  <button
+                    onClick={() => navigateTo("store")}
+                    className="px-5 py-2.5 rounded-xl bg-[#1F1B18] text-white text-xs font-bold uppercase cursor-pointer"
+                  >
+                    Return to Store
+                  </button>
+                </div>
+              )
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* Footer copyright */}
-      <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 font-mono lg:pl-52">
-        <div>© 2026 Wafula Digital. All rights reserved. Headquartered under Bungoma Kenya.</div>
+      <footer className="bg-bg-surface border-t border-border-main py-6 text-center text-xs text-text-secondary font-mono lg:pl-52">
+        <div>© 2026 Zion Digital · Read. Lead. Transform. · Bungoma, Kenya.</div>
       </footer>
 
       {/* Universal Floating Voice Commands Assistant Widget */}
@@ -2682,13 +2813,13 @@ export default function App() {
 
             {checkoutStep === "completed" && (
               <div className="py-8 text-center space-y-4 text-slate-900">
-                <div className="h-12 w-12 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto border border-emerald-300 font-black text-lg animate-bounce">
-                  ✓
+                <div className="h-12 w-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto border border-amber-300 font-black text-lg">
+                  ⏳
                 </div>
                 <div className="space-y-2">
-                  <h4 className="font-black text-slate-950 text-sm sm:text-base uppercase tracking-wider">Payment Successfully Verified!</h4>
+                  <h4 className="font-black text-slate-950 text-sm sm:text-base uppercase tracking-wider">Order Recorded — Awaiting Payment Confirmation</h4>
                   <p className="text-[11.5px] text-slate-650 font-bold leading-relaxed px-2">
-                    Bungoma eCitizen Treasury successfully credited <strong>KES {checkoutBook.price || 350}</strong> for <strong>"{checkoutBook.title}"</strong>. The transaction has been posted to your permanent library ledger, fully unlocking vertical scrolling and PDF download options.
+                    Your order for <strong>"{checkoutBook.title}"</strong> (<strong>KES {checkoutBook.price || 350}</strong>) has been recorded as <strong>Pending</strong>. Full reading and PDF downloads unlock automatically once trusted M-Pesa / finance confirmation completes.
                   </p>
                 </div>
                 <div className="pt-2">
@@ -2696,7 +2827,7 @@ export default function App() {
                     onClick={() => setCheckoutBook(null)}
                     className="bg-slate-900 hover:bg-slate-800 text-white font-extrabold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer transition active:scale-95"
                   >
-                    Start Reading Now
+                    Close
                   </button>
                 </div>
               </div>
@@ -2893,163 +3024,22 @@ export default function App() {
         </div>
       )}
 
-      {/* High-Fidelity Google Account Selector Simulation modal */}
-      {showGoogleSelectorSim && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowGoogleSelectorSim(false)} />
-          
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-stone-200 p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-205 select-none text-stone-850">
-            {/* Google G logo & Header */}
-            <div className="text-center pb-4 mb-4 border-b border-stone-100 flex flex-col items-center">
-              <div className="w-10 h-10 mb-2 flex items-center justify-center rounded-full bg-slate-50 border border-stone-100 text-lg font-black font-sans shadow-xs">
-                <span className="text-red-500">G</span>
-                <span className="text-blue-500">o</span>
-                <span className="text-amber-500">o</span>
-                <span className="text-emerald-500">g</span>
-                <span className="text-blue-600 font-serif">l</span>
-                <span className="text-red-500">e</span>
-              </div>
-              <h3 className="font-display font-black text-slate-900 text-lg">Sign in with Google</h3>
-              <p className="text-xs text-stone-500 mt-1">to continue to Wafula Reads Academic Hub</p>
-            </div>
-
-            {/* Simulated accounts listings */}
-            <div className="space-y-2 text-xs">
-              <span className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1 text-left">SAVED GOOGLE ACCOUNTS</span>
-              
-              <button
-                type="button"
-                onClick={() => {
-                  const prof: User = {
-                    id: "google_main_admin435",
-                    email: "wafulak435@gmail.com",
-                    name: "Wafula Principal",
-                    role: "admin",
-                    readingStreak: 23,
-                    dailyGoalMinutes: 60
-                  };
-                  setCurrentUser(prof);
-                  localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(prof));
-                  setCookie("WAFULA_CURRENT_USER", JSON.stringify(prof), 7);
-                  recordUserSession(prof, "Google Account Link (Simulated)");
-                  setShowGoogleSelectorSim(false);
-                  alert("Authenticated instantly as Main Administrator: wafulak435@gmail.com! Credentials are saved securely.");
-                }}
-                className="w-full p-3 rounded-xl border border-stone-200 hover:border-blue-500 hover:bg-blue-50/20 text-left transition flex items-center justify-between cursor-pointer"
-              >
-                <div>
-                  <span className="font-extrabold text-stone-900 block">Wafula Principal</span>
-                  <span className="text-stone-400 font-mono text-[10px]">wafulak435@gmail.com</span>
-                </div>
-                <span className="bg-red-100 text-red-800 text-[9px] font-bold uppercase py-0.5 px-2 rounded border border-red-200">
-                  Principal Admin
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const prof: User = {
-                    id: "google_member_sim",
-                    email: "guest.scholar@gmail.com",
-                    name: "Guest Scholar",
-                    role: "member",
-                    readingStreak: 12,
-                    dailyGoalMinutes: 20
-                  };
-                  setCurrentUser(prof);
-                  localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(prof));
-                  setCookie("WAFULA_CURRENT_USER", JSON.stringify(prof), 7);
-                  recordUserSession(prof, "Google Account Link (Simulated)");
-                  setShowGoogleSelectorSim(false);
-                  alert("Authenticated instantly as Guest Scholar: guest.scholar@gmail.com. Saved credentials.");
-                }}
-                className="w-full p-3 rounded-xl border border-stone-200 hover:border-blue-500 hover:bg-blue-50/20 text-left transition flex items-center justify-between cursor-pointer"
-              >
-                <div>
-                  <span className="font-extrabold text-stone-900 block">Guest Scholar</span>
-                  <span className="text-stone-400 font-mono text-[10px]">guest.scholar@gmail.com</span>
-                </div>
-                <span className="bg-blue-55 text-blue-800 text-[9px] font-bold uppercase py-0.5 px-2 rounded border border-blue-200">
-                  Member
-                </span>
-              </button>
-            </div>
-
-            {/* Custom Google Selector Input Form Option */}
-            <div className="mt-4 pt-4 border-t border-stone-100">
-              <span className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2 text-left">OR USE ANOTHER GOOGLE ACCOUNT</span>
-              
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                const form = e.currentTarget;
-                const emailInput = form.elements.namedItem("sim_email") as HTMLInputElement;
-                const nameInput = form.elements.namedItem("sim_name") as HTMLInputElement;
-                
-                if (!emailInput.value.trim() || !nameInput.value.trim()) return;
-                
-                const em = emailInput.value.trim();
-                const lowerEm = em.toLowerCase();
-                const isCustomAdmin = lowerEm === "wafulak4@gmail.com" || 
-                                      lowerEm === "wafulak003@gmail.com" || 
-                                      lowerEm === "wafulak435@gmail.com" || 
-                                      lowerEm === "wafula435@gmail.com";
-                
-                const prof: User = {
-                  id: "google_custom_" + Date.now(),
-                  email: em,
-                  name: nameInput.value.trim(),
-                  role: isCustomAdmin ? "admin" : "member",
-                  readingStreak: 1,
-                  dailyGoalMinutes: 30
-                };
-                
-                setCurrentUser(prof);
-                localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(prof));
-                setCookie("WAFULA_CURRENT_USER", JSON.stringify(prof), 7);
-                recordUserSession(prof, "Google Account Link (Manual Sim)");
-                setShowGoogleSelectorSim(false);
-                alert(`Successfully authenticated custom Google Account as ${prof.name} (${prof.email})! Credentials saved.`);
-              }} className="space-y-2 text-left text-xs">
-                <div>
-                  <label className="block text-stone-450 font-bold uppercase tracking-wider mb-1 text-[9px]">Google User Full Name</label>
-                  <input
-                    type="text"
-                    name="sim_name"
-                    required
-                    placeholder="e.g. Kelvin Wafula"
-                    className="w-full rounded-xl border border-stone-200 bg-stone-50 p-2.5 font-bold outline-none focus:bg-white focus:border-blue-600 block"
-                  />
-                </div>
-                <div>
-                  <label className="block text-stone-450 font-bold uppercase tracking-wider mb-1 text-[9px]">Google Account Email</label>
-                  <input
-                    type="email"
-                    name="sim_email"
-                    required
-                    placeholder="e.g. wafulak4@gmail.com"
-                    className="w-full rounded-xl border border-stone-200 bg-stone-50 p-2.5 font-bold outline-none focus:bg-white focus:border-blue-600 block"
-                  />
-                </div>
-                <div className="pt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowGoogleSelectorSim(false)}
-                    className="flex-1 rounded-xl border border-stone-200 font-bold py-2.5 hover:bg-stone-50 transition cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 rounded-xl bg-blue-600 text-white font-extrabold py-2.5 hover:bg-blue-700 shadow-md transition cursor-pointer"
-                  >
-                    Sign In Google
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+      {/* Paystack KES & M-Pesa Upgrade / Top-Up Modal */}
+      {currentUser && (
+        <UpgradeModal
+          isOpen={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          currentUser={currentUser}
+          onSubscriptionUpdated={(updates) => {
+            setCurrentUser((prev) => {
+              if (!prev) return prev;
+              const next = { ...prev, ...updates };
+              localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(next));
+              setCookie("WAFULA_CURRENT_USER", JSON.stringify(next), 7);
+              return next;
+            });
+          }}
+        />
       )}
     </div>
   );

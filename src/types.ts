@@ -1,11 +1,84 @@
+export type AppRole =
+  | 'admin'
+  | 'main_admin'
+  | 'sub_admin'
+  | 'manager'
+  | 'tutor'
+  | 'member'
+  | 'guest';
+
+export interface SubAdminCapabilityMap {
+  allowBroadcast: boolean;
+  allowApproval: boolean;
+  allowVault: boolean;
+  allowManageBooks: boolean;
+  allowConfirmPayments: boolean;
+  allowManageEnrollments: boolean;
+  allowManageExams: boolean;
+  allowIssueCertificates: boolean;
+  allowModeration: boolean;
+  allowSuspendUsers: boolean;
+}
+
+export interface SubAdminPermission {
+  id: string;
+  name: string;
+  email: string;
+  permissions: SubAdminCapabilityMap;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
 export interface User {
   id?: string;
   email: string;
   name: string;
-  role: 'admin' | 'member' | 'guest';
+  role: AppRole;
+  isMainAdmin?: boolean;
+  isSuspended?: boolean;
+  permissions?: Partial<SubAdminCapabilityMap>;
+  authorizedCourses?: string[];
   avatarUrl?: string;
   readingStreak?: number;
   dailyGoalMinutes?: number;
+  phone?: string;
+  phone_number?: string;
+  subscription_status?: 'free' | 'active' | 'past_due' | 'cancelled';
+  plan_name?: string;
+  credits?: number;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  phone_number: string | null;
+  role: AppRole;
+  subscription_status: 'free' | 'active' | 'past_due' | 'cancelled';
+  plan_name: string;
+  credits: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface UserHistoryRecord {
+  id: string;
+  user_id: string;
+  title: string;
+  category: string;
+  prompt: string;
+  response: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface StorageFileItem {
+  name: string;
+  path: string;
+  size: number;
+  mimeType: string;
+  createdAt: string;
+  signedUrl?: string;
 }
 
 export type BookCategory = 
@@ -24,6 +97,7 @@ export interface Book {
   id: string;
   title: string;
   author: string;
+  authorEmail?: string;
   price: number; // in KES
   category: BookCategory;
   description: string;
@@ -70,6 +144,7 @@ export interface CommunityMessage {
   channel: '#generatechat' | '#workers' | '#General' | '#Book Talks' | '#Leadership' | '#Publishing' | string;
   userId: string;
   userName: string;
+  userEmail?: string;
   userAvatar?: string;
   isAdmin?: boolean;
   text: string;
@@ -191,12 +266,83 @@ export interface AppSettings {
 export interface BookOrder {
   id: string;
   userId: string;
+  userEmail?: string;
   userName: string;
   bookId: string;
   bookTitle: string;
   price: number;
+  paymentMethod?: string;
+  phoneNumber?: string;
   status: 'pending' | 'approved' | 'rejected';
   date: string;
+  confirmedBy?: string;
+  confirmedAt?: string;
+}
+
+export interface FeePayment {
+  id: string;
+  userEmail: string;
+  userName: string;
+  courseId: string;
+  amount: number;
+  phoneNumber?: string;
+  reference?: string;
+  status: 'pending' | 'confirmed' | 'rejected';
+  confirmedBy?: string;
+  confirmedAt?: string;
+  createdAt: string;
+}
+
+export interface EnrollmentRecord {
+  id: string;
+  userEmail: string;
+  userName: string;
+  courseId: string;
+  courseTitle: string;
+  status: 'pending' | 'approved' | 'rejected';
+  feeStatus: 'unpaid' | 'pending' | 'paid' | 'waived';
+  certificateIssued: boolean;
+  approvedBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ExamAttempt {
+  id: string;
+  examId: string;
+  courseId: string;
+  userEmail: string;
+  userName: string;
+  startedAt: string;
+  expiresAt: string;
+  submittedAt?: string;
+  status: 'in_progress' | 'submitted' | 'graded';
+  score?: number;
+  passed?: boolean;
+  gradedBy?: string;
+  gradedAt?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  actorEmail: string;
+  actorRole: string;
+  category:
+    | 'ADMIN_ACTION'
+    | 'ROLE_CHANGE'
+    | 'BOOK_ACTION'
+    | 'PAYMENT_ACTION'
+    | 'ENROLLMENT_ACTION'
+    | 'EXAM_ACTION'
+    | 'CERTIFICATE_ACTION'
+    | 'USER_MODERATION'
+    | 'ACCESS_DENIED';
+  action: string;
+  targetType: string;
+  targetId: string;
+  details: string;
+  ip?: string;
 }
 
 export interface SystemNotification {
@@ -230,6 +376,7 @@ export interface CertificateDownload {
   ledgerHash: string;
   date: string;
   downloadedAt: string;
+  issuedBy?: string;
 }
 
 export interface SermonVideo {
@@ -239,7 +386,7 @@ export interface SermonVideo {
   videoUrl: string;
   thumbnailUrl: string;
   description: string;
-  category: 'Sermon' | 'Motivation' | 'Evangelism';
+  category: 'Sermon' | 'Motivation' | 'Evangelism' | 'Worship Songs';
   duration: string;
   date: string;
   likesCount?: number;

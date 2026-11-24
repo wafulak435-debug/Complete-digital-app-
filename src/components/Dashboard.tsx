@@ -1,16 +1,25 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage } from "../types";
+import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage, UserHistoryRecord, StorageFileItem } from "../types";
 import { BADGES } from "../data";
-import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles } from "lucide-react";
+import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles, Video, CreditCard, History, UploadCloud, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import SecureBookReader from "./SecureBookReader";
+import {
+  fetchUserHistory,
+  deleteUserHistory,
+  uploadUserFile,
+  listUserFiles,
+  deleteUserFile,
+  getUserFileSignedUrl,
+} from "../lib/supabaseClient";
 
 interface DashboardProps {
   currentUser: User | null;
   onLogIn: () => void;
+  onOpenUpgrade?: () => void;
   books: Book[];
   purchasedBookIds: string[];
   wishlistBookIds: string[];
@@ -44,6 +53,7 @@ const getBookLastReadPage = (bookId: string) => {
 export default function Dashboard({
   currentUser,
   onLogIn,
+  onOpenUpgrade,
   books,
   purchasedBookIds,
   wishlistBookIds,
@@ -58,6 +68,14 @@ export default function Dashboard({
   const [userStreak, setUserStreak] = useState(5);
   const [loggedMinutes, setLoggedMinutes] = useState(15);
   const [readingBook, setReadingBook] = useState<Book | null>(null);
+
+  // Supabase User History & Private Storage States
+  const [aiHistory, setAiHistory] = useState<UserHistoryRecord[]>([]);
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  const [userFiles, setUserFiles] = useState<StorageFileItem[]>([]);
+  const [isUploadingStorage, setIsUploadingStorage] = useState(false);
+  const [storageStatusMsg, setStorageStatusMsg] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<StorageFileItem | null>(null);
 
   // Synchronize reading progress from Firestore
   const [firestoreProgress, setFirestoreProgress] = useState<Record<string, { currentPage: number; percentage: number }>>({});
@@ -90,6 +108,64 @@ export default function Dashboard({
     
     return () => unsubscribe();
   }, [currentUser?.id]);
+
+  // Load Supabase AI History and Private Storage Files
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let active = true;
+    fetchUserHistory(currentUser.id).then((items) => {
+      if (active) setAiHistory(items);
+    });
+    listUserFiles(currentUser.id).then((files) => {
+      if (active) setUserFiles(files);
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id]);
+
+  const handleStorageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentUser?.id) return;
+    setIsUploadingStorage(true);
+    setStorageStatusMsg(null);
+    try {
+      const folder = file.type.startsWith("image/") ? "images" : "documents";
+      await uploadUserFile(currentUser.id, file, folder);
+      const updated = await listUserFiles(currentUser.id);
+      setUserFiles(updated);
+      setStorageStatusMsg(`Uploaded "${file.name}" securely to private storage.`);
+    } catch (err: any) {
+      setStorageStatusMsg(err?.message || "Upload failed. Ensure user-uploads bucket exists in Supabase.");
+    } finally {
+      setIsUploadingStorage(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleViewStorageFile = async (item: StorageFileItem) => {
+    const url = item.signedUrl || (await getUserFileSignedUrl(item.path, 3600));
+    if (url) {
+      setPreviewFile({ ...item, signedUrl: url });
+    } else {
+      setStorageStatusMsg("Could not generate signed URL for this file.");
+    }
+  };
+
+  const handleDeleteStorageFile = async (path: string) => {
+    const ok = await deleteUserFile(path);
+    if (ok) {
+      setUserFiles((prev) => prev.filter((f) => f.path !== path));
+      if (previewFile?.path === path) setPreviewFile(null);
+    }
+  };
+
+  const handleDeleteHistoryItem = async (id: string) => {
+    const ok = await deleteUserHistory(id, currentUser?.id);
+    if (ok) {
+      setAiHistory((prev) => prev.filter((item) => item.id !== id));
+    }
+  };
 
   const [quickSearchWord, setQuickSearchWord] = useState("");
   const [showSwahiliBibleVerse, setShowSwahiliBibleVerse] = useState(false);
@@ -340,6 +416,41 @@ export default function Dashboard({
   return (
     <div id="user_dashboard" className="ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 space-y-7">
       
+      {/* Kenya KES Subscription & AI Credits Status Card */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950 border border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-white shadow-sm">
+        <div className="text-left space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+              {currentUser.plan_name || "Free"} Plan
+            </span>
+            <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-bold ${
+              currentUser.subscription_status === "active"
+                ? "bg-emerald-600 text-white"
+                : "bg-slate-800 text-slate-300"
+            }`}>
+              Status: {currentUser.subscription_status || "free"}
+            </span>
+          </div>
+          <h3 className="font-display font-black text-base">
+            {currentUser.name} • {currentUser.credits ?? 20} Study & AI Credits
+          </h3>
+          <p className="text-[11px] text-slate-300">
+            Upgrade or top up anytime in Kenyan Shillings (KES) via M-Pesa STK Push or Visa/Mastercard.
+          </p>
+        </div>
+
+        {onOpenUpgrade && (
+          <button
+            type="button"
+            onClick={onOpenUpgrade}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs px-4 py-2.5 shadow-md transition cursor-pointer shrink-0"
+          >
+            <CreditCard className="h-4 w-4" />
+            <span>Upgrade / Top Up (KES)</span>
+          </button>
+        )}
+      </div>
+
       {/* Automated Inactivity Session Tracker Status Panel */}
       <div className="bg-slate-50 dark:bg-stone-900 border border-slate-200 dark:border-stone-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 select-none animate-in fade-in slide-in-from-top-3 duration-250">
         <div className="flex items-center space-x-3 text-left">
@@ -462,50 +573,47 @@ export default function Dashboard({
       {/* THREE PILLARS SYNERGY BENTO DASHBOARD */}
       <div className="grid gap-6 md:grid-cols-3 select-none">
         
-        {/* CARD 1: LANGUAGE TUTOR (Current Study Session) */}
+        {/* CARD 1: SERMONS & WORSHIP MEDIA */}
         <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-5 text-left flex flex-col justify-between shadow-xs">
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
-                <BookOpen className="h-3 w-3 text-emerald-500" />
-                <span>Language Tutor Pillar</span>
+              <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
+                <Video className="h-3 w-3 text-amber-500" />
+                <span>Featured Sermons & Worship</span>
               </span>
               <button 
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "language-teacher" } }));
+                  window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "sermons-motivation" } }));
                 }}
                 className="text-xs text-blue-500 hover:underline font-bold"
               >
-                Launch Hub
+                Watch Now
               </button>
             </div>
 
             <div>
-              <h4 className="font-display font-black text-xs text-stone-900 dark:text-stone-100 uppercase tracking-tight">Active Study Deck</h4>
+              <h4 className="font-display font-black text-xs text-stone-900 dark:text-stone-100 uppercase tracking-tight">Anointed Sermons & Worship</h4>
               <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 leading-normal">
-                Course: <strong>Beginner Swahili</strong> (Session Ready). Perfect your bilingual speech and visual vocabulary cards.
+                Inspiring messages, motivational addresses, evangelism training, and deep praise & worship sessions.
               </p>
             </div>
 
             <div className="space-y-1 bg-stone-50 dark:bg-stone-950/40 p-3 rounded-xl border border-stone-150 dark:border-stone-800">
               <div className="flex justify-between text-[10px] font-mono text-stone-400 dark:text-stone-550">
-                <span>Class Milestones</span>
-                <span className="font-bold text-amber-500">60% Complete</span>
+                <span>Media Collections</span>
+                <span className="font-bold text-amber-500">Live & On-Demand</span>
               </div>
-              <div className="w-full h-1 bg-stone-200 dark:bg-stone-800 rounded-full overflow-hidden">
-                <div className="h-full bg-amber-500" style={{ width: "60%" }} />
-              </div>
-              <p className="text-[9px] text-stone-400 dark:text-stone-500 mt-1 leading-tight">Excellent progress! Your oral review is waiting.</p>
+              <p className="text-[9px] text-stone-400 dark:text-stone-500 mt-1 leading-tight">Watch inspirational teachings and worship praise songs directly in the media player.</p>
             </div>
           </div>
 
           <button
             onClick={() => {
-              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "language-teacher" } }));
+              window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view: "sermons-motivation" } }));
             }}
-            className="w-full mt-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors text-center cursor-pointer"
+            className="w-full mt-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors text-center cursor-pointer"
           >
-            Practice Oral Drills Now
+            Open Sermons & Worship Hub
           </button>
         </div>
 
@@ -1213,9 +1321,215 @@ export default function Dashboard({
                 <span>User Role:</span>
                 <strong className="text-neutral-800 capitalize">{currentUser.role}</strong>
               </div>
+              <div className="flex justify-between">
+                <span>Plan / Credits:</span>
+                <strong className="text-emerald-700">{currentUser.plan_name || "Free"} ({currentUser.credits ?? 20})</strong>
+              </div>
             </div>
           </div>
 
+        </div>
+      </div>
+
+      {/* SAVED AI GENERATIONS HISTORY & PRIVATE CLOUD UPLOADS */}
+      <div className="grid gap-6 lg:grid-cols-2 text-xs text-left">
+        {/* Saved AI History (user_history) */}
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-stone-100 dark:border-stone-800 pb-3">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-amber-600" />
+              <div>
+                <h3 className="font-display text-sm font-black text-stone-900 dark:text-stone-100">
+                  Saved AI Generations
+                </h3>
+                <p className="text-[10px] text-stone-400 font-mono">
+                  Revisit your Gemini study notes, translations & lessons
+                </p>
+              </div>
+            </div>
+            <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 text-[10px] font-mono font-bold">
+              {aiHistory.length} Saved
+            </span>
+          </div>
+
+          {aiHistory.length === 0 ? (
+            <div className="py-8 text-center rounded-xl bg-stone-50 dark:bg-stone-950/40 border border-stone-100 dark:border-stone-800 text-stone-400">
+              No saved AI generations yet. Use Study Assistant, Bible, or Doc Studio to generate content.
+            </div>
+          ) : (
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+              {aiHistory.map((item) => {
+                const isExpanded = expandedHistoryId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-stone-150 dark:border-stone-800 bg-stone-50 dark:bg-stone-950/50 p-3 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-[9px] font-mono uppercase text-amber-600 font-bold">
+                          {item.category}
+                        </span>
+                        <h4 className="font-bold text-stone-900 dark:text-stone-100 truncate">
+                          {item.title}
+                        </h4>
+                        <p className="text-[10px] text-stone-400 font-mono">
+                          {new Date(item.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedHistoryId(isExpanded ? null : item.id)}
+                          className="px-2 py-1 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[10px] font-bold text-stone-700 dark:text-stone-200 hover:bg-stone-100 cursor-pointer"
+                        >
+                          {isExpanded ? "Hide" : "View"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteHistoryItem(item.id)}
+                          title="Delete saved history item"
+                          className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="pt-2 border-t border-stone-200 dark:border-stone-800 space-y-1.5 text-[11px] text-stone-700 dark:text-stone-300">
+                        <p className="font-mono text-[10px] text-stone-500">
+                          Prompt: {item.prompt}
+                        </p>
+                        <div className="whitespace-pre-wrap leading-relaxed bg-white dark:bg-stone-900 p-2.5 rounded-lg border border-stone-200 dark:border-stone-800 max-h-48 overflow-y-auto">
+                          {item.response}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Private User Uploads Bucket (user-uploads) */}
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-stone-100 dark:border-stone-800 pb-3">
+            <div className="flex items-center gap-2">
+              <UploadCloud className="h-4 w-4 text-blue-600" />
+              <div>
+                <h3 className="font-display text-sm font-black text-stone-900 dark:text-stone-100">
+                  Private Cloud Vault (user-uploads)
+                </h3>
+                <p className="text-[10px] text-stone-400 font-mono">
+                  Upload & view personal images or study documents privately
+                </p>
+              </div>
+            </div>
+            <label className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-[10px] font-bold cursor-pointer shrink-0">
+              {isUploadingStorage ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UploadCloud className="h-3.5 w-3.5" />
+              )}
+              <span>{isUploadingStorage ? "Uploading..." : "Upload File"}</span>
+              <input
+                type="file"
+                accept="image/*,.pdf,.txt,.doc,.docx"
+                onChange={handleStorageUpload}
+                disabled={isUploadingStorage}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {storageStatusMsg && (
+            <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-[11px] font-semibold text-blue-800 dark:text-blue-200">
+              {storageStatusMsg}
+            </div>
+          )}
+
+          {previewFile && previewFile.signedUrl && (
+            <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-slate-50 dark:bg-stone-950 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-stone-800 dark:text-stone-100 truncate">
+                  Preview: {previewFile.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewFile(null)}
+                  className="text-[10px] font-bold text-stone-500 hover:text-stone-800 cursor-pointer"
+                >
+                  Close Preview
+                </button>
+              </div>
+              {previewFile.mimeType.startsWith("image/") ? (
+                <img
+                  src={previewFile.signedUrl}
+                  alt={previewFile.name}
+                  className="max-h-44 rounded-lg object-contain border border-stone-200 dark:border-stone-800"
+                />
+              ) : (
+                <a
+                  href={previewFile.signedUrl}
+                  download={previewFile.name}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 text-white px-3 py-1.5 text-[11px] font-bold"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download {previewFile.name}</span>
+                </a>
+              )}
+            </div>
+          )}
+
+          {userFiles.length === 0 ? (
+            <div className="py-8 text-center rounded-xl bg-stone-50 dark:bg-stone-950/40 border border-stone-100 dark:border-stone-800 text-stone-400">
+              No private files uploaded yet. Upload an image, PDF, or study document above.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
+              {userFiles.map((file) => (
+                <div
+                  key={file.path}
+                  className="flex items-center justify-between gap-2 rounded-xl border border-stone-150 dark:border-stone-800 bg-stone-50 dark:bg-stone-950/50 p-2.5"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {file.mimeType.startsWith("image/") ? (
+                      <ImageIcon className="h-4 w-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-blue-600 shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-bold text-stone-900 dark:text-stone-100 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-[10px] text-stone-400 font-mono">
+                        {(file.size / 1024).toFixed(1)} KB
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleViewStorageFile(file)}
+                      className="px-2 py-1 rounded-lg bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[10px] font-bold text-stone-700 dark:text-stone-200 hover:bg-stone-100 cursor-pointer"
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStorageFile(file.path)}
+                      title="Delete file"
+                      className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
