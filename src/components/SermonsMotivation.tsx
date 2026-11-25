@@ -10,17 +10,22 @@ import {
   collection, addDoc, onSnapshot, query, deleteDoc, doc, updateDoc, increment
 } from "firebase/firestore";
 import { motion, AnimatePresence } from "motion/react";
+import sermonMediaImg from "../assets/images/slide_sermon_media_1795421934360.jpg";
+import bibleSchoolImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import leadershipImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import computerAcademyImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
 
 interface SermonsMotivationProps {
   currentUser: AuthUser | null;
 }
 
 const PRESET_THUMBNAILS = [
-  "https://images.unsplash.com/photo-1438029071396-1e831a7fa6d8?q=80&w=800&auto=format&fit=crop", // Congregation
-  "https://images.unsplash.com/photo-1544427920-c49ccfb85579?q=80&w=800&auto=format&fit=crop", // Study sermon
-  "https://images.unsplash.com/photo-1504051771394-dd2e66b2e08f?q=80&w=800&auto=format&fit=crop", // Altar Bible
-  "https://images.unsplash.com/photo-1498050108023-c5249f4df085?q=80&w=800&auto=format&fit=crop", // Sunrise path
-  "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?q=80&w=800&auto=format&fit=crop"  // Mentorship
+  sermonMediaImg,
+  bibleSchoolImg,
+  leadershipImg,
+  bookstoreImg,
+  computerAcademyImg
 ];
 
 const PRESEEDED_VIDEOS: SermonVideo[] = [
@@ -29,7 +34,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Evangelism 1: The Great Commission in Bungoma",
     speaker: "Chancellor Kelvin Wafula",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1438029071396-1e831a7fa6d8?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: sermonMediaImg,
     description: "Part 1 of the foundational Evangelism & Outreach training series. Aligning our local ministries with the supreme global mandate to share gospel truth.",
     category: "Evangelism",
     duration: "12:30",
@@ -42,7 +47,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Evangelism 2: Dynamic Open-Air Crusades & Outreach",
     speaker: "Chancellor Kelvin Wafula",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1544427920-c49ccfb85579?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: bibleSchoolImg,
     description: "Part 2 of our training series. Practical strategies for preparing outdoor crusades, organizing community support, and managing municipal logistics in Bungoma.",
     category: "Evangelism",
     duration: "14:15",
@@ -55,7 +60,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Evangelism 3: Strategic Civic Mobilization & Growth",
     speaker: "Chancellor Kelvin Wafula",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1504051771394-dd2e66b2e08f?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: leadershipImg,
     description: "Part 3 of our training series. Consolidating leadership networks, structuring small bible groups, and integrating new converts into local covenant trust cells.",
     category: "Evangelism",
     duration: "11:50",
@@ -68,7 +73,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Sovereign Grace & Steadfast Leadership",
     speaker: "Pastor Kelvin Wafula",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1544427920-c49ccfb85579?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: bibleSchoolImg,
     description: "An inspiring expository sermon on sovereign grace, building an unshakable family foundation, and developing spiritual leadership within our local community.",
     category: "Sermon",
     duration: "15:02",
@@ -81,7 +86,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "The Power of Grit & Unshakable Purpose",
     speaker: "Chancellor Kelvin Wafula",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: leadershipImg,
     description: "A high-impact motivational address on self-discipline, persistent study, and breaking mental barriers to lay a solid educational and civic foundation.",
     category: "Motivation",
     duration: "12:45",
@@ -94,7 +99,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Walking in Divine Light: Study & Faith",
     speaker: "Brother Opara",
     videoUrl: "https://assets.mixkit.co/videos/preview/mixkit-milky-way-galaxy-in-the-night-sky-40432-large.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1504051771394-dd2e66b2e08f?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: bookstoreImg,
     description: "An exploration of combining deep biblical studies with scientific literacy to elevate the mind, honoring the Creator through diligent academic pursuits.",
     category: "Sermon",
     duration: "08:15",
@@ -107,7 +112,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Glorious Praise & Deep Worship Session",
     speaker: "Zion Worship Team",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: sermonMediaImg,
     description: "An uplifting worship session featuring anointed praise songs, acoustic worship, and spiritual renewal for the body of Christ.",
     category: "Worship Songs",
     duration: "18:40",
@@ -120,7 +125,7 @@ const PRESEEDED_VIDEOS: SermonVideo[] = [
     title: "Acoustic Hymns of Faith & Restoration",
     speaker: "Zion Praise Choir",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackBranding.mp4",
-    thumbnailUrl: "https://images.unsplash.com/photo-1465847899084-d164df4dedc6?q=80&w=800&auto=format&fit=crop",
+    thumbnailUrl: bibleSchoolImg,
     description: "Heartfelt acoustic worship and traditional Christian hymns bringing peace, spiritual encouragement, and adoration to God.",
     category: "Worship Songs",
     duration: "16:20",

@@ -14,7 +14,7 @@ import {
   saveNotificationToFirestore,
   logUserActivity
 } from "./lib/firestoreUtils";
-import { auth, googleSignIn, googleLogout, db } from "./lib/firebase";
+import { auth, googleSignIn, googleLogout, db, testConnection } from "./lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 
@@ -42,6 +42,12 @@ import AuthScreen from "./components/AuthScreen";
 import UpgradeModal from "./components/UpgradeModal";
 import ManagerPortal from "./components/ManagerPortal";
 import CampusesMap from "./components/CampusesMap";
+import ProfessionalHub from "./components/ProfessionalHub";
+import ZionVirtualClassroom from "./components/ZionVirtualClassroom";
+import AITutorStudio from "./components/AITutorStudio";
+import BibleSchoolEnvironment from "./components/BibleSchoolEnvironment";
+import EvangelismMinistryForum from "./components/EvangelismMinistryForum";
+import { BOOKS_DEFAULT_COVER } from "./lib/showcase";
 import { secureApiFetch, setSessionToken } from "./lib/aiClient";
 import {
   supabase,
@@ -49,8 +55,19 @@ import {
   isPaystackConfigured,
   ensureUserProfile,
   mapProfileToAppUser,
+  uploadUserFile,
+  syncLocalVaultFilesToSupabase,
 } from "./lib/supabaseClient";
-import { savePdfToOfflineDb, getAllOfflinePdfs } from "./utils/pdfDb";
+import { savePdfToOfflineDb, getAllOfflinePdfs, requestPersistentStorage } from "./utils/pdfDb";
+import { recordSyncEvent } from "./lib/syncHistory";
+
+function safeSetLocalStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err) {
+    console.warn(`Local storage quota notice while saving ${key}:`, err);
+  }
+}
 
 export default function App() {
   const recordUserSession = (user: User, actionType: string) => {
@@ -198,6 +215,7 @@ export default function App() {
   const [dismissedSetupBanner, setDismissedSetupBanner] = useState<boolean>(false);
   const [adminAccessState, setAdminAccessState] = useState<"idle" | "checking" | "granted" | "denied">("idle");
   const [adminAccessError, setAdminAccessError] = useState<string>("");
+  const [pendingDmTarget, setPendingDmTarget] = useState<{ email: string; name: string } | null>(null);
 
   // Custom Authentication Modal state variables
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -208,17 +226,7 @@ export default function App() {
   const [regName, setRegName] = useState("");
   const [regGoal, setRegGoal] = useState(30);
 
-  // Payment Gateway Trigger States
-  const [checkoutBook, setCheckoutBook] = useState<Book | null>(null);
-  const [checkoutPhoneNumber, setCheckoutPhoneNumber] = useState("");
-  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<"mpesa" | "ecitizen_foreign" | "ecitizen_local">("mpesa");
-  const [checkoutStep, setCheckoutStep] = useState<"form" | "sending_stk" | "waiting_pin" | "searching_payment" | "completed">("form");
-  const [checkoutCountdown, setCheckoutCountdown] = useState(15);
-  const [checkoutAccountDetails, setCheckoutAccountDetails] = useState(""); 
-  const [checkoutRef, setCheckoutRef] = useState("");
-  const [checkoutCustomerIDInput, setCheckoutCustomerIDInput] = useState("");
-  const [checkoutCustomerNameInput, setCheckoutCustomerNameInput] = useState("");
-  const [checkoutMpesaPin, setCheckoutMpesaPin] = useState("");
+
 
   // View state history routing (respects /admin, /manager-portal, and ?view=...)
   const [currentView, setCurrentView] = useState<string>(() => {
@@ -326,82 +334,6 @@ export default function App() {
     };
   }, [currentView, currentUser?.email, currentUser?.role]);
 
-  // Record pending M-Pesa / Card book order on server (paid access unlocks ONLY after trusted confirmation)
-  useEffect(() => {
-    if (checkoutStep !== "searching_payment") return;
-
-    const timer = setInterval(() => {
-      setCheckoutCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-
-          if (checkoutBook && currentUser) {
-            const fallbackOrder: BookOrder = {
-              id: "ord_" + Date.now(),
-              userId: checkoutCustomerIDInput || currentUser.email,
-              userEmail: currentUser.email,
-              userName: checkoutCustomerNameInput || currentUser.name,
-              bookId: checkoutBook.id,
-              bookTitle: checkoutBook.title,
-              price: checkoutBook.price || 200,
-              status: "pending",
-              date: new Date().toISOString().split("T")[0],
-            };
-
-            secureApiFetch("/api/orders", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                bookId: checkoutBook.id,
-                bookTitle: checkoutBook.title,
-                price: checkoutBook.price || 200,
-                paymentReference:
-                  checkoutPhoneNumber || checkoutAccountDetails || checkoutCustomerIDInput || "MPESA",
-              }),
-            })
-              .then((res) => res.json())
-              .then((data) => {
-                const savedOrder: BookOrder = data?.order || fallbackOrder;
-                setBookOrders((prevOrders) => {
-                  const next = [savedOrder, ...prevOrders];
-                  localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
-                  return next;
-                });
-                if (savedOrder.status === "approved" || (checkoutBook.price || 0) <= 0) {
-                  setPurchasedBookIds((prevIds) => {
-                    const next = prevIds.includes(checkoutBook.id) ? prevIds : [...prevIds, checkoutBook.id];
-                    localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(next));
-                    return next;
-                  });
-                }
-                saveBookOrderToFirestore(savedOrder).catch(() => {});
-              })
-              .catch(() => {
-                setBookOrders((prevOrders) => {
-                  const next = [fallbackOrder, ...prevOrders];
-                  localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(next));
-                  return next;
-                });
-              });
-
-            logUserActivity(
-              currentUser.email,
-              currentUser.name,
-              "Submit Book Order",
-              `Submitted payment order for "${checkoutBook.title}" (ID: ${checkoutBook.id}, KES ${checkoutBook.price}) awaiting confirmation.`
-            );
-
-            setCheckoutStep("completed");
-            handleUnlockBadge("badge_2");
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [checkoutStep, checkoutBook, currentUser, checkoutCustomerIDInput, checkoutCustomerNameInput, checkoutPhoneNumber, checkoutAccountDetails]);
 
   // Hydrate & verify active session against Express server (/api/auth/me) or Supabase Auth
   useEffect(() => {
@@ -429,30 +361,63 @@ export default function App() {
     };
 
     if (!isSupabaseConfigured || !supabase) {
-      verifyServerCookieSession().then((restored) => {
+      (async () => {
+        const restored = await verifyServerCookieSession();
         if (!mounted) return;
-        if (!restored) {
-          // Never auto-promote unverified local cache to admin/manager
-          const cookieUser = getCookie("WAFULA_CURRENT_USER");
-          const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
-          if (savedUser) {
-            try {
-              const parsed = JSON.parse(savedUser);
-              if (parsed && ["admin", "main_admin", "sub_admin", "manager"].includes(parsed.role)) {
-                parsed.role = "member";
-                delete parsed.permissions;
-                delete parsed.isMainAdmin;
-              }
-              setCurrentUser(parsed);
-            } catch {
-              setCurrentUser(null);
+        if (restored) {
+          setIsCheckingAuth(false);
+          return;
+        }
+
+        // Check if Firebase Auth has an active persisted user session
+        try {
+          if (typeof auth.authStateReady === "function") {
+            await auth.authStateReady();
+          }
+          if (mounted && auth.currentUser) {
+            const idToken = await auth.currentUser.getIdToken();
+            const fbRes = await secureApiFetch("/api/auth/session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mode: "firebase", idToken }),
+            });
+            const fbData = await fbRes.json().catch(() => ({}));
+            if (mounted && fbRes.ok && fbData?.success && fbData?.user) {
+              if (fbData.sessionToken) setSessionToken(fbData.sessionToken);
+              setCurrentUser(fbData.user);
+              localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(fbData.user));
+              setCookie("WAFULA_CURRENT_USER", JSON.stringify(fbData.user), 7);
+              recordUserSession(fbData.user, "Firebase Session");
+              syncOrdersFromServer();
+              setIsCheckingAuth(false);
+              return;
             }
-          } else {
+          }
+        } catch {
+          // Non-fatal fallback
+        }
+
+        if (!mounted) return;
+        // Never auto-promote unverified local cache to admin/manager
+        const cookieUser = getCookie("WAFULA_CURRENT_USER");
+        const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
+        if (savedUser) {
+          try {
+            const parsed = JSON.parse(savedUser);
+            if (parsed && ["admin", "main_admin", "sub_admin", "manager"].includes(parsed.role)) {
+              parsed.role = "member";
+              delete parsed.permissions;
+              delete parsed.isMainAdmin;
+            }
+            setCurrentUser(parsed);
+          } catch {
             setCurrentUser(null);
           }
+        } else {
+          setCurrentUser(null);
         }
         setIsCheckingAuth(false);
-      });
+      })();
       return () => {
         mounted = false;
       };
@@ -521,6 +486,7 @@ export default function App() {
 
   // Load books & cached files on mount
   useEffect(() => {
+    requestPersistentStorage().catch(() => {});
 
     // 2. Books Database
     const savedBooks = localStorage.getItem("WAFULA_BOOKS");
@@ -538,8 +504,42 @@ export default function App() {
     } else {
       initialBooksList = [];
     }
-    localStorage.setItem("WAFULA_BOOKS", JSON.stringify(initialBooksList));
+    safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(initialBooksList));
     setBooks(initialBooksList);
+
+    // Merge server-persisted catalog books so Express-saved books survive browser refreshes/clears
+    secureApiFetch("/api/books")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && Array.isArray(data.books) && data.books.length > 0) {
+          setBooks((prev) => {
+            const map = new Map<string, Book>();
+            prev.forEach((b) => map.set(b.id, b));
+            data.books.forEach((sb: Book) => {
+              if (!sb?.id || isMock(sb.id)) return;
+              const existing = map.get(sb.id);
+              if (!existing) {
+                map.set(sb.id, {
+                  ...sb,
+                  description: sb.description || `Published digital resource by ${sb.author || "Zion Digital"}.`,
+                  coverImage: sb.coverImage || BOOKS_DEFAULT_COVER,
+                  fileSize: sb.fileSize || "2.4 MB",
+                  pages: sb.pages || 80,
+                  publishedDate: sb.publishedDate || new Date().toISOString().split("T")[0],
+                  isFeatured: Boolean(sb.isFeatured),
+                  rating: sb.rating || 5,
+                  reviewsCount: sb.reviewsCount || 1,
+                  isSynced: true,
+                });
+              }
+            });
+            const merged = Array.from(map.values());
+            safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(merged));
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
 
     // Load offline cached PDF Blobs and attach live object URLs dynamically
     getAllOfflinePdfs().then((pdfsMap) => {
@@ -673,9 +673,19 @@ export default function App() {
         uInt8Array[i] = raw.charCodeAt(i);
       }
       const blob = new Blob([uInt8Array], { type: contentType });
-      savePdfToOfflineDb(bookId, blob).catch((err) => {
-        console.warn("Could not background cache remote PDF to IndexedDB:", err);
-      });
+      savePdfToOfflineDb(bookId, blob)
+        .then(() => {
+          recordSyncEvent({
+            title: "Offline PDF cached",
+            detail: `Stored offline reading copy (${bookId}) in browser database`,
+            category: "offline_cache",
+            status: "synced",
+            itemCount: 1,
+          });
+        })
+        .catch((err) => {
+          console.warn("Could not background cache remote PDF to IndexedDB:", err);
+        });
     } catch (e) {
       console.warn("Base64 background caching parse error:", e);
     }
@@ -725,8 +735,22 @@ export default function App() {
             // Detect any book records that exist ONLY locally and need syncing (isSynced === false)
             const localOnly = keptLocalBooks.filter(lb => !currentRemoteIds.has(lb.id) && lb.isSynced === false);
             
-            // Since remoteBooks are authoritative, mark them as isSynced: true
-            const markedRemoteBooks = remoteBooks.map(rb => ({ ...rb, isSynced: true }));
+            // Preserve local IndexedDB/blob PDF references when merging remote book updates
+            const localById = new Map(localBooks.map((lb) => [lb.id, lb]));
+
+            // Since remoteBooks are authoritative, mark them as isSynced: true while keeping live local PDF pointers
+            const markedRemoteBooks = remoteBooks.map((rb) => {
+              const localMatch = localById.get(rb.id);
+              const keepLocalPdf =
+                localMatch?.pdfUrl &&
+                (localMatch.pdfUrl.startsWith("blob:") || localMatch.pdfUrl.startsWith("indexeddb://")) &&
+                (!rb.pdfUrl || rb.pdfUrl.startsWith("Community Secure") || rb.pdfUrl.startsWith("indexeddb://"));
+              return {
+                ...rb,
+                pdfUrl: keepLocalPdf ? localMatch!.pdfUrl : rb.pdfUrl,
+                isSynced: true,
+              };
+            });
 
             const merged = [...localOnly, ...markedRemoteBooks];
             
@@ -735,7 +759,7 @@ export default function App() {
             merged.forEach(b => map.set(b.id, b));
             const finalBooks = Array.from(map.values());
             
-            localStorage.setItem("WAFULA_BOOKS", JSON.stringify(finalBooks));
+            safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(finalBooks));
             
             // Instantly push local-only additions up to the live Firestore collection
             localOnly.forEach((lb) => {
@@ -749,10 +773,32 @@ export default function App() {
                     const updated = parsed.map(item => item.id === lb.id ? { ...item, isSynced: true } : item);
                     localStorage.setItem("WAFULA_BOOKS", JSON.stringify(updated));
                   }
+                  recordSyncEvent({
+                    title: "Books uploaded",
+                    detail: `Uploaded offline book "${lb.title}" to cloud library`,
+                    category: "books",
+                    status: "synced",
+                    itemCount: 1,
+                  });
                 })
                 .catch((err) => {
                   console.warn(`Firestore sync upload failed for offline-added book: ${lb.title}`, err);
+                  recordSyncEvent({
+                    title: "Books queued offline",
+                    detail: `Kept "${lb.title}" queued for retry`,
+                    category: "books",
+                    status: "queued",
+                    itemCount: 1,
+                  });
                 });
+            });
+
+            recordSyncEvent({
+              title: "Books synced",
+              detail: `${finalBooks.length} books verified in offline library cache`,
+              category: "books",
+              status: "synced",
+              itemCount: finalBooks.length,
             });
             
             return finalBooks;
@@ -803,9 +849,34 @@ export default function App() {
               
               // Automatically publish locally accumulated requests to Live Firestore database
               localOnly.forEach((lr) => {
-                saveUploadRequestToFirestore(lr).catch((err) => {
-                  console.warn(`Firestore sync upload failed for upload request: ${lr.title}`, err);
-                });
+                saveUploadRequestToFirestore(lr)
+                  .then(() => {
+                    recordSyncEvent({
+                      title: "Uploads uploaded",
+                      detail: `Uploaded "${lr.title}" to cloud review queue`,
+                      category: "uploads",
+                      status: "synced",
+                      itemCount: 1,
+                    });
+                  })
+                  .catch((err) => {
+                    console.warn(`Firestore sync upload failed for upload request: ${lr.title}`, err);
+                    recordSyncEvent({
+                      title: "Uploads queued offline",
+                      detail: `Pending retry for "${lr.title}"`,
+                      category: "uploads",
+                      status: "queued",
+                      itemCount: 1,
+                    });
+                  });
+              });
+
+              recordSyncEvent({
+                title: "Uploads synced",
+                detail: `${finalRequests.length} member upload records synchronized`,
+                category: "uploads",
+                status: "synced",
+                itemCount: finalRequests.length,
               });
               
               return finalRequests;
@@ -853,9 +924,27 @@ export default function App() {
 
               // Sync any offline-placed orders to Live Firestore
               localOnly.forEach((lo) => {
-                saveBookOrderToFirestore(lo).catch((err) => {
-                  console.warn(`Firestore sync upload failed for purchase order: ${lo.id}`, err);
-                });
+                saveBookOrderToFirestore(lo)
+                  .then(() => {
+                    recordSyncEvent({
+                      title: "Orders uploaded",
+                      detail: `Uploaded order for "${lo.bookTitle}"`,
+                      category: "orders",
+                      status: "synced",
+                      itemCount: 1,
+                    });
+                  })
+                  .catch((err) => {
+                    console.warn(`Firestore sync upload failed for purchase order: ${lo.id}`, err);
+                  });
+              });
+
+              recordSyncEvent({
+                title: "Orders synced",
+                detail: `${finalOrders.length} purchase orders verified`,
+                category: "orders",
+                status: "synced",
+                itemCount: finalOrders.length,
               });
 
               return finalOrders;
@@ -869,152 +958,260 @@ export default function App() {
   }, [isOnline, currentUser]);
 
   // Automated Sync Service for Offline Data immediately upon detecting active connection
-  useEffect(() => {
-    if (isOnline) {
-      console.log("🔄 Network connection detected! Automating synchronization service for all pending offline data stores...");
-      
-      // 1. Sync Books
+  const runBackgroundSync = async () => {
+    if (!effectiveIsOnline) {
+      recordSyncEvent({
+        title: "Offline mode active",
+        detail: "Background sync paused until an internet connection is available",
+        category: "offline_cache",
+        status: "queued",
+        itemCount: 0,
+      });
+      return;
+    }
+
+    const conn = await testConnection();
+    recordSyncEvent({
+      title: conn.connected ? "Firebase Firestore connected" : "Firebase offline fallback",
+      detail: conn.connected
+        ? `Connected to ${conn.projectId} (${conn.databaseId})`
+        : "Cloud Firestore unreachable; serving cached offline data",
+      category: "offline_cache",
+      status: conn.connected ? "synced" : "queued",
+      itemCount: 1,
+    });
+
+    const tasks: Promise<void>[] = [];
+
+    // 1. Sync Books
+    tasks.push(
       fetchBooksFromFirestore()
         .then((remoteBooks) => {
           setBooks((prevBooks) => {
-            const remoteIds = new Set((remoteBooks || []).map(b => b.id));
-            const pendingUpload = prevBooks.filter(b => !remoteIds.has(b.id));
-            
+            const remoteIds = new Set((remoteBooks || []).map((b) => b.id));
+            const pendingUpload = prevBooks.filter((b) => !remoteIds.has(b.id));
+
             if (pendingUpload.length > 0) {
-              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local books metadata to firestore...`);
               pendingUpload.forEach((b) => {
-                saveBookToFirestore(b).catch(err => {
+                saveBookToFirestore(b).catch((err) => {
                   console.warn(`[Sync Warning] Failed to upload book ${b.title}:`, err);
                 });
               });
             }
-            
+
             const merged = [...prevBooks];
-            (remoteBooks || []).forEach(rb => {
-              if (!merged.some(mb => mb.id === rb.id)) {
+            (remoteBooks || []).forEach((rb) => {
+              if (!merged.some((mb) => mb.id === rb.id)) {
                 merged.push(rb);
               }
             });
             localStorage.setItem("WAFULA_BOOKS", JSON.stringify(merged));
+            recordSyncEvent({
+              title: pendingUpload.length > 0 ? "Books synced & uploaded" : "Books synced",
+              detail:
+                pendingUpload.length > 0
+                  ? `Uploaded ${pendingUpload.length} local books and verified ${merged.length} total`
+                  : `${merged.length} books synchronized with offline storage`,
+              category: "books",
+              status: "synced",
+              itemCount: merged.length,
+            });
             return merged;
           });
         })
-        .catch(err => console.warn("Automated books metadata sync fetch failed:", err));
+        .catch((err) => {
+          console.warn("Automated books metadata sync fetch failed:", err);
+          recordSyncEvent({
+            title: "Books sync failed",
+            detail: "Could not reach cloud library; using cached catalog",
+            category: "books",
+            status: "failed",
+            itemCount: 0,
+          });
+        })
+    );
 
-      // 2. Sync Saved Documents
-      const targetUserId = currentUser?.email || "guest_academic";
+    // 2. Sync Saved Documents
+    const targetUserId = currentUser?.email || "guest_academic";
+    tasks.push(
       fetchSavedDocumentsFromFirestore(targetUserId)
         .then((remoteDocs) => {
           setSavedDocuments((prevDocs) => {
-            const remoteIds = new Set((remoteDocs || []).map(d => d.id));
-            const pendingUpload = prevDocs.filter(d => !remoteIds.has(d.id));
-            
+            const remoteIds = new Set((remoteDocs || []).map((d) => d.id));
+            const pendingUpload = prevDocs.filter((d) => !remoteIds.has(d.id));
+
             if (pendingUpload.length > 0) {
-              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local documents metadata to firestore...`);
               pendingUpload.forEach((d) => {
-                saveDocumentToFirestore(d).catch(err => {
+                saveDocumentToFirestore(d).catch((err) => {
                   console.warn(`[Sync Warning] Failed to upload document ${d.title}:`, err);
                 });
               });
             }
-            
+
             const merged = [...prevDocs];
-            (remoteDocs || []).forEach(rd => {
-              if (!merged.some(md => md.id === rd.id)) {
+            (remoteDocs || []).forEach((rd) => {
+              if (!merged.some((md) => md.id === rd.id)) {
                 merged.push(rd);
               }
             });
             localStorage.setItem("WAFULA_SAVED_DOCUMENTS", JSON.stringify(merged));
+            recordSyncEvent({
+              title: pendingUpload.length > 0 ? "Documents uploaded" : "Documents synced",
+              detail:
+                pendingUpload.length > 0
+                  ? `Uploaded ${pendingUpload.length} local study documents`
+                  : `${merged.length} saved documents verified offline`,
+              category: "documents",
+              status: "synced",
+              itemCount: merged.length,
+            });
             return merged;
           });
         })
-        .catch(err => console.warn("Automated documents metadata sync fetch failed:", err));
+        .catch((err) => {
+          console.warn("Automated documents metadata sync fetch failed:", err);
+        })
+    );
 
-      // 3. Sync Offline Community Chat Messages
+    // 3. Sync Offline Community Chat Messages
+    tasks.push(
       fetchCommunityMessagesFromFirestore()
         .then((remoteMsgs) => {
           setCommunityMessages((prevMsgs) => {
-            const remoteIds = new Set((remoteMsgs || []).map(m => m.id));
-            const pendingUpload = prevMsgs.filter(m => !remoteIds.has(m.id));
-            
+            const remoteIds = new Set((remoteMsgs || []).map((m) => m.id));
+            const pendingUpload = prevMsgs.filter((m) => !remoteIds.has(m.id));
+
             if (pendingUpload.length > 0) {
-              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending local community messages to firestore...`);
               pendingUpload.forEach((m) => {
-                saveCommunityMessageToFirestore(m).catch(err => {
+                saveCommunityMessageToFirestore(m).catch((err) => {
                   console.warn(`[Sync Warning] Failed to upload community message:`, err);
                 });
               });
             }
-            
+
             const merged = [...prevMsgs];
-            (remoteMsgs || []).forEach(rm => {
-              if (!merged.some(mm => mm.id === rm.id)) {
+            (remoteMsgs || []).forEach((rm) => {
+              if (!merged.some((mm) => mm.id === rm.id)) {
                 merged.push(rm);
               }
             });
             localStorage.setItem("WAFULA_CHAT_MESSAGES", JSON.stringify(merged));
+            recordSyncEvent({
+              title: pendingUpload.length > 0 ? "Messages uploaded" : "Messages synced",
+              detail: `${merged.length} community messages cached offline`,
+              category: "messages",
+              status: "synced",
+              itemCount: merged.length,
+            });
             return merged;
           });
         })
-        .catch(err => console.warn("Automated community messages sync failed:", err));
+        .catch((err) => console.warn("Automated community messages sync failed:", err))
+    );
 
-      // 4. Sync Peer-to-Peer Member Upload Requests
+    // 4. Sync Peer-to-Peer Member Upload Requests
+    tasks.push(
       fetchUploadRequestsFromFirestore()
         .then((remoteRequests) => {
           setUploadRequests((prevRequests) => {
-            const remoteIds = new Set((remoteRequests || []).map(r => r.id));
-            const pendingUpload = prevRequests.filter(r => !remoteIds.has(r.id));
-            
+            const remoteIds = new Set((remoteRequests || []).map((r) => r.id));
+            const pendingUpload = prevRequests.filter((r) => !remoteIds.has(r.id));
+
             if (pendingUpload.length > 0) {
-              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending member upload requests to firestore...`);
               pendingUpload.forEach((r) => {
-                saveUploadRequestToFirestore(r).catch(err => {
+                saveUploadRequestToFirestore(r).catch((err) => {
                   console.warn(`[Sync Warning] Failed to upload file request ${r.title}:`, err);
                 });
               });
             }
-            
+
             const merged = [...prevRequests];
-            (remoteRequests || []).forEach(rr => {
-              if (!merged.some(mr => mr.id === rr.id)) {
+            (remoteRequests || []).forEach((rr) => {
+              if (!merged.some((mr) => mr.id === rr.id)) {
                 merged.push(rr);
               }
             });
             localStorage.setItem("WAFULA_MEMBER_UPLOADS", JSON.stringify(merged));
+            recordSyncEvent({
+              title: pendingUpload.length > 0 ? "Uploads uploaded" : "Uploads synced",
+              detail:
+                pendingUpload.length > 0
+                  ? `Uploaded ${pendingUpload.length} queued member uploads`
+                  : `${merged.length} upload records verified`,
+              category: "uploads",
+              status: "synced",
+              itemCount: merged.length,
+            });
             return merged;
           });
         })
-        .catch(err => console.warn("Automated member upload requests sync failed:", err));
+        .catch((err) => console.warn("Automated member upload requests sync failed:", err))
+    );
 
-      // 5. Sync eBook order bookings
+    // 5. Sync eBook order bookings
+    tasks.push(
       fetchBookOrdersFromFirestore()
         .then((remoteOrders) => {
           setBookOrders((prevOrders) => {
-            const remoteIds = new Set((remoteOrders || []).map(o => o.id));
-            const pendingUpload = prevOrders.filter(o => !remoteIds.has(o.id));
-            
+            const remoteIds = new Set((remoteOrders || []).map((o) => o.id));
+            const pendingUpload = prevOrders.filter((o) => !remoteIds.has(o.id));
+
             if (pendingUpload.length > 0) {
-              console.log(`[Sync Engine] Uploading ${pendingUpload.length} pending eBook orders to firestore...`);
               pendingUpload.forEach((o) => {
-                saveBookOrderToFirestore(o).catch(err => {
+                saveBookOrderToFirestore(o).catch((err) => {
                   console.warn(`[Sync Warning] Failed to upload eBook order:`, err);
                 });
               });
             }
-            
+
             const merged = [...prevOrders];
-            (remoteOrders || []).forEach(ro => {
-              if (!merged.some(mo => mo.id === ro.id)) {
+            (remoteOrders || []).forEach((ro) => {
+              if (!merged.some((mo) => mo.id === ro.id)) {
                 merged.push(ro);
               }
             });
             localStorage.setItem("WAFULA_BOOK_ORDERS", JSON.stringify(merged));
+            recordSyncEvent({
+              title: pendingUpload.length > 0 ? "Orders uploaded" : "Orders synced",
+              detail: `${merged.length} book orders synchronized`,
+              category: "orders",
+              status: "synced",
+              itemCount: merged.length,
+            });
             return merged;
           });
         })
-        .catch(err => console.warn("Automated eBook orders sync failed:", err));
+        .catch((err) => console.warn("Automated eBook orders sync failed:", err))
+    );
+
+    // 6. Sync any offline-queued Supabase Storage Vault files if configured & signed in
+    const vaultOwner = currentUser?.id || currentUser?.email;
+    if (isSupabaseConfigured && vaultOwner) {
+      tasks.push(
+        syncLocalVaultFilesToSupabase(vaultOwner)
+          .then((syncedCount) => {
+            if (syncedCount > 0) {
+              recordSyncEvent({
+                title: "Supabase Storage synced",
+                detail: `Synchronized ${syncedCount} private vault files to Supabase Storage`,
+                category: "uploads",
+                status: "synced",
+                itemCount: syncedCount,
+              });
+            }
+          })
+          .catch(() => {})
+      );
     }
-  }, [isOnline, currentUser]);
+
+    await Promise.allSettled(tasks);
+  };
+
+  useEffect(() => {
+    if (isOnline && !offlineMode) {
+      runBackgroundSync();
+    }
+  }, [isOnline, offlineMode, currentUser]);
 
   // Fetch Community Messages in real-time or via helper
   useEffect(() => {
@@ -1318,30 +1515,30 @@ export default function App() {
     handleUnlockBadge("badge_3"); // unlocking the critic reviewer badge
   };
 
-  // Ebook purchases
+  // Verified eBook purchase entitlement sync (triggered after Daraja M-Pesa confirmation in Store)
   const handlePurchaseBook = (id: string) => {
     if (!currentUser) {
       handleLogIn();
       return;
     }
-    
-    const targetBook = books.find(b => b.id === id);
+
+    const targetBook = books.find((b) => b.id === id);
     if (!targetBook) return;
 
-    // Check if they already own it
-    if (purchasedBookIds.includes(id)) {
-      alert("You already have full access authorization to read this eBook!");
-      return;
-    }
+    setPurchasedBookIds((prevIds) => {
+      const next = prevIds.includes(id) ? prevIds : [...prevIds, id];
+      localStorage.setItem("WAFULA_PURCHASED", JSON.stringify(next));
+      return next;
+    });
 
-    setCheckoutBook(targetBook);
-    setCheckoutPhoneNumber(currentUser.phone || "");
-    setCheckoutCustomerIDInput(currentUser.email || "");
-    setCheckoutCustomerNameInput(currentUser.name || "");
-    setCheckoutAccountDetails("");
-    setCheckoutPaymentMethod("mpesa");
-    setCheckoutStep("form");
-    setCheckoutCountdown(15);
+    void syncOrdersFromServer();
+    handleUnlockBadge("badge_2");
+    logUserActivity(
+      currentUser.email,
+      currentUser.name,
+      "Purchase Book",
+      `Verified M-Pesa payment and unlocked "${targetBook.title}" (ID: ${targetBook.id}, KES ${targetBook.price || 0}).`
+    );
   };
 
   // Quick save FREE eBook directly to personal 'My Books' library (paid books go through verified checkout)
@@ -1426,12 +1623,29 @@ export default function App() {
     // Auto approve and auto pay only if user is verified Admin
     const shouldAutoApprove = !!isAdmin;
     const fileId = "upl_" + Date.now();
+    const bookId = `book_uploaded_${fileId}`;
 
     if (actualFile) {
       savePdfToOfflineDb(fileId, actualFile).then(() => {
-        console.log("Member file saved to local IndexedDB store successfully:", fileId);
+        if (type === "pdf") {
+          savePdfToOfflineDb(bookId, actualFile).catch(() => {});
+        }
+        recordSyncEvent({
+          title: "Offline file cached",
+          detail: `Saved "${titleStr}" locally in durable browser storage`,
+          category: "offline_cache",
+          status: "synced",
+          itemCount: 1,
+        });
       }).catch((e) => {
-        console.warn("Could not write physical file bytes to IndexedDB indices:", e);
+        console.warn("Could not write physical file bytes to IndexedDB:", e);
+        recordSyncEvent({
+          title: "Local file save warning",
+          detail: `Could not cache binary copy of "${titleStr}" locally`,
+          category: "offline_cache",
+          status: "failed",
+          itemCount: 0,
+        });
       });
     }
 
@@ -1456,14 +1670,76 @@ export default function App() {
 
     setUploadRequests((prev) => {
       const updated = [fresh, ...prev];
-      localStorage.setItem("WAFULA_MEMBER_UPLOADS", JSON.stringify(updated));
+      safeSetLocalStorage("WAFULA_MEMBER_UPLOADS", JSON.stringify(updated));
       return updated;
     });
 
     // Write upload request directly to Firestore to synchronize with other users
-    saveUploadRequestToFirestore(fresh).catch((err) => {
-      console.warn("Offline: Upload request queued locally, online backup scheduled on reconnect:", err);
-    });
+    saveUploadRequestToFirestore(fresh)
+      .then(() => {
+        recordSyncEvent({
+          title: "Uploads uploaded",
+          detail: `Uploaded "${titleStr}" to cloud queue`,
+          category: "uploads",
+          status: "synced",
+          itemCount: 1,
+        });
+      })
+      .catch((err) => {
+        console.warn("Offline: Upload request queued locally, online backup scheduled on reconnect:", err);
+        recordSyncEvent({
+          title: "Uploads queued offline",
+          detail: `Saved "${titleStr}" locally for upload on reconnect`,
+          category: "uploads",
+          status: "queued",
+          itemCount: 1,
+        });
+      });
+
+    // Mirror physical file to Supabase Storage (user-uploads bucket) and Express uploads when online
+    if (actualFile && (currentUser?.id || currentUser?.email)) {
+      const ownerId = currentUser?.id || currentUser?.email || "member";
+      const folder = type === "photo" ? "images" : "documents";
+      uploadUserFile(ownerId, actualFile, folder)
+        .then((res) => {
+          const storageRef = `supabase://user-uploads/${res.path}`;
+          setUploadRequests((prev) => {
+            const next = prev.map((u) => (u.id === fileId ? { ...u, contentUrl: storageRef } : u));
+            safeSetLocalStorage("WAFULA_MEMBER_UPLOADS", JSON.stringify(next));
+            return next;
+          });
+          saveUploadRequestToFirestore({ ...fresh, contentUrl: storageRef }).catch(() => {});
+          if (res.storageBackend === "supabase") {
+            recordSyncEvent({
+              title: "Supabase Storage synced",
+              detail: `Backed up "${titleStr}" to Supabase Storage bucket`,
+              category: "uploads",
+              status: "synced",
+              itemCount: 1,
+            });
+          }
+        })
+        .catch(() => {});
+
+      // Also persist PDF document copy on Express server if user has an active session
+      if (type === "pdf" && actualFile.size <= 25 * 1024 * 1024) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = String(reader.result || "");
+          if (!base64) return;
+          secureApiFetch("/api/books/upload-doc", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: bookId,
+              fileBase64: base64,
+              fileName: actualFile.name || `${fileId}.pdf`,
+            }),
+          }).catch(() => {});
+        };
+        reader.readAsDataURL(actualFile);
+      }
+    }
 
     if (currentUser) {
       logUserActivity(
@@ -1478,7 +1754,6 @@ export default function App() {
     if (type === "pdf") {
       let bookCoverUrl = fresh.thumbnail;
       
-      // If no thumbnail has been provided, draw a custom screenshot cover page using a virtual canvas matching a high-end leadership/academic aesthetic!
       if (!bookCoverUrl) {
         try {
           const canvas = document.createElement("canvas");
@@ -1486,7 +1761,6 @@ export default function App() {
           canvas.height = 400;
           const ctx = canvas.getContext("2d");
           if (ctx) {
-            // Pick elegant backdrop based on name keywords
             const grad = ctx.createLinearGradient(0, 0, 0, 400);
             const titleLower = titleStr.toLowerCase();
             if (titleLower.includes("lead") || titleLower.includes("manag") || titleLower.includes("govern")) {
@@ -1505,7 +1779,6 @@ export default function App() {
             ctx.fillStyle = grad;
             ctx.fillRect(0, 0, 300, 400);
 
-            // Tech mesh lattice lines
             ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
             ctx.lineWidth = 1;
             for (let i = 0; i < 300; i += 25) {
@@ -1515,12 +1788,10 @@ export default function App() {
               ctx.stroke();
             }
 
-            // Outer golden thin border
             ctx.strokeStyle = "#fbbf24";
             ctx.lineWidth = 3;
             ctx.strokeRect(12, 12, 276, 376);
 
-            // Wrap and render book title
             ctx.fillStyle = "#ffffff";
             ctx.font = "bold 15px sans-serif";
             ctx.textAlign = "center";
@@ -1540,31 +1811,30 @@ export default function App() {
             }
             ctx.fillText(line.trim(), 150, yCoord);
 
-            // Subtitle or publisher
             ctx.fillStyle = "#facc15";
             ctx.font = "bold 11px monospace";
             ctx.fillText(`By ${fresh.userName}`, 150, yCoord + 45);
 
-            // Watermark layout text
             ctx.fillStyle = "rgba(239, 68, 68, 0.85)";
             ctx.font = "bold 8px monospace";
-            ctx.fillText("📷 PDF COVERSHEET SCREENSHOT SECURE", 150, 345);
+            ctx.fillText("PDF COVERSHEET SECURE", 150, 345);
 
             bookCoverUrl = canvas.toDataURL("image/jpeg");
           }
         } catch (e) {
-          bookCoverUrl = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
+          bookCoverUrl = BOOKS_DEFAULT_COVER;
         }
       }
 
       const gBook: Book = {
-        id: `book_uploaded_${fresh.id}`,
+        id: bookId,
         title: fresh.title,
         author: fresh.userName,
+        authorEmail: currentUser?.email,
         price: 350,
         description: `Verified study resource published by ${fresh.userName}. Beautifully bound in high-resolution vector layout.`,
         category: "Leadership",
-        coverImage: bookCoverUrl || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350",
+        coverImage: bookCoverUrl || BOOKS_DEFAULT_COVER,
         fileSize: fresh.fileSize,
         pages: Math.floor(Math.random() * 60 + 90),
         publishedDate: fresh.date,
@@ -1574,19 +1844,28 @@ export default function App() {
         reviewsCount: 1,
         pdfUrl: actualFile ? "indexeddb://" + fresh.id : "Community Secure Read Document - Authenticated Offline DRM Protected Copy",
         allowPreview: true,
-        previewDuration: 120
+        previewDuration: 120,
+        isSynced: false
       };
 
       setBooks((prevBooks) => {
         const next = [gBook, ...prevBooks];
-        localStorage.setItem("WAFULA_BOOKS", JSON.stringify(next));
+        safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(next));
         return next;
       });
 
-      // Synchronize auto-approved book catalog with Firestore database for immediate online display
-      saveBookToFirestore(gBook).catch((err) => {
-        console.warn("Offline: Catalog element saved locally, online lookup synchronization scheduled:", err);
-      });
+      // Synchronize auto-approved book catalog with Firestore database without risking premature onSnapshot deletion
+      saveBookToFirestore({ ...gBook, isSynced: true })
+        .then(() => {
+          setBooks((current) => {
+            const next = current.map((item) => (item.id === gBook.id ? { ...item, isSynced: true } : item));
+            safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(next));
+            return next;
+          });
+        })
+        .catch((err) => {
+          console.warn("Offline: Catalog element saved locally, online lookup synchronization scheduled:", err);
+        });
     }
   };
 
@@ -1596,11 +1875,13 @@ export default function App() {
       const updated = prev.map((u) => {
         if (u.id === id) {
           const isApproved = u.status === 'approved';
-          return { ...u, paid: true, allowedToPublic: isApproved };
+          const nextItem = { ...u, paid: true, allowedToPublic: isApproved };
+          saveUploadRequestToFirestore(nextItem).catch(() => {});
+          return nextItem;
         }
         return u;
       });
-      localStorage.setItem("WAFULA_MEMBER_UPLOADS", JSON.stringify(updated));
+      safeSetLocalStorage("WAFULA_MEMBER_UPLOADS", JSON.stringify(updated));
       return updated;
     });
 
@@ -1620,7 +1901,7 @@ export default function App() {
               price: 200,
               description: `Verified member community publication by ${item.userName}. All visual credentials verified.`,
               category: "Non-Fiction",
-              coverImage: item.thumbnail || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350",
+              coverImage: item.thumbnail || BOOKS_DEFAULT_COVER,
               fileSize: item.fileSize,
               pages: Math.floor(Math.random() * 40 + 60),
               publishedDate: item.date,
@@ -1628,12 +1909,18 @@ export default function App() {
               status: "active",
               rating: 5,
               reviewsCount: 1,
-              pdfUrl: "Community Secure Read Document - Authenticated Offline DRM Protected Copy",
+              pdfUrl: item.contentUrl || (item.hasLocalBlob ? `indexeddb://${item.id}` : "Community Secure Read Document - Authenticated Offline DRM Protected Copy"),
               allowPreview: true,
-              previewDuration: 45
+              previewDuration: 45,
+              isSynced: false
             };
             const next = [gBook, ...prevBooks];
-            localStorage.setItem("WAFULA_BOOKS", JSON.stringify(next));
+            safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(next));
+            saveBookToFirestore({ ...gBook, isSynced: true })
+              .then(() => {
+                setBooks((curr) => curr.map((b) => (b.id === gBook.id ? { ...b, isSynced: true } : b)));
+              })
+              .catch(() => {});
             return next;
           });
         }
@@ -1711,7 +1998,7 @@ export default function App() {
               price: 200,
               description: `Verified member community publication by ${item.userName}. All visual credentials verified.`,
               category: "Non-Fiction",
-              coverImage: item.thumbnail || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350",
+              coverImage: item.thumbnail || BOOKS_DEFAULT_COVER,
               fileSize: item.fileSize,
               pages: Math.floor(Math.random() * 40 + 60),
               publishedDate: item.date,
@@ -2154,13 +2441,13 @@ export default function App() {
           <div className="mx-3 sm:mx-4 mb-3 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/50 dark:border-amber-700/60 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left text-xs text-amber-950 dark:text-amber-100 shadow-xs">
             <div className="space-y-0.5">
               <p className="font-black text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-300">
-                Production Setup Banner (Preview Fallback Active)
+                Firebase Connected · External Keys Pending
               </p>
               <p className="text-[11px] leading-relaxed">
-                {!isSupabaseConfigured && "Supabase env vars (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY) "}
+                {!isSupabaseConfigured && "Supabase env vars (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY) "}
                 {!isSupabaseConfigured && !isPaystackConfigured && "and "}
                 {!isPaystackConfigured && "Paystack key (VITE_PAYSTACK_PUBLIC_KEY) "}
-                are not set yet. Running safely in Demo Preview Mode without crashing.
+                are not set yet. Firebase Firestore sync remains active while unconfigured services stay in local mode.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -2255,7 +2542,6 @@ export default function App() {
                   books={books}
                   onUnlockBookManual={(_bookId) => {
                     syncOrdersFromServer();
-                    alert("Book entitlements are verified exclusively via Finance / Order Confirmation.");
                   }}
                 />
               ) : (
@@ -2349,6 +2635,7 @@ export default function App() {
               <Community
                 currentUser={currentUser}
                 onLogIn={handleLogIn}
+                onLogOut={handleLogOut}
                 messages={communityMessages}
                 onSendMessage={handleSendCommunityMessage}
                 onDeleteMessage={handleDeleteCommunityMessage}
@@ -2356,6 +2643,20 @@ export default function App() {
                 broadcastAnnouncement={broadcastAnnouncement}
                 onUpdateBroadcastAnnouncement={handleUpdateBroadcastAnnouncement}
                 isLoading={isFetchingCommunity}
+                onNavigate={navigateTo}
+                initialDmTarget={pendingDmTarget}
+                onClearDmTarget={() => setPendingDmTarget(null)}
+              />
+            )}
+
+            {currentView === "professional" && (
+              <ProfessionalHub
+                currentUser={currentUser}
+                onLogIn={handleLogIn}
+                onStartDm={(email, name) => {
+                  setPendingDmTarget({ email, name });
+                  navigateTo("community");
+                }}
               />
             )}
 
@@ -2373,6 +2674,8 @@ export default function App() {
                 communityMessages={communityMessages}
                 onRemoveWishlist={handleToggleWishlist}
                 onAddNewDocument={handleAddNewDocument}
+                isOnline={effectiveIsOnline}
+                onTriggerSync={runBackgroundSync}
               />
             )}
 
@@ -2390,6 +2693,35 @@ export default function App() {
               <CampusesMap
                 onBack={() => navigateTo("store")}
                 onNavigateView={navigateTo}
+              />
+            )}
+
+            {currentView === "virtual-classroom" && (
+              <ZionVirtualClassroom
+                currentUser={currentUser}
+                onLeaveClass={() => navigateTo("school")}
+              />
+            )}
+
+            {currentView === "ai-tutor" && (
+              <AITutorStudio
+                currentUser={currentUser}
+                onLogIn={handleLogIn}
+                onSaveToPersonalDocs={handleAddNewDocument}
+              />
+            )}
+
+            {currentView === "bible-school" && (
+              <BibleSchoolEnvironment
+                currentUser={currentUser}
+                onLogIn={handleLogIn}
+                onNavigate={navigateTo}
+              />
+            )}
+
+            {currentView === "evangelism-forum" && (
+              <EvangelismMinistryForum
+                currentUser={currentUser}
               />
             )}
 
@@ -2453,13 +2785,13 @@ export default function App() {
       </main>
 
       {/* Footer copyright */}
-      <footer className="bg-bg-surface border-t border-border-main py-6 text-center text-xs text-text-secondary font-mono lg:pl-52">
+      <footer className="bg-bg-surface border-t border-border-main pt-6 pb-20 lg:pb-6 text-center text-xs text-text-secondary font-mono lg:pl-52">
         <div>© 2026 Zion Digital · Read. Lead. Transform. · Bungoma, Kenya.</div>
       </footer>
 
       {/* Universal Floating Voice Commands Assistant Widget */}
-      <div className="fixed bottom-6 right-6 z-40">
-        <div className="flex flex-col items-end space-y-2">
+      <div className="fixed bottom-20 left-3 lg:bottom-6 lg:left-56 z-40">
+        <div className="flex flex-col items-start space-y-2">
           {voiceNotification && (
             <div className="bg-slate-900 text-white text-[10px] sm:text-xs font-bold py-2 px-3.5 rounded-xl shadow-xl max-w-xs border border-slate-800 animate-bounce">
               {voiceNotification}
@@ -2481,360 +2813,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Lipa Na M-Pesa & eCitizen Global Checkout Gateway Dialog Popup */}
-      {checkoutBook && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setCheckoutBook(null)} />
-          
-          <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl border border-slate-300 p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-200 select-text">
-            {/* Header branding */}
-            <div className="flex items-center justify-between border-b border-stone-200 pb-4 mb-4">
-              <div className="flex items-center space-x-2.5 text-left">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#dc2626] text-white font-black text-xs shadow-md">
-                  eC
-                </span>
-                <div>
-                  <h3 className="font-display font-black text-slate-900 leading-tight uppercase text-xs sm:text-sm tracking-wide">
-                    eCitizen Joint Payment Gateway
-                  </h3>
-                  <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-widest font-mono">
-                    Official Safaricom Lipa Na M-PESA & Foreign Accounts API
-                  </p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setCheckoutBook(null)} 
-                className="text-stone-400 hover:text-stone-900 font-extrabold hover:bg-stone-100 p-1.5 rounded-full transition text-xs cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Book Info Summary */}
-            <div className="mb-4 bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-left">
-              <span className="text-[9px] font-mono font-black text-slate-500 uppercase tracking-widest block">Selected Publication</span>
-              <div className="flex justify-between items-center mt-1">
-                <div className="font-extrabold text-slate-900 text-xs sm:text-sm">{checkoutBook.title}</div>
-                <div className="text-slate-900 font-black text-xs sm:text-sm bg-stone-200/60 px-2.5 py-1 rounded">KES {checkoutBook.price || 350}</div>
-              </div>
-              <p className="text-[10px] text-slate-400 mt-0.5 italic font-bold">Author: {checkoutBook.author} • Genre: {checkoutBook.category}</p>
-            </div>
-
-            {checkoutStep === "form" && (
-              <div className="space-y-4 text-left">
-                {/* Payment channel select */}
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-900">Payment Gateway System</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setCheckoutPaymentMethod("mpesa")}
-                      className={`py-2 px-3.5 rounded-xl border-2 font-black text-[11px] uppercase transition cursor-pointer text-center ${
-                        checkoutPaymentMethod === "mpesa"
-                          ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                          : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
-                      }`}
-                    >
-                      🟢 M-PESA STK
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCheckoutPaymentMethod("ecitizen_local")}
-                      className={`py-2 px-3.5 rounded-xl border-2 font-black text-[11px] uppercase transition cursor-pointer text-center ${
-                        checkoutPaymentMethod === "ecitizen_local"
-                          ? "border-amber-500 bg-amber-50 text-amber-800"
-                          : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
-                      }`}
-                    >
-                      👑 eCitizen Wallet
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCheckoutPaymentMethod("ecitizen_foreign")}
-                      className={`py-2 px-3.5 rounded-xl border-2 font-black text-[11px] uppercase transition cursor-pointer text-center ${
-                        checkoutPaymentMethod === "ecitizen_foreign"
-                          ? "border-blue-500 bg-blue-50 text-blue-800"
-                          : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
-                      }`}
-                    >
-                      🌐 Foreign / Card
-                    </button>
-                  </div>
-                </div>
-
-                {checkoutPaymentMethod === "mpesa" && (
-                  <div className="space-y-3">
-                    {/* Locked Admin Targets */}
-                    <div className="bg-emerald-50 border border-emerald-150 p-3 rounded-xl space-y-2 text-xs font-mono">
-                      <div className="flex items-center space-x-1.5 text-[9.5px] font-bold text-emerald-800 uppercase tracking-widest border-b border-emerald-100 pb-1">
-                        <span>🔒</span>
-                        <span>Locked Billing Target details</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-white p-1.5 rounded-lg border border-emerald-200">
-                          <span className="text-[8px] text-slate-500 uppercase block font-sans">Paybill No</span>
-                          <strong className="text-stone-900 font-extrabold text-xs block text-center mt-0.5">247247</strong>
-                        </div>
-                        <div className="bg-white p-1.5 rounded-lg border border-emerald-200">
-                          <span className="text-[8px] text-slate-500 uppercase block font-sans">Business Account</span>
-                          <strong className="text-stone-950 font-extrabold text-[10px] block text-center mt-0.5 leading-none">7770185693193</strong>
-                        </div>
-                      </div>
-                      <div className="bg-white p-1.5 rounded-lg border border-emerald-200">
-                        <span className="text-[8px] text-slate-500 uppercase block font-sans">Beneficiary Name</span>
-                        <strong className="text-stone-900 font-extrabold text-[10.5px] block text-center mt-0.5">Kelvin opara wafula</strong>
-                      </div>
-                    </div>
-
-                    {/* User Editable Fields */}
-                    <div className="space-y-2 border border-slate-200 bg-slate-50 p-3 rounded-xl text-xs space-y-2">
-                      <span className="text-[9.5px] font-black text-slate-500 uppercase tracking-widest block mb-2">Your Editable Payment Details:</span>
-                      
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-700">Safaricom Mobile Number:</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. 0712345678 or +254712345678"
-                          value={checkoutPhoneNumber}
-                          onChange={(e) => setCheckoutPhoneNumber(e.target.value.replace(/[^0-9+]/g, ""))}
-                          className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg font-bold font-mono outline-none text-slate-900 focus:border-green-600"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-700">Your Customer ID / Mail Reference:</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Customer ID Email reference"
-                          value={checkoutCustomerIDInput}
-                          onChange={(e) => setCheckoutCustomerIDInput(e.target.value)}
-                          className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg font-mono outline-none text-slate-900 focus:border-[#4f46e5]"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-700">Full Payer Account Name:</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Payer Account Name"
-                          value={checkoutCustomerNameInput}
-                          onChange={(e) => setCheckoutCustomerNameInput(e.target.value)}
-                          className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg font-bold outline-none text-slate-900 focus:border-[#4f46e5]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {checkoutPaymentMethod === "ecitizen_local" && (
-                  <div className="space-y-3">
-                    <p className="text-[10.5px] text-amber-700 bg-amber-50/50 p-3 rounded-lg border border-amber-150 leading-relaxed font-bold">
-                      💡 Pay directly via Bungoma Local Government Study eCitizen Wallet. Transactions are encrypted using standard national treasury guidelines.
-                    </p>
-                    <div className="space-y-1">
-                      <label className="block text-xs font-black text-slate-900">Enter eCitizen National ID / Wallet Account:</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="ID Card Number (e.g. E-391059)"
-                        value={checkoutAccountDetails}
-                        onChange={(e) => setCheckoutAccountDetails(e.target.value)}
-                        className="w-full text-xs p-3 border border-slate-300 bg-slate-50 rounded-xl font-bold font-mono outline-none text-slate-900 focus:bg-white text-slate-900"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {checkoutPaymentMethod === "ecitizen_foreign" && (
-                  <div className="space-y-3">
-                    <p className="text-[10.5px] text-blue-700 bg-blue-50/50 p-3 rounded-lg border border-blue-150 leading-relaxed font-bold">
-                      💡 International currency conversions are supported. Accepts payments from any foreign account worldwide (Visa, MasterCard, PayPal, or Stripe Transfer).
-                    </p>
-                    <div className="space-y-1">
-                      <label className="block text-xs font-black text-slate-900">Foreign Card Number / PayPal ID:</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Enter full Card details / PayPal email"
-                        value={checkoutAccountDetails}
-                        onChange={(e) => setCheckoutAccountDetails(e.target.value)}
-                        className="w-full text-xs p-3 border border-slate-300 bg-slate-50 rounded-xl font-bold font-mono outline-none text-slate-900 focus:bg-white text-slate-900"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-stone-200">
-                  <button
-                    onClick={() => {
-                      if (checkoutPaymentMethod === "mpesa" && !checkoutPhoneNumber.trim()) {
-                        alert("Please enter a valid Safaricom phone number first.");
-                        return;
-                      }
-                      if (checkoutPaymentMethod === "mpesa" && !checkoutCustomerIDInput.trim()) {
-                        alert("Please enter your Customer ID validation mail reference first.");
-                        return;
-                      }
-                      if (checkoutPaymentMethod !== "mpesa" && !checkoutAccountDetails.trim()) {
-                        alert("Please enter your account validation credentials first.");
-                        return;
-                      }
-                      setCheckoutStep("sending_stk");
-                      setTimeout(() => {
-                        setCheckoutStep("waiting_pin");
-                      }, 2500);
-                    }}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-3 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transform active:scale-95 transition"
-                  >
-                    Confirm & Complete Checkout
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {checkoutStep === "sending_stk" && (
-              <div className="py-8 text-center space-y-4 text-slate-900 font-bold">
-                <Loader2 className="h-10 w-10 text-emerald-500 animate-spin mx-auto" />
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-slate-900 text-sm sm:text-base uppercase tracking-wider">Latching Payment Session...</h4>
-                  <p className="text-[11px] text-slate-500 leading-relaxed font-bold">
-                    Initializing Daraja API server payload loops to request STK Push or Citizen ledger handshake. Keep your phone screen open.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {checkoutStep === "waiting_pin" && (
-              <div className="py-8 text-center space-y-4 text-slate-900 font-bold animate-pulse">
-                <div className="relative h-14 w-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-200 shadow-sm">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-20"></span>
-                  <div className="text-xl font-bold">📱</div>
-                </div>
-                <div className="space-y-1.5">
-                  <h4 className="font-extrabold text-slate-900 text-sm sm:text-base uppercase tracking-wider">M-Pesa STK Emitted!</h4>
-                  <p className="text-xs text-slate-700 leading-relaxed font-bold">
-                    Check your mobile phone! A secure Safaricom SIM Toolkit pop-up request has been generated for KES {checkoutBook.price}. Enter your PIN onto the prompt to authorize.
-                  </p>
-                  <div className="inline-block bg-slate-100 px-3 py-1 border border-slate-300 rounded-full text-[10px] font-mono font-black text-slate-700">
-                    AWAITING PIN INPUT: {checkoutCountdown}s
-                  </div>
-                </div>
-
-                {/* --- PHONE DEVICE SIM TOOLKIT FLOATING OVERLAY DIALOGUE (APP LEVEL) --- */}
-                <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-                  <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md" />
-                  
-                  <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/85 shadow-2xl rounded-2xl p-6 select-none font-mono text-[#e2e8f0] text-xs transition">
-                    {/* Header */}
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 mb-3.5">
-                      <div className="flex items-center space-x-1.5">
-                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="font-sans font-black text-xs text-slate-300 uppercase tracking-widest">SIM TOOLKIT</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 font-bold">M-PESA PUSH</span>
-                    </div>
-
-                    {/* Prompt Statement */}
-                    <div className="space-y-2 border-b border-dashed border-slate-800 pb-3 mb-4">
-                      <p className="text-[11px] text-slate-300 leading-relaxed text-left">
-                        Do you want to authorize payment of <strong className="text-white font-black">KES {checkoutBook.price}</strong> to Paybill <strong className="text-emerald-400">247247</strong> Account <strong className="text-emerald-400">7770185693193</strong>?
-                      </p>
-                      <p className="text-[10px] text-slate-500 italic text-left">
-                        Recipient Payee: Kelvin opara wafula
-                      </p>
-                    </div>
-
-                    {/* Secure PIN Prompt Input */}
-                    <div className="space-y-2 text-left">
-                      <label className="block text-[10px] font-extrabold uppercase text-slate-450 tracking-widest text-[#94a3b8]">Enter M-PESA PIN Code:</label>
-                      <input
-                        type="password"
-                        required
-                        maxLength={4}
-                        value={checkoutMpesaPin}
-                        onChange={(e) => setCheckoutMpesaPin(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="••••"
-                        className="w-full text-center tracking-[1.5em] text-lg font-black bg-slate-950 border border-slate-700 p-2.5 rounded-xl text-white outline-none focus:border-emerald-400 focus:bg-black font-mono transition"
-                      />
-                    </div>
-
-                    {/* Action controls */}
-                    <div className="flex gap-3 mt-6">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCheckoutStep("form");
-                          setCheckoutMpesaPin("");
-                          alert("⚠️ Payment Authorization Cancelled from SIM Toolkit.");
-                        }}
-                        className="flex-1 py-1.5 font-bold hover:text-white text-slate-400 bg-slate-800 hover:bg-slate-750 transition rounded-xl"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (checkoutMpesaPin.length < 4) {
-                            alert("⚠️ Security Protection: Enter a valid 4-digit PIN password to confirm.");
-                            return;
-                          }
-                          // Proceed to searching loading stage
-                          setCheckoutStep("searching_payment");
-                          setCheckoutCountdown(5); // Reset loader stopwatch
-                          setCheckoutMpesaPin("");
-                        }}
-                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 font-extrabold text-white transition rounded-xl text-center shadow-lg shadow-emerald-900/20"
-                      >
-                        Send / OK
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {checkoutStep === "searching_payment" && (
-              <div className="py-8 text-center space-y-4 text-slate-900 font-bold">
-                <Loader2 className="h-10 w-10 text-emerald-500 animate-spin mx-auto" />
-                <div className="space-y-2">
-                  <h4 className="font-extrabold text-slate-950 text-sm uppercase tracking-wide">Searching & Scanning Payment...</h4>
-                  <div className="inline-block bg-emerald-50 text-emerald-800 px-3 py-1 border border-emerald-200 rounded-full font-mono text-[10px] font-black">
-                    SCAN INDICES: WAFULA_LIPA_MPESA_LEDGER_247247...
-                  </div>
-                  <p className="text-[11px] text-slate-550 leading-relaxed font-bold px-4">
-                    The app is searching the Safaricom network ledger for KES {checkoutBook.price} paid by {checkoutCustomerNameInput || currentUser?.name || "Member"} with Verification ID "{checkoutCustomerIDInput || currentUser?.email}". Undergoing secure compliance validation loops...
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {checkoutStep === "completed" && (
-              <div className="py-8 text-center space-y-4 text-slate-900">
-                <div className="h-12 w-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto border border-amber-300 font-black text-lg">
-                  ⏳
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-black text-slate-950 text-sm sm:text-base uppercase tracking-wider">Order Recorded — Awaiting Payment Confirmation</h4>
-                  <p className="text-[11.5px] text-slate-650 font-bold leading-relaxed px-2">
-                    Your order for <strong>"{checkoutBook.title}"</strong> (<strong>KES {checkoutBook.price || 350}</strong>) has been recorded as <strong>Pending</strong>. Full reading and PDF downloads unlock automatically once trusted M-Pesa / finance confirmation completes.
-                  </p>
-                </div>
-                <div className="pt-2">
-                  <button
-                    onClick={() => setCheckoutBook(null)}
-                    className="bg-slate-900 hover:bg-slate-800 text-white font-extrabold py-2.5 px-6 rounded-xl text-xs uppercase cursor-pointer transition active:scale-95"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Dynamic Member Authentication Modal popup */}
       {showAuthModal && (

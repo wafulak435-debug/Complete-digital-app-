@@ -8,8 +8,9 @@ import {
 } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, addDoc, onSnapshot, query, where, deleteDoc, doc, orderBy } from "firebase/firestore";
-import { getPdfFromOfflineDb } from "../utils/pdfDb";
+import { getPdfFromOfflineDb, savePdfToOfflineDb } from "../utils/pdfDb";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import { getUserFileSignedUrl } from "../lib/supabaseClient";
 
 // --- INDEXEDDB OFFLINE BUFFER ENGINE ---
 const openIndexedDB = (): Promise<IDBDatabase> => {
@@ -445,6 +446,27 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
           console.error("Reader: Failed to load book blob from IndexedDB indices:", err);
           if (active) setResolvedPdfUrl(null);
         }
+      } else if (book.pdfUrl.startsWith("supabase://")) {
+        try {
+          const signed = await getUserFileSignedUrl(book.pdfUrl, 3600);
+          if (signed) {
+            const resp = await fetch(signed);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              await savePdfToOfflineDb(book.id, blob).catch(() => {});
+              if (active) {
+                localUrlObj = URL.createObjectURL(blob);
+                setResolvedPdfUrl(localUrlObj);
+              }
+              return;
+            }
+            if (active) setResolvedPdfUrl(signed);
+            return;
+          }
+          if (active) setResolvedPdfUrl(null);
+        } catch {
+          if (active) setResolvedPdfUrl(null);
+        }
       } else if (book.pdfUrl.startsWith("/api/books/pdf/") || book.pdfUrl.startsWith("/api/books/docx/")) {
         try {
           const res = await secureApiFetch(book.pdfUrl);
@@ -453,6 +475,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
             return;
           }
           const blob = await res.blob();
+          await savePdfToOfflineDb(book.id, blob).catch(() => {});
           if (active) {
             localUrlObj = URL.createObjectURL(blob);
             setResolvedPdfUrl(localUrlObj);

@@ -10,6 +10,7 @@ import { saveDocumentToFirestore, deleteSavedDocumentFromFirestore } from "../li
 import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
 import { jsPDF } from "jspdf";
 import { invokeGeminiAction } from "../lib/aiClient";
+import QuotePosterDesigner from "./QuotePosterDesigner";
 
 interface DocStudioProps {
   currentUser: { email: string; name: string; role?: string } | null;
@@ -20,7 +21,7 @@ interface DocStudioProps {
 
 export default function DocStudio({ currentUser, onAddNewDocument, savedDocuments, onDeleteDocument }: DocStudioProps) {
   const [editorContent, setEditorContent] = useState("");
-  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media" | "curriculum" | "solver">("ocr");
+  const [activeTab, setActiveTab] = useState<"ocr" | "convert" | "write" | "media" | "curriculum" | "solver" | "posters">("ocr");
   const [docTitle, setDocTitle] = useState("My Document");
   const [autoSaveStatus, setAutoSaveStatus] = useState("Draft saved");
 
@@ -1793,16 +1794,28 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           </button>
           <button
             onClick={() => setActiveTab("solver")}
-            className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 transition ${
-              activeTab === "solver" ? "bg-red-700 text-white shadow-xs" : "bg-neutral-50 text-neutral-600 hover:bg-neutral-105"
+            className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 transition cursor-pointer ${
+              activeTab === "solver" ? "bg-[#155EEF] text-white shadow-xs" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
             }`}
           >
             <Calculator className="h-4 w-4" />
-            <span>AI Math & STEM Solver</span>
+            <span>AI Math &amp; STEM Solver</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("posters")}
+            className={`flex items-center space-x-1.5 rounded-lg px-3 py-2 transition cursor-pointer ${
+              activeTab === "posters" ? "bg-[#0B254D] text-[#F5B82E] shadow-xs" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <Image className="h-4 w-4" />
+            <span>Posters &amp; Schedule</span>
           </button>
         </div>
       </div>
 
+      {activeTab === "posters" ? (
+        <QuotePosterDesigner currentUser={currentUser} />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-12">
         {/* Left Interactive Panel */}
         <div className="lg:col-span-7">
@@ -3284,6 +3297,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
           )}
         </div>
       </div>
+      )}
 
       {/* Dynamic Pop-up Gmail Sharing Dialog Modal */}
       {showGmailModal && (

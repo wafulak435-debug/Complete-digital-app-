@@ -1,12 +1,57 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from "firebase/auth";
-import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+import { getFirestore, enableIndexedDbPersistence, doc, getDocFromServer } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = firebaseConfig.firestoreDatabaseId
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
+
+export const firebaseConfigInfo = {
+  projectId: firebaseConfig.projectId,
+  authDomain: firebaseConfig.authDomain,
+  databaseId: firebaseConfig.firestoreDatabaseId || "(default)",
+};
+
+export interface FirebaseConnectionResult {
+  connected: boolean;
+  offline: boolean;
+  projectId: string;
+  databaseId: string;
+}
+
+/**
+ * Verifies live reachability to the provisioned Cloud Firestore database.
+ */
+export async function testConnection(): Promise<FirebaseConnectionResult> {
+  try {
+    await getDocFromServer(doc(db, "test", "connection"));
+    return {
+      connected: true,
+      offline: false,
+      projectId: firebaseConfigInfo.projectId,
+      databaseId: firebaseConfigInfo.databaseId,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    const offline =
+      message.includes("the client is offline") ||
+      message.includes("unavailable") ||
+      message.includes("Could not reach Cloud Firestore backend");
+    if (offline) {
+      console.error("Please check your Firebase configuration.");
+    }
+    return {
+      connected: !offline,
+      offline,
+      projectId: firebaseConfigInfo.projectId,
+      databaseId: firebaseConfigInfo.databaseId,
+    };
+  }
+}
 
 // Enable offline persistence gracefully for local caching when connection is lost or unavailable
 if (typeof window !== "undefined") {
@@ -19,7 +64,12 @@ if (typeof window !== "undefined") {
       console.warn("Firestore persistence failed to enable:", err);
     }
   });
+  void testConnection();
 }
+
+// Standard Google OAuth Provider for Firebase Auth sign-in
+export const firebaseGoogleProvider = new GoogleAuthProvider();
+firebaseGoogleProvider.setCustomParameters({ prompt: "select_account" });
 
 // Configure Google OAuth Provider for Gmail Workspace Integration
 export const provider = new GoogleAuthProvider();
@@ -60,6 +110,20 @@ export const initAuth = (
       if (onAuthFailure) onAuthFailure();
     }
   });
+};
+
+/**
+ * Performs standard Firebase Google Sign-In and returns user + ID token
+ */
+export const firebaseGoogleSignIn = async (): Promise<{ user: FirebaseUser; idToken: string }> => {
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, firebaseGoogleProvider);
+    const idToken = await result.user.getIdToken();
+    return { user: result.user, idToken };
+  } finally {
+    isSigningIn = false;
+  }
 };
 
 /**

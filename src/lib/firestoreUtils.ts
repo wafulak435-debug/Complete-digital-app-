@@ -1,30 +1,84 @@
-import { 
-  collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc, 
-  query, where, orderBy, limit, addDoc 
+import {
+  collection, doc, getDocs, getDoc, setDoc, updateDoc, deleteDoc,
+  query, where, orderBy, limit, addDoc
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { auth, db } from "./firebase";
 import { User, Book, CommunityMessage, SavedDocument, MemberUploadRequest, AppSettings, BookOrder, SystemNotification, WifiPurchase, SearchHistoryItem } from "../types";
 
+export enum OperationType {
+  CREATE = "create",
+  UPDATE = "update",
+  DELETE = "delete",
+  LIST = "list",
+  GET = "get",
+  WRITE = "write",
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  };
+}
+
 /**
- * Normalizes Firebase Firestore permission-denied errors into structured JSON.
+ * Normalizes Firebase Firestore errors into structured JSON while keeping offline queueing resilient.
  */
-function handleFirestoreError(error: any, operationName: string): any {
-  console.warn(`Firestore warning in ${operationName}:`, error);
-  if (error && (error.code === "permission-denied" || error.message?.includes("insufficient permissions"))) {
-    throw new Error(JSON.stringify({
-      code: "PERMISSION_DENIED",
-      message: `The security rules rejected this database operation (${operationName}). Secure credential matching or Admin authorization is mandatory.`,
-      details: error.message || "Missing or insufficient permissions"
-    }));
+function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): void {
+  const errObj = error as any;
+  const message = errObj instanceof Error ? errObj.message : String(errObj || "Unknown Firestore error");
+
+  // If connection is unavailable/offline, treat gracefully for offline-first queueing.
+  if (
+    errObj &&
+    (errObj.code === "unavailable" ||
+      message.includes("Could not reach Cloud Firestore backend") ||
+      message.includes("the client is offline") ||
+      message.includes("unavailable") ||
+      message.includes("Connection failed"))
+  ) {
+    console.log(`[Offline Sync Queue] Operation '${operationType}' on '${path}' stored in offline state buffers. Will background sync when connection resumes.`);
+    return;
   }
-  
-  // If connection is unavailable/offline, do not throw. Treat as graceful offline-first queueing success representation.
-  if (error && (error.code === "unavailable" || error.message?.includes("Could not reach Cloud Firestore backend") || error.message?.includes("unavailable") || error.message?.includes("Connection failed"))) {
-    console.log(`[Offline Sync Queue] Operation '${operationName}' stored in offline state buffers. Will background sync when connection resumes.`);
-    return; // Returns gracefully instead of crashing the UI
-  }
-  
-  throw error;
+
+  const errInfo: FirestoreErrorInfo = {
+    error: message,
+    operationType,
+    path,
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData.map((provider) => ({
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          email: provider.email,
+          photoUrl: provider.photoURL,
+        })) || [],
+    },
+  };
+
+  console.error("Firestore Error: ", JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 /**
@@ -97,7 +151,16 @@ export async function syncUserSession(userId: string, email: string, name: strin
  */
 export async function fetchBooksFromFirestore(): Promise<Book[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, "books"));
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, "books"));
+    } catch (err: any) {
+      if (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) {
+        querySnapshot = await getDocs(query(collection(db, "books"), where("status", "==", "active")));
+      } else {
+        throw err;
+      }
+    }
     const booksList: Book[] = [];
     querySnapshot.forEach((docSnap) => {
       booksList.push({ ...docSnap.data() } as Book);
@@ -127,7 +190,7 @@ export async function saveBookToFirestore(book: Book): Promise<void> {
   try {
     await setDoc(doc(db, "books", book.id), sanitizeForFirestore(book));
   } catch (e) {
-    handleFirestoreError(e, "saveBookToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `books/${book.id}`);
   }
 }
 
@@ -138,7 +201,7 @@ export async function deleteBookFromFirestore(bookId: string): Promise<void> {
   try {
     await deleteDoc(doc(db, "books", bookId));
   } catch (e) {
-    handleFirestoreError(e, "deleteBookFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `books/${bookId}`);
   }
 }
 
@@ -147,8 +210,21 @@ export async function deleteBookFromFirestore(bookId: string): Promise<void> {
  */
 export async function fetchCommunityMessagesFromFirestore(): Promise<CommunityMessage[]> {
   try {
-    const q = query(collection(db, "communityMessages"), orderBy("date", "asc"));
-    const querySnapshot = await getDocs(q);
+    let querySnapshot;
+    try {
+      const q = query(collection(db, "communityMessages"), orderBy("date", "asc"));
+      querySnapshot = await getDocs(q);
+    } catch (err: any) {
+      if (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) {
+        const publicQ = query(
+          collection(db, "communityMessages"),
+          where("channel", "in", ["#General", "#Book Talks", "#Leadership", "#Publishing", "#generatechat"])
+        );
+        querySnapshot = await getDocs(publicQ);
+      } else {
+        throw err;
+      }
+    }
     const msgs: CommunityMessage[] = [];
     querySnapshot.forEach((docSnap) => {
       msgs.push({ ...docSnap.data() } as CommunityMessage);
@@ -167,7 +243,7 @@ export async function saveCommunityMessageToFirestore(msg: CommunityMessage): Pr
   try {
     await setDoc(doc(db, "communityMessages", msg.id), sanitizeForFirestore(msg));
   } catch (e) {
-    handleFirestoreError(e, "saveCommunityMessageToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `communityMessages/${msg.id}`);
   }
 }
 
@@ -178,7 +254,7 @@ export async function deleteCommunityMessageFromFirestore(id: string): Promise<v
   try {
     await deleteDoc(doc(db, "communityMessages", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteCommunityMessageFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `communityMessages/${id}`);
   }
 }
 
@@ -216,7 +292,7 @@ export async function saveDocumentToFirestore(docObj: SavedDocument): Promise<vo
   try {
     await setDoc(doc(db, "savedDocuments", docObj.id), sanitizeForFirestore(docObj));
   } catch (e) {
-    handleFirestoreError(e, "saveDocumentToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `savedDocuments/${docObj.id}`);
   }
 }
 
@@ -227,7 +303,7 @@ export async function deleteSavedDocumentFromFirestore(id: string): Promise<void
   try {
     await deleteDoc(doc(db, "savedDocuments", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteSavedDocumentFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `savedDocuments/${id}`);
   }
 }
 
@@ -236,7 +312,21 @@ export async function deleteSavedDocumentFromFirestore(id: string): Promise<void
  */
 export async function fetchUploadRequestsFromFirestore(): Promise<MemberUploadRequest[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, "uploadRequests"));
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, "uploadRequests"));
+    } catch (err: any) {
+      if (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) {
+        const publicQ = query(
+          collection(db, "uploadRequests"),
+          where("status", "==", "approved"),
+          where("allowedToPublic", "==", true)
+        );
+        querySnapshot = await getDocs(publicQ);
+      } else {
+        throw err;
+      }
+    }
     const uploadList: MemberUploadRequest[] = [];
     querySnapshot.forEach((docSnap) => {
       uploadList.push({ ...docSnap.data() } as MemberUploadRequest);
@@ -270,7 +360,7 @@ export async function saveUploadRequestToFirestore(reqObj: MemberUploadRequest):
   try {
     await setDoc(doc(db, "uploadRequests", reqObj.id), sanitizeForFirestore(reqObj));
   } catch (e) {
-    handleFirestoreError(e, "saveUploadRequestToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `uploadRequests/${reqObj.id}`);
   }
 }
 
@@ -281,7 +371,7 @@ export async function deleteUploadRequestFromFirestore(id: string): Promise<void
   try {
     await deleteDoc(doc(db, "uploadRequests", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteUploadRequestFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `uploadRequests/${id}`);
   }
 }
 
@@ -290,7 +380,21 @@ export async function deleteUploadRequestFromFirestore(id: string): Promise<void
  */
 export async function fetchBookOrdersFromFirestore(): Promise<BookOrder[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, "bookOrders"));
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, "bookOrders"));
+    } catch (err: any) {
+      if (
+        (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) &&
+        auth.currentUser?.uid
+      ) {
+        querySnapshot = await getDocs(
+          query(collection(db, "bookOrders"), where("userId", "==", auth.currentUser.uid))
+        );
+      } else {
+        throw err;
+      }
+    }
     const orderList: BookOrder[] = [];
     querySnapshot.forEach((docSnap) => {
       orderList.push({ ...docSnap.data() } as BookOrder);
@@ -318,7 +422,7 @@ export async function saveBookOrderToFirestore(orderObj: BookOrder): Promise<voi
   try {
     await setDoc(doc(db, "bookOrders", orderObj.id), sanitizeForFirestore(orderObj));
   } catch (e) {
-    handleFirestoreError(e, "saveBookOrderToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `bookOrders/${orderObj.id}`);
   }
 }
 
@@ -329,7 +433,7 @@ export async function deleteBookOrderFromFirestore(id: string): Promise<void> {
   try {
     await deleteDoc(doc(db, "bookOrders", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteBookOrderFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `bookOrders/${id}`);
   }
 }
 
@@ -410,7 +514,7 @@ export async function saveNotificationToFirestore(notif: SystemNotification): Pr
   try {
     await setDoc(doc(db, "notifications", notif.id), sanitizeForFirestore(notif));
   } catch (e) {
-    handleFirestoreError(e, "saveNotificationToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `notifications/${notif.id}`);
   }
 }
 
@@ -419,7 +523,21 @@ export async function saveNotificationToFirestore(notif: SystemNotification): Pr
  */
 export async function fetchWifiPurchasesFromFirestore(): Promise<WifiPurchase[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, "wifiPurchases"));
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, "wifiPurchases"));
+    } catch (err: any) {
+      if (
+        (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) &&
+        auth.currentUser?.uid
+      ) {
+        querySnapshot = await getDocs(
+          query(collection(db, "wifiPurchases"), where("userId", "==", auth.currentUser.uid))
+        );
+      } else {
+        throw err;
+      }
+    }
     const list: WifiPurchase[] = [];
     querySnapshot.forEach((docSnap) => {
       list.push({ ...docSnap.data() } as WifiPurchase);
@@ -447,7 +565,7 @@ export async function saveWifiPurchaseToFirestore(purchase: WifiPurchase): Promi
   try {
     await setDoc(doc(db, "wifiPurchases", purchase.id), sanitizeForFirestore(purchase));
   } catch (e) {
-    handleFirestoreError(e, "saveWifiPurchaseToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `wifiPurchases/${purchase.id}`);
   }
 }
 
@@ -458,7 +576,7 @@ export async function deleteWifiPurchaseFromFirestore(id: string): Promise<void>
   try {
     await deleteDoc(doc(db, "wifiPurchases", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteWifiPurchaseFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `wifiPurchases/${id}`);
   }
 }
 
@@ -501,7 +619,21 @@ export async function logUserActivity(
  */
 export async function fetchSearchHistoriesFromFirestore(): Promise<SearchHistoryItem[]> {
   try {
-    const querySnapshot = await getDocs(collection(db, "searchHistories"));
+    let querySnapshot;
+    try {
+      querySnapshot = await getDocs(collection(db, "searchHistories"));
+    } catch (err: any) {
+      if (
+        (err?.code === "permission-denied" || String(err?.message || "").includes("insufficient permissions")) &&
+        auth.currentUser?.uid
+      ) {
+        querySnapshot = await getDocs(
+          query(collection(db, "searchHistories"), where("userId", "==", auth.currentUser.uid))
+        );
+      } else {
+        throw err;
+      }
+    }
     const list: SearchHistoryItem[] = [];
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
@@ -530,7 +662,7 @@ export async function saveSearchHistoryToFirestore(item: SearchHistoryItem): Pro
   try {
     await setDoc(doc(db, "searchHistories", item.id), sanitizeForFirestore(item));
   } catch (e) {
-    handleFirestoreError(e, "saveSearchHistoryToFirestore");
+    handleFirestoreError(e, OperationType.WRITE, `searchHistories/${item.id}`);
   }
 }
 
@@ -541,7 +673,7 @@ export async function deleteSearchHistoryFromFirestore(id: string): Promise<void
   try {
     await deleteDoc(doc(db, "searchHistories", id));
   } catch (e) {
-    handleFirestoreError(e, "deleteSearchHistoryFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, `searchHistories/${id}`);
   }
 }
 
@@ -555,7 +687,7 @@ export async function clearSearchHistoriesFromFirestore(userId: string): Promise
     const promises = querySnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
     await Promise.all(promises);
   } catch (e) {
-    handleFirestoreError(e, "clearSearchHistoriesFromFirestore");
+    handleFirestoreError(e, OperationType.DELETE, "searchHistories");
   }
 }
 

@@ -4,7 +4,9 @@ import {
   Search, SlidersHorizontal, Star, ArrowLeft, ArrowRight, Bookmark, ShoppingBag,
   Plus, Eye, Globe, Sparkles, Crown, Cpu, BookOpen, Briefcase, Smile, GraduationCap,
   Heart, Atom, Loader2, MoreVertical, Share2, Check, ChevronLeft, ChevronRight,
-  Compass, CreditCard, Cloud, HardDrive, ShieldCheck
+  Compass, CreditCard, Cloud, HardDrive, ShieldCheck,
+  ChevronDown, ChevronUp, HelpCircle, Scale, ListOrdered, Library, X,
+  History, Download, UploadCloud, Calculator, TrendingUp, Award
 } from "lucide-react";
 import SecureBookReader from "./SecureBookReader";
 import { motion } from "motion/react";
@@ -15,6 +17,8 @@ import {
   SiteShowcaseConfig,
 } from "../lib/showcase";
 import { secureApiFetch } from "../lib/aiClient";
+import VirtualTourCarousel from "./VirtualTourCarousel";
+import { getBuildingPhotoForCategory, getLocalCampusPhotos, CampusBuildingPhoto } from "../utils/campusPhotoManager";
 
 interface StoreProps {
   currentUser: User | null;
@@ -105,6 +109,51 @@ export default function Store({
   const [searchInput, setSearchInput] = useState("");
   const [isSearchingDebounced, setIsSearchingDebounced] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [storeSection, setStoreSection] = useState<"catalog" | "library" | "wishlist" | "orders" | "history">("catalog");
+  const [showMoreCategories, setShowMoreCategories] = useState(false);
+  const [showAllFeatured, setShowAllFeatured] = useState(false);
+  const [showCampusTourInStore, setShowCampusTourInStore] = useState(false);
+  const [campusPhotos, setCampusPhotos] = useState<CampusBuildingPhoto[]>(() => getLocalCampusPhotos());
+
+  useEffect(() => {
+    const handlePhotosUpdate = (e: any) => {
+      setCampusPhotos(e.detail?.photos || getLocalCampusPhotos());
+    };
+    window.addEventListener("ZION_CAMPUS_PHOTOS_UPDATED", handlePhotosUpdate);
+    return () => window.removeEventListener("ZION_CAMPUS_PHOTOS_UPDATED", handlePhotosUpdate);
+  }, []);
+
+  const categoryBuildingPhoto = getBuildingPhotoForCategory(
+    selectedCategory === "Religion" ? "Christian Books" : selectedCategory,
+    campusPhotos
+  );
+
+  const historyStorageKey = `WAFULA_READING_HISTORY_${(currentUser?.email || "guest").toLowerCase()}`;
+  const [readingHistoryIds, setReadingHistoryIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(`WAFULA_READING_HISTORY_${(currentUser?.email || "guest").toLowerCase()}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(historyStorageKey);
+      setReadingHistoryIds(saved ? JSON.parse(saved) : []);
+    } catch {
+      setReadingHistoryIds([]);
+    }
+  }, [historyStorageKey]);
+
+  const recordReadingHistory = (bookId: string) => {
+    setReadingHistoryIds((prev) => {
+      const next = [bookId, ...prev.filter((id) => id !== bookId)].slice(0, 24);
+      localStorage.setItem(historyStorageKey, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -182,15 +231,19 @@ export default function Store({
   const [replyText, setReplyText] = useState("");
   const [showReviewModal, setShowReviewModal] = useState(false);
 
-  // M-Pesa Integration Checkout flow states
+  // M-Pesa Daraja Integration Checkout flow states
   const [showMpesaModal, setShowMpesaModal] = useState(false);
   const [checkoutPhone, setCheckoutPhone] = useState("");
   const [checkoutCustomerID, setCheckoutCustomerID] = useState("");
   const [checkoutCustomerName, setCheckoutCustomerName] = useState("");
-  const [enteredPin, setEnteredPin] = useState("");
-  const [stkStatus, setStkStatus] = useState<"idle" | "pushing" | "waiting" | "finalizing" | "success">("idle");
+  const [stkStatus, setStkStatus] = useState<"idle" | "pushing" | "waiting" | "finalizing" | "success" | "failed">("idle");
   const [checkoutError, setCheckoutError] = useState("");
-  const [stkCountdown, setStkCountdown] = useState(12);
+  const [darajaShortcode, setDarajaShortcode] = useState("1171473");
+  const [darajaEnv, setDarajaEnv] = useState<"sandbox" | "production">("production");
+  const [activeCheckoutId, setActiveCheckoutId] = useState("");
+  const [mpesaReceiptCode, setMpesaReceiptCode] = useState("");
+  const [qrCodeBase64, setQrCodeBase64] = useState<string | null>(null);
+  const [isLoadingQr, setIsLoadingQr] = useState(false);
 
   // Core Premium Interactive states: Instant Preview, Multi-select, Context Menus, Bulk Actions
   const [instantPreviewBook, setInstantPreviewBook] = useState<Book | null>(null);
@@ -201,7 +254,18 @@ export default function Store({
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
 
-  const categories: string[] = ["All", "Fiction", "Leadership", "Technology", "Religion", "Business", "Self-Help", "Education", "Health", "Science"];
+  const categories: string[] = [
+    "All",
+    "Christian Books",
+    "Education",
+    "Leadership",
+    "Mathematics",
+    "Science",
+    "Business",
+    "Personal Development",
+    "Fiction",
+    "Health",
+  ];
 
   // Initialize and synchronise reviews + comments from localStorage on start or when active book details panel focuses
   useEffect(() => {
@@ -315,23 +379,116 @@ export default function Store({
     }).catch(() => {});
   };
 
-  // Trigger STK Push countdown simulations
+  // Load active Daraja PayBill configuration when checkout modal opens
   useEffect(() => {
-    let timer: any;
-    if (stkStatus === "pushing") {
-      timer = setTimeout(() => {
-        setStkStatus("waiting");
-      }, 2500);
-    } else if (stkStatus === "finalizing") {
-      timer = setTimeout(() => {
+    if (!showMpesaModal) return;
+    fetch("/api/mpesa/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success) {
+          if (data.shortcode) setDarajaShortcode(String(data.shortcode));
+          if (data.environment) setDarajaEnv(data.environment);
+        }
+      })
+      .catch(() => {});
+  }, [showMpesaModal]);
+
+  const queryDarajaPaymentStatus = async (checkoutId: string) => {
+    if (!checkoutId) return;
+    try {
+      const res = await secureApiFetch(`/api/mpesa/query/${encodeURIComponent(checkoutId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (data.status === "completed") {
+        setMpesaReceiptCode(String(data.receiptNumber || checkoutId));
         setStkStatus("success");
         if (selectedBook) {
           onPurchaseBook(selectedBook.id);
         }
-      }, 4000); // 4-second loading scan to search payment
+      } else if (data.status === "cancelled" || data.status === "failed") {
+        setCheckoutError(String(data.resultDesc || "M-Pesa payment was cancelled or declined on your handset."));
+        setStkStatus("failed");
+      }
+    } catch {
+      // keep polling while network recovers
     }
-    return () => clearTimeout(timer);
-  }, [stkStatus, selectedBook]);
+  };
+
+  // Poll Daraja payment status while awaiting handset PIN confirmation
+  useEffect(() => {
+    if (stkStatus !== "waiting" || !activeCheckoutId) return;
+    const interval = setInterval(() => {
+      void queryDarajaPaymentStatus(activeCheckoutId);
+    }, 3500);
+    return () => clearInterval(interval);
+  }, [stkStatus, activeCheckoutId, selectedBook]);
+
+  const handleDispatchLiveStkPush = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCheckoutError("");
+    if (!selectedBook) return;
+    if (!currentUser) {
+      onLogIn();
+      return;
+    }
+    if (checkoutPhone.trim().length < 9) {
+      setCheckoutError("Enter a valid Kenyan mobile number (e.g. 0712345678).");
+      return;
+    }
+
+    setStkStatus("pushing");
+    try {
+      const res = await secureApiFetch("/api/mpesa/stkpush", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumber: checkoutPhone.trim(),
+          purpose: "book",
+          targetId: selectedBook.id,
+          customAccountRef: (checkoutCustomerID || currentUser.email || selectedBook.id).slice(0, 12),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success || !data?.checkoutRequestId) {
+        setCheckoutError(data?.error || "Could not initiate M-Pesa STK Push. Please verify your phone number and try again.");
+        setStkStatus("idle");
+        return;
+      }
+
+      setActiveCheckoutId(String(data.checkoutRequestId));
+      setStkStatus("waiting");
+    } catch (err: any) {
+      setCheckoutError(err?.message || "Network error contacting Daraja gateway.");
+      setStkStatus("idle");
+    }
+  };
+
+  const handleGenerateDynamicQr = async () => {
+    if (!selectedBook) return;
+    setIsLoadingQr(true);
+    setCheckoutError("");
+    try {
+      const res = await secureApiFetch("/api/mpesa/qrcode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purpose: "book",
+          targetId: selectedBook.id,
+          customAccountRef: (checkoutCustomerID || selectedBook.id).slice(0, 12),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.qrCode) {
+        setQrCodeBase64(String(data.qrCode));
+      } else {
+        setCheckoutError(data?.message || data?.error || "QR code unavailable; use STK Push or PayBill directly.");
+      }
+    } catch {
+      setCheckoutError("Could not load Daraja QR code.");
+    } finally {
+      setIsLoadingQr(false);
+    }
+  };
 
   // Nested comment replies
   const handleReplySubmit = (parentId: string) => {
@@ -434,12 +591,31 @@ export default function Store({
   };
 
   // Advanced filtration and computation models of books
+  const matchesSelectedCategory = (cat: string, filterCat: string) => {
+    if (filterCat === "All") return true;
+    if (filterCat === "Christian Books" || filterCat === "Religion") {
+      return cat === "Religion" || cat === "Leadership" && false || cat === "Christian Books" as any;
+    }
+    if (filterCat === "Personal Development" || filterCat === "Self-Help") {
+      return cat === "Self-Help" || cat === ("Personal Development" as any);
+    }
+    if (filterCat === "Mathematics") {
+      return cat === ("Mathematics" as any) || cat === "Technology";
+    }
+    return cat === filterCat;
+  };
+
   const filteredBooks = books.filter((b) => {
-    const matchesSearch = b.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          b.author.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === "All" || b.category === selectedCategory;
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      b.title.toLowerCase().includes(q) ||
+      b.author.toLowerCase().includes(q) ||
+      b.category.toLowerCase().includes(q) ||
+      (b.description || "").toLowerCase().includes(q);
+    const matchesCategory = matchesSelectedCategory(b.category, selectedCategory);
     const matchesPrice = b.price >= minPrice && b.price <= maxPrice;
-    
+
     // File Size checking
     const bSize = parseFileSize(b.fileSize);
     const matchesFileSize = bSize <= maxFileSize;
@@ -546,24 +722,30 @@ export default function Store({
           </button>
 
           <div className="grid gap-8 md:grid-cols-12 md:items-start">
-            {/* Book Graphic cover and action bar buttons */}
+            {/* Book Graphic cover and action bar buttons (Book Cover Fix: transparent container, natural colors, zero crop/box/badge overlap) */}
             <div className="md:col-span-4 space-y-4">
-              <div className="aspect-[3/4] w-full overflow-hidden rounded-2xl border border-stone-200 shadow-lg relative bg-neutral-50 flex items-center justify-center">
-                <img src={selectedBook.coverImage} className="w-full h-full object-contain" alt={selectedBook.title} />
-                {selectedBook.isFeatured && (
-                  <span className="absolute top-4 left-4 rounded-full bg-red-700 font-mono text-[10px] font-bold text-white px-3 py-1 uppercase tracking-wider">
-                    Featured
-                  </span>
-                )}
+              <div className="w-full flex items-center justify-center bg-transparent py-2">
+                <img
+                  src={selectedBook.coverImage}
+                  className="max-h-[380px] w-auto max-w-full object-contain"
+                  alt={selectedBook.title}
+                />
               </div>
+              {selectedBook.isFeatured && (
+                <div className="flex justify-center">
+                  <span className="rounded-md bg-[#F5B82E] font-mono text-[10px] font-bold text-[#0B254D] px-2.5 py-0.5 uppercase tracking-wider">
+                    Featured Edition
+                  </span>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => onToggleWishlist(selectedBook.id)}
-                  className={`flex items-center justify-center space-x-1.5 rounded-xl border py-2.5 text-xs font-bold transition duration-200 ${
+                  className={`flex items-center justify-center space-x-1.5 rounded-xl border py-2.5 text-xs font-bold transition duration-200 cursor-pointer ${
                     wishlistBookIds.includes(selectedBook.id)
-                      ? "border-red-500 bg-red-50 text-red-700"
-                      : "border-stone-200 bg-white text-stone-700 hover:bg-stone-55"
+                      ? "border-rose-500 bg-rose-50 text-rose-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   <Bookmark className="h-4 w-4 shrink-0" />
@@ -572,7 +754,7 @@ export default function Store({
 
                 <button
                   onClick={() => handleShareBook(selectedBook)}
-                  className="flex items-center justify-center space-x-1.5 rounded-xl border border-stone-200 bg-amber-50 hover:bg-amber-100 text-amber-900 py-2.5 text-xs font-bold transition duration-200"
+                  className="flex items-center justify-center space-x-1.5 rounded-xl border border-slate-200 bg-amber-50 hover:bg-amber-100 text-amber-900 py-2.5 text-xs font-bold transition duration-200 cursor-pointer"
                 >
                   <Share2 className="h-4 w-4 shrink-0 text-amber-700" />
                   <span>Share Book</span>
@@ -586,18 +768,47 @@ export default function Store({
                   : null;
 
                 if (purchasedBookIds.includes(selectedBook.id)) {
+                  const downloadPermitted = selectedBook.price === 0 || Boolean(selectedBook.pdfUrl && !selectedBook.pdfUrl.startsWith("Community Secure"));
                   return (
-                    <div className="rounded-xl bg-green-50 p-4 border border-green-200 flex flex-col items-center justify-center text-center space-y-2">
-                      <span className="text-xl">🎓</span>
-                      <p className="text-xs font-bold text-green-800">You already own this book!</p>
-                      <p className="text-[10px] text-green-600 leading-tight">Proceed to 'My Library' dashboard to access immediate PDFs and conversion systems.</p>
+                    <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 p-4 border border-emerald-200 dark:border-emerald-800 flex flex-col items-center justify-center text-center space-y-2">
+                      <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">Unlocked in Your Library</p>
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-400 leading-tight">
+                        Read online or cache offline inside SecureBookReader.
+                      </p>
                       <button
-                        onClick={() => setReadingBook(selectedBook)}
-                        className="mt-2 w-full flex items-center justify-center space-x-1.5 py-2.5 bg-green-700 hover:bg-green-800 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                        onClick={() => {
+                          recordReadingHistory(selectedBook.id);
+                          setReadingBook(selectedBook);
+                        }}
+                        className="mt-1 w-full flex items-center justify-center space-x-1.5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition cursor-pointer"
                       >
                         <Eye className="h-4 w-4" />
                         <span>Read Full E-Book Online</span>
                       </button>
+                      {downloadPermitted ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const textBody = `${selectedBook.title}\nBy ${selectedBook.author}\n\n${selectedBook.description}\n\n${selectedBook.content || ""}`;
+                            const blob = new Blob([textBody], { type: "text/plain;charset=utf-8" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `${selectedBook.title.replace(/[^a-z0-9]+/gi, "_")}.txt`;
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                            URL.revokeObjectURL(url);
+                            triggerToast(`Downloaded copy of "${selectedBook.title}".`);
+                          }}
+                          className="w-full flex items-center justify-center space-x-1.5 py-2 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 bg-white dark:bg-slate-900 hover:bg-emerald-100/50 rounded-lg text-xs font-semibold transition cursor-pointer"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span>Download Permitted Copy</span>
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500">DRM Online Reading Only (Download restricted by publisher)</span>
+                      )}
                     </div>
                   );
                 }
@@ -1002,1091 +1213,1353 @@ export default function Store({
             </div>
           </div>
         </div>
-      ) : (
-        /* EDITORIAL HERO, 2-SECOND LIVE SHOWCASE, VISION/MISSION/SLOGAN & BOOK STORE SHELF */
-        <div className="space-y-10">
-          {/* 1. Editorial Hero Banner with Cream Parchment Backdrop */}
-          <section className="relative overflow-hidden rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE] shadow-xs">
-            <img
-              src={showcase.heroBackdropUrl}
-              alt="Zion Digital Library Backdrop"
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
-            />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#FAF8F4]/95 via-[#FAF8F4]/88 to-[#FAF8F4]/45" />
+      ) : (() => {
+        const primarySidebarCategories = [
+          { value: "Christian Books", label: "Christian Books", icon: BookOpen },
+          { value: "Education", label: "Education", icon: GraduationCap },
+          { value: "Leadership", label: "Leadership", icon: Crown },
+          { value: "Mathematics", label: "Mathematics", icon: Calculator },
+          { value: "Science", label: "Science", icon: Atom },
+          { value: "Business", label: "Business", icon: Briefcase },
+          { value: "Personal Development", label: "Personal Development", icon: Smile },
+        ];
+        const extraSidebarCategories = [
+          { value: "Fiction", label: "Fiction", icon: Sparkles },
+          { value: "Health", label: "Health", icon: Heart },
+        ];
 
-            <div className="relative z-10 px-6 py-10 sm:px-10 sm:py-14 space-y-6 max-w-4xl text-left">
-              <p className="font-mono text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.22em] text-[#A8421B]">
-                {showcase.heroEyebrow}
-              </p>
+        const featuredBooks = books.filter((b) => b.status === "active" && b.isFeatured);
+        const visibleFeatured = showAllFeatured ? featuredBooks : featuredBooks.slice(0, 5);
+        const bestsellingBooks = [...books]
+          .filter((b) => b.status === "active")
+          .sort((a, b) => (b.reviewsCount || 0) - (a.reviewsCount || 0) || b.rating - a.rating)
+          .slice(0, 5);
+        const recommendedBooks = [...books]
+          .filter((b) => b.status === "active" && b.rating >= 4.5)
+          .slice(0, 5);
 
-              <h1 className="font-display text-3xl sm:text-5xl font-bold tracking-tight leading-[1.06] text-[#1F1B18]">
-                {showcase.heroTitleLead}
-                <span className="block italic text-[#A8421B] mt-1">{showcase.heroTitleAccent}</span>
-              </h1>
+        const displayedCatalogBooks = sortedBooks.filter((b) => {
+          if (storeSection === "library") return purchasedBookIds.includes(b.id);
+          if (storeSection === "wishlist") return wishlistBookIds.includes(b.id);
+          if (storeSection === "history") return readingHistoryIds.includes(b.id);
+          return true;
+        });
 
-              {/* Inline Vision / Mission / Slogan block with Terracotta Vertical Bar */}
-              <div className="border-l-2 border-[#A8421B] pl-4 space-y-1.5 text-xs sm:text-sm text-[#4A433D]">
-                <p>
-                  <strong className="text-[#1F1B18]">Vision:</strong> {showcase.vision}
-                </p>
-                <p>
-                  <strong className="text-[#1F1B18]">Mission:</strong> {showcase.mission}
-                </p>
-                <p className="italic font-display text-[#A8421B] text-sm">
-                  &ldquo;{showcase.slogan}&rdquo;
-                </p>
+        const safeIndex = showcase.slides.length ? slideIdx % showcase.slides.length : 0;
+        const activeSlide = showcase.slides.length ? showcase.slides[safeIndex] : null;
+
+        return (
+          <div className="flex flex-col lg:flex-row gap-5 items-start text-left">
+            {/* LEFT BOOKSTORE RAIL (Desktop Sidebar + Compact Mobile Bar) */}
+            <aside className="w-full lg:w-60 shrink-0 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs overflow-hidden">
+              {/* Mobile Compact Horizontal Nav Strip */}
+              <div className="lg:hidden p-3 border-b border-slate-100 dark:border-slate-800 space-y-2.5">
+                <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStoreSection("catalog");
+                      setSelectedCategory("All");
+                    }}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      storeSection === "catalog" && selectedCategory === "All"
+                        ? "bg-[#155EEF] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>Books</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("library")}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      storeSection === "library"
+                        ? "bg-[#155EEF] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    <Library className="h-3.5 w-3.5" />
+                    <span>My Library ({purchasedBookIds.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("wishlist")}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      storeSection === "wishlist"
+                        ? "bg-[#155EEF] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    <Heart className="h-3.5 w-3.5" />
+                    <span>Wishlist ({wishlistBookIds.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("orders")}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      storeSection === "orders"
+                        ? "bg-[#155EEF] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    <ListOrdered className="h-3.5 w-3.5" />
+                    <span>Orders ({bookOrders.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("history")}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      storeSection === "history"
+                        ? "bg-[#155EEF] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    }`}
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    <span>History ({readingHistoryIds.length})</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+                  {[...primarySidebarCategories, ...extraSidebarCategories].map((cat) => (
+                    <button
+                      key={cat.value}
+                      type="button"
+                      onClick={() => {
+                        setStoreSection("catalog");
+                        setSelectedCategory(cat.value);
+                      }}
+                      className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-medium transition cursor-pointer ${
+                        storeSection === "catalog" && selectedCategory === cat.value
+                          ? "bg-[#0B254D] text-white"
+                          : "bg-slate-50 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <p className="text-xs sm:text-sm text-[#6E655E] leading-relaxed max-w-2xl">
-                {showcase.heroDescription}
-              </p>
-
-              {/* Hero Action Buttons */}
-              <div className="flex flex-wrap items-center gap-3 pt-1">
+              {/* Desktop Vertical Sidebar */}
+              <div className="hidden lg:block p-3.5 space-y-5">
                 <button
                   type="button"
                   onClick={() => {
-                    document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                    setStoreSection("catalog");
+                    setSelectedCategory("All");
                   }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#A8421B] hover:bg-[#8F3614] text-white font-semibold px-5 py-2.5 text-xs sm:text-sm shadow-xs transition cursor-pointer"
+                  className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-xs font-semibold transition cursor-pointer ${
+                    storeSection === "catalog" && selectedCategory === "All"
+                      ? "bg-[#155EEF] text-white shadow-xs"
+                      : "bg-slate-50 dark:bg-slate-800 text-[#0B254D] dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-700"
+                  }`}
                 >
-                  <span>Explore Collection</span>
-                  <ArrowRight className="h-4 w-4" />
+                  <span className="inline-flex items-center gap-2.5">
+                    <BookOpen className="h-4 w-4" />
+                    <span>Books</span>
+                  </span>
+                  <span className="text-[11px] opacity-80 tabular-nums">
+                    {books.filter((b) => b.status === "active").length}
+                  </span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    document.getElementById("featured_books_anchor")?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#D8D0C5] bg-white/85 hover:bg-white text-[#1F1B18] font-semibold px-5 py-2.5 text-xs sm:text-sm transition cursor-pointer"
-                >
-                  <span>Featured Books</span>
-                </button>
-              </div>
 
-              {/* Hero Vision/Mission/Slogan Trio Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>SLOGAN</span>
-                  </span>
-                  <p className="text-xs italic font-display text-[#1F1B18]">
-                    &ldquo;{showcase.tagline}&rdquo;
+                {/* Categories List */}
+                <div className="space-y-1">
+                  <p className="px-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Categories
                   </p>
-                </div>
-                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
-                    <Eye className="h-3.5 w-3.5" />
-                    <span>VISION</span>
-                  </span>
-                  <p className="text-[11px] leading-relaxed text-[#4A433D]">
-                    {showcase.vision}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-[#E7E1D8] bg-white/85 backdrop-blur-xs p-4 space-y-1.5">
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-widest text-[#A8421B] flex items-center gap-1.5">
-                    <Compass className="h-3.5 w-3.5" />
-                    <span>MISSION</span>
-                  </span>
-                  <p className="text-[11px] leading-relaxed text-[#4A433D]">
-                    {showcase.mission}
-                  </p>
-                </div>
-              </div>
+                  {primarySidebarCategories.map((cat) => {
+                    const Icon = cat.icon;
+                    const active = storeSection === "catalog" && selectedCategory === cat.value;
+                    return (
+                      <button
+                        key={cat.value}
+                        type="button"
+                        onClick={() => {
+                          setStoreSection("catalog");
+                          setSelectedCategory(cat.value);
+                        }}
+                        className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                          active
+                            ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                            : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                        }`}
+                      >
+                        <span className="inline-flex items-center gap-2.5">
+                          <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                          <span>{cat.label}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
 
-              {/* Editorial Stats Row */}
-              <div className="flex flex-wrap items-center gap-8 sm:gap-12 pt-3 border-t border-[#E7E1D8]">
-                <div>
-                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">500+</div>
-                  <div className="text-[11px] text-[#6E655E]">Digital Books</div>
-                </div>
-                <div>
-                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">10K+</div>
-                  <div className="text-[11px] text-[#6E655E]">Happy Readers</div>
-                </div>
-                <div>
-                  <div className="font-display text-2xl sm:text-3xl font-bold text-[#1F1B18] tabular-nums">24/7</div>
-                  <div className="text-[11px] text-[#6E655E]">Instant Access</div>
-                </div>
-              </div>
-            </div>
-          </section>
+                  {showMoreCategories &&
+                    extraSidebarCategories.map((cat) => {
+                      const Icon = cat.icon;
+                      const active = storeSection === "catalog" && selectedCategory === cat.value;
+                      return (
+                        <button
+                          key={cat.value}
+                          type="button"
+                          onClick={() => {
+                            setStoreSection("catalog");
+                            setSelectedCategory(cat.value);
+                          }}
+                          className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                            active
+                              ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                              : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                          }`}
+                        >
+                          <span className="inline-flex items-center gap-2.5">
+                            <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                            <span>{cat.label}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
 
-          {/* 2. Live 2-Second Editorial Slideshow (Editable in Manager Portal) */}
-          {showcase.slides.length > 0 && (() => {
-            const safeIndex = slideIdx % showcase.slides.length;
-            const activeSlide = showcase.slides[safeIndex];
-            const counterStr = `${String(safeIndex + 1).padStart(2, "0")} / ${String(showcase.slides.length).padStart(2, "0")}`;
-
-            return (
-              <section
-                onMouseEnter={() => setIsSlidePaused(true)}
-                onMouseLeave={() => setIsSlidePaused(false)}
-                className="rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE] p-5 sm:p-8 shadow-xs space-y-4 text-left"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-                  <div className="space-y-1">
-                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
-                      {activeSlide.category || "ZION DIGITAL"}
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreCategories((prev) => !prev)}
+                    className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/70 cursor-pointer"
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      {showMoreCategories ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                      <span>{showMoreCategories ? "Less" : "More"}</span>
                     </span>
-                    <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18] tracking-tight">
-                      {activeSlide.title}
-                    </h2>
-                    <p className="text-xs sm:text-sm text-[#6E655E] max-w-2xl">
-                      {activeSlide.subtitle}
-                    </p>
-                  </div>
+                  </button>
+                </div>
+
+                {/* Reader Workspace Links */}
+                <div className="space-y-1 pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("library")}
+                    className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                      storeSection === "library"
+                        ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <Library className="h-3.5 w-3.5" />
+                      <span>My Library</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{purchasedBookIds.length}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("wishlist")}
+                    className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                      storeSection === "wishlist"
+                        ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <Heart className="h-3.5 w-3.5" />
+                      <span>Wishlist</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{wishlistBookIds.length}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("orders")}
+                    className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                      storeSection === "orders"
+                        ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <ListOrdered className="h-3.5 w-3.5" />
+                      <span>Orders</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{bookOrders.length}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("history")}
+                    className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                      storeSection === "history"
+                        ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <History className="h-3.5 w-3.5" />
+                      <span>Reading History</span>
+                    </span>
+                    <span className="text-[11px] text-slate-400 tabular-nums">{readingHistoryIds.length}</span>
+                  </button>
 
                   <button
                     type="button"
                     onClick={() => {
-                      if (activeSlide.targetView === "store") {
+                      setStoreSection("catalog");
+                      setShowCompareView((prev) => !prev);
+                      setTimeout(() => {
                         document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
-                      } else {
-                        onNavigate?.(activeSlide.targetView);
+                      }, 50);
+                    }}
+                    className={`w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium transition cursor-pointer ${
+                      showCompareView
+                        ? "bg-[#EFF6FF] dark:bg-blue-950/50 text-[#155EEF] dark:text-blue-300 font-semibold"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <Scale className="h-3.5 w-3.5" />
+                      <span>Compare Books</span>
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("studio")}
+                    className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition cursor-pointer"
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <UploadCloud className="h-3.5 w-3.5 text-[#155EEF]" />
+                      <span>Author Upload Desk</span>
+                    </span>
+                  </button>
+
+                  {currentUser && ["admin", "main_admin", "sub_admin", "manager"].includes(currentUser.role) && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate?.(currentUser.role === "manager" ? "manager-portal" : "admin")}
+                      className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-semibold text-[#0B254D] dark:text-[#F5B82E] bg-amber-50/70 dark:bg-amber-950/20 hover:bg-amber-100/70 transition cursor-pointer"
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        <span>Bookstore Admin</span>
+                      </span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.("contact")}
+                    className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition cursor-pointer"
+                  >
+                    <span className="inline-flex items-center gap-2.5">
+                      <HelpCircle className="h-3.5 w-3.5" />
+                      <span>Help</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            {/* MAIN BOOKSTORE CANVAS */}
+            <div className="flex-1 min-w-0 w-full space-y-6">
+              {/* Top Search & Action Strip */}
+              <div className="rounded-2xl bg-[#0B254D] px-4 py-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shadow-xs">
+                <div ref={searchContainerRef} className="flex-1 min-w-0 relative">
+                  <Search className="absolute top-2.5 left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onFocus={() => setShowRecentDropdown(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        addRecentSearch(searchInput);
+                        setShowRecentDropdown(false);
                       }
                     }}
-                    className="self-start sm:self-end inline-flex items-center gap-1.5 rounded-xl bg-white border border-[#D8D0C5] hover:border-[#A8421B] text-[#1F1B18] hover:text-[#A8421B] font-semibold px-3.5 py-2 text-xs transition cursor-pointer shrink-0"
-                  >
-                    <span>{activeSlide.ctaLabel || "Open Section"}</span>
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
+                    placeholder="Search books, authors, categories..."
+                    className="w-full rounded-xl bg-white dark:bg-slate-900 py-2 pl-10 pr-10 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-[#F5B82E]"
+                  />
+                  {isSearchingDebounced && (
+                    <div className="absolute right-3 top-2.5">
+                      <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                    </div>
+                  )}
+
+                  {/* Recent Searches Dropdown */}
+                  {showRecentDropdown && recentSearches.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 shadow-xl max-h-60 overflow-y-auto">
+                      <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        <span>Recent Searches</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRecentSearches([]);
+                            localStorage.removeItem("WAFULA_RECENT_SEARCHES");
+                          }}
+                          className="text-rose-600 hover:text-rose-700 font-bold cursor-pointer text-[10px]"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                      <div className="space-y-0.5">
+                        {recentSearches.map((term, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              setSearchInput(term);
+                              setSearchQuery(term);
+                              setShowRecentDropdown(false);
+                            }}
+                            className="flex items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition text-slate-700 dark:text-slate-200 group"
+                          >
+                            <span className="font-medium text-xs">{term}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const updated = recentSearches.filter((_, i) => i !== idx);
+                                setRecentSearches(updated);
+                                localStorage.setItem("WAFULA_RECENT_SEARCHES", JSON.stringify(updated));
+                              }}
+                              className="text-slate-400 hover:text-rose-600 p-0.5 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Controls + Monospace Slide Counter */}
-                <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() =>
-                      setSlideIdx((prev) => (prev - 1 + showcase.slides.length) % showcase.slides.length)
-                    }
-                    className="h-8 w-8 rounded-full border border-[#E7E1D8] bg-white hover:bg-[#FAF8F4] text-[#6E655E] hover:text-[#1F1B18] flex items-center justify-center transition cursor-pointer"
-                    aria-label="Previous slide"
+                    onClick={() => setShowFilters((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition cursor-pointer ${
+                      showFilters
+                        ? "bg-[#F5B82E] text-[#0B254D]"
+                        : "bg-white/10 hover:bg-white/20 text-white"
+                    }`}
                   >
-                    <ChevronLeft className="h-4 w-4" />
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span>Sort &amp; Filters</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setStoreSection("orders")}
+                    className="relative inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 px-3 py-2 text-xs font-semibold text-white transition cursor-pointer"
+                    title="View your book orders"
+                  >
+                    <ShoppingBag className="h-4 w-4 text-[#F5B82E]" />
+                    <span className="tabular-nums">{bookOrders.length}</span>
+                  </button>
+                </div>
+              </div>
 
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[11px] font-semibold tracking-widest text-[#6E655E] tabular-nums">
-                      {counterStr}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {showcase.slides.map((s, idx) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => setSlideIdx(idx)}
-                          aria-label={`Go to slide ${idx + 1}`}
-                          className={`h-1.5 rounded-full transition-all cursor-pointer ${
-                            idx === safeIndex ? "w-5 bg-[#A8421B]" : "w-1.5 bg-[#D8D0C5]"
-                          }`}
-                        />
-                      ))}
+              {/* Hero Banner (Royal & Deep Navy with Golden CTA) */}
+              {storeSection === "catalog" && (
+                <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0B254D] via-[#123A78] to-[#155EEF] text-white shadow-sm">
+                  <img
+                    src={showcase.heroBackdropUrl}
+                    alt="Zion Digital Bookstore"
+                    className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-30 mix-blend-luminosity"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0B254D]/92 via-[#0B254D]/70 to-[#155EEF]/85" />
+
+                  <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6 px-6 py-7 sm:px-8 sm:py-9">
+                    <div className="space-y-2.5 max-w-xl">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#F5B82E]">
+                        {showcase.heroEyebrow}
+                      </p>
+                      <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight leading-tight">
+                        Grow in Christ
+                        <span className="block text-blue-100">Discover Knowledge</span>
+                      </h1>
+                      <p className="text-xs sm:text-sm text-blue-100/90 leading-relaxed max-w-lg">
+                        {showcase.tagline} · M-Pesa STK &amp; instant encrypted digital library access.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          document.getElementById("featured_books_anchor")?.scrollIntoView({ behavior: "smooth" });
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full bg-[#F5B82E] hover:bg-[#E5A91E] text-[#0B254D] font-bold px-5 py-2.5 text-xs sm:text-sm shadow-sm transition cursor-pointer"
+                      >
+                        <span>Shop Now &raquo;</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStoreSection("library")}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 text-xs transition cursor-pointer"
+                      >
+                        <Library className="h-3.5 w-3.5" />
+                        <span>My Library ({purchasedBookIds.length})</span>
+                      </button>
                     </div>
                   </div>
+                </section>
+              )}
 
-                  <button
-                    type="button"
-                    onClick={() => setSlideIdx((prev) => (prev + 1) % showcase.slides.length)}
-                    className="h-8 w-8 rounded-full border border-[#E7E1D8] bg-white hover:bg-[#FAF8F4] text-[#6E655E] hover:text-[#1F1B18] flex items-center justify-center transition cursor-pointer"
-                    aria-label="Next slide"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-
-                {/* Full-Bleed Clean Photography */}
-                <div className="relative overflow-hidden rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] h-56 sm:h-72 md:h-80">
+              {/* Compact Live Showcase Bar (from Manager Portal, unobtrusive) */}
+              {storeSection === "catalog" && activeSlide && (
+                <section
+                  onMouseEnter={() => setIsSlidePaused(true)}
+                  onMouseLeave={() => setIsSlidePaused(false)}
+                  className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 flex flex-col sm:flex-row items-center gap-4 shadow-2xs"
+                >
                   <img
                     src={activeSlide.imageUrl}
                     alt={activeSlide.title}
-                    className="h-full w-full object-cover transition-all duration-500"
+                    className="h-20 w-full sm:w-32 rounded-xl object-cover shrink-0 border border-slate-100 dark:border-slate-800"
                   />
-                </div>
-              </section>
-            );
-          })()}
-
-          {/* 3. Our Purpose: Vision, Mission & Slogan Cards */}
-          <section className="rounded-3xl border border-[#E7E1D8] bg-[#F7F4EE]/75 px-5 py-9 sm:px-8 space-y-6">
-            <div className="text-center max-w-2xl mx-auto space-y-2">
-              <p className="font-mono text-[10px] font-bold uppercase tracking-[0.22em] text-[#A8421B]">
-                OUR PURPOSE
-              </p>
-              <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18]">
-                Vision &amp; Mission
-              </h2>
-              <p className="text-xs sm:text-sm text-[#6E655E]">
-                Zion Digital exists to equip every reader with the knowledge and faith to lead, grow, and transform their world.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
-                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
-                  <Eye className="h-5 w-5" />
-                </div>
-                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">VISION</div>
-                <p className="text-xs text-[#4A433D] leading-relaxed">{showcase.vision}</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
-                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
-                  <Compass className="h-5 w-5" />
-                </div>
-                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">MISSION</div>
-                <p className="text-xs text-[#4A433D] leading-relaxed">{showcase.mission}</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E7E1D8] bg-white p-6 space-y-3 shadow-2xs">
-                <div className="mx-auto h-10 w-10 rounded-xl bg-[#FAF8F4] border border-[#E7E1D8] flex items-center justify-center text-[#A8421B]">
-                  <Sparkles className="h-5 w-5" />
-                </div>
-                <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">SLOGAN</div>
-                <p className="font-display italic text-lg text-[#1F1B18]">{showcase.slogan}</p>
-              </div>
-            </div>
-
-            <p className="text-center font-display italic text-xs text-[#6E655E]">
-              &ldquo;{showcase.tagline}&rdquo;
-            </p>
-          </section>
-
-          {/* 4. Curated Selection: Featured Books */}
-          {books.some((b) => b.status === "active" && b.isFeatured) && (
-            <section id="featured_books_anchor" className="space-y-4">
-              <div className="flex items-end justify-between">
-                <div className="text-left">
-                  <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
-                    CURATED SELECTION
-                  </p>
-                  <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#1F1B18]">
-                    Featured Books
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1F1B18] hover:text-[#A8421B] cursor-pointer"
-                >
-                  <span>View All</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                {books
-                  .filter((b) => b.status === "active" && b.isFeatured)
-                  .slice(0, 4)
-                  .map((fb) => (
-                    <div
-                      key={fb.id}
-                      onClick={() => setSelectedBook(fb)}
-                      className="group rounded-2xl border border-[#E7E1D8] bg-white overflow-hidden cursor-pointer hover:border-[#A8421B]/50 hover:shadow-md transition text-left"
-                    >
-                      <div className="relative aspect-[3/4] bg-[#F7F4EE] overflow-hidden">
-                        <img
-                          src={fb.coverImage}
-                          alt={fb.title}
-                          className="h-full w-full object-cover group-hover:scale-[1.03] transition duration-300"
-                        />
-                        <span className="absolute top-2.5 left-2.5 rounded-md bg-[#A8421B] px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-white">
-                          FEATURED
-                        </span>
-                      </div>
-                      <div className="p-3 space-y-1">
-                        <p className="font-mono text-[9px] uppercase tracking-wider text-[#6E655E]">
-                          {fb.category}
-                        </p>
-                        <h3 className="font-display text-xs sm:text-sm font-semibold text-[#1F1B18] line-clamp-1">
-                          {fb.title}
-                        </h3>
-                        <p className="font-mono text-xs font-bold text-[#A8421B]">
-                          KES {fb.price.toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            </section>
-          )}
-
-          {/* 5. Supported Payment & Cloud Storage Ecosystem */}
-          <section className="rounded-3xl border border-[#E7E1D8] bg-white p-5 sm:p-7 space-y-4 text-left">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-[#A8421B]">
-                  SUPPORTED PAYMENTS &amp; CLOUD STORAGE
-                </p>
-                <h3 className="font-display text-lg sm:text-xl font-semibold text-[#1F1B18]">
-                  Integrated Kenyan Checkout &amp; Multi-Cloud Document Vault
-                </h3>
-              </div>
-              <span className="font-mono text-[10px] text-[#6E655E] uppercase tracking-wider">
-                KES • M-PESA STK • SUPABASE • INDEXEDDB
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
-                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
-                  <CreditCard className="h-4 w-4 text-[#A8421B]" />
-                  <span>Paystack KES &amp; M-Pesa</span>
-                </div>
-                <p className="text-[11px] text-[#6E655E] leading-relaxed">
-                  Instant Kenyan Shilling (KES) M-Pesa STK Push and Visa/Mastercard checkout with webhook verification.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
-                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
-                  <ShieldCheck className="h-4 w-4 text-emerald-700" />
-                  <span>Lipa Na M-Pesa (247247)</span>
-                </div>
-                <p className="text-[11px] text-[#6E655E] leading-relaxed">
-                  Direct Kenya Paybill checkout verified by finance administrators before unlocking paid books &amp; certificates.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
-                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
-                  <Cloud className="h-4 w-4 text-[#A8421B]" />
-                  <span>Supabase &amp; Firebase Vault</span>
-                </div>
-                <p className="text-[11px] text-[#6E655E] leading-relaxed">
-                  Private row-level-secured user storage buckets and cloud reading progress across Android, Windows, and web.
-                </p>
-              </div>
-              <div className="rounded-2xl border border-[#E7E1D8] bg-[#FAF8F4] p-4 space-y-1.5">
-                <div className="flex items-center gap-2 font-semibold text-[#1F1B18]">
-                  <HardDrive className="h-4 w-4 text-[#A8421B]" />
-                  <span>Offline IndexedDB Studio</span>
-                </div>
-                <p className="text-[11px] text-[#6E655E] leading-relaxed">
-                  Save approved books, notes, and Word/PDF exports locally on-device for uninterrupted offline reading.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* Main search and dynamic filter banner */}
-          <div id="store_catalog_anchor" className="rounded-2xl border border-[#E7E1D8] bg-white p-5 shadow-xs space-y-4 text-xs">
-            <div className="flex flex-col sm:flex-row gap-3">
-              {/* Query search text */}
-              <div ref={searchContainerRef} className="flex-1 relative">
-                <Search className="absolute top-3 left-3 h-4 w-4 text-stone-400 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  onFocus={() => setShowRecentDropdown(true)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      addRecentSearch(searchInput);
-                      setShowRecentDropdown(false);
-                    }
-                  }}
-                  placeholder="Search premium books, local authors, categories..."
-                  className="w-full rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] py-2.5 pl-10 pr-10 outline-none focus:bg-white focus:border-[#A8421B]"
-                />
-                {isSearchingDebounced && (
-                  <div className="absolute right-3 top-3">
-                    <Loader2 className="h-4 w-4 animate-spin text-stone-400" />
-                  </div>
-                )}
-
-                {/* Recent Searches Dropdown */}
-                {showRecentDropdown && recentSearches.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-2 z-50 rounded-xl border border-stone-200 bg-white p-3 shadow-xl max-h-60 overflow-y-auto">
-                    <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-stone-100 text-[10px] text-stone-400 font-extrabold uppercase tracking-wider">
-                      <span>Recent Searches</span>
-                      <button 
-                        type="button" 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRecentSearches([]);
-                          localStorage.removeItem("WAFULA_RECENT_SEARCHES");
-                        }}
-                        className="text-red-700 hover:text-red-800 font-extrabold cursor-pointer text-[10px]"
-                      >
-                        Clear All
-                      </button>
-                    </div>
-                    <div className="space-y-0.5">
-                      {recentSearches.map((term, idx) => (
-                        <div 
-                          key={idx} 
-                          onClick={() => {
-                            setSearchInput(term);
-                            setSearchQuery(term);
-                            setShowRecentDropdown(false);
-                          }}
-                          className="flex items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-neutral-50 cursor-pointer transition text-stone-700 group"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <span className="text-[10px]">🕒</span>
-                            <span className="font-semibold text-xs">{term}</span>
-                          </div>
-                          <button 
-                            type="button" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const updated = recentSearches.filter((_, i) => i !== idx);
-                              setRecentSearches(updated);
-                              localStorage.setItem("WAFULA_RECENT_SEARCHES", JSON.stringify(updated));
-                            }}
-                            className="text-stone-400 hover:text-red-700 p-0.5 opacity-0 group-hover:opacity-100 transition cursor-pointer text-xs font-bold"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                {/* Dynamic Category Filter Dropdown */}
-                <div className="relative shrink-0 w-full sm:w-auto">
-                  <select
-                    id="store_category_select"
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full appearance-none rounded-xl border border-stone-200 bg-white py-2.5 pl-3.5 pr-8 font-bold text-stone-700 outline-none focus:border-red-700 focus:bg-white cursor-pointer hover:bg-neutral-50 text-xs"
-                    title="Filter publications by category"
-                  >
-                    <option value="All">📂 All Categories</option>
-                    {categories.filter(c => c !== "All").map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="absolute top-3 right-3 pointer-events-none text-stone-400">
-                    <span className="text-[9px]">▼</span>
-                  </div>
-                </div>
-
-                {/* Compare Trigger button */}
-                <button
-                  type="button"
-                  onClick={() => setShowCompareView(!showCompareView)}
-                  className={`flex items-center justify-center space-x-1.5 rounded-xl border px-4 py-2.5 font-bold transition shrink-0 cursor-pointer w-full sm:w-auto ${
-                    showCompareView 
-                      ? "bg-orange-700 text-white border-orange-850 hover:bg-orange-800" 
-                      : "border-stone-200 hover:bg-neutral-55 bg-white text-stone-700"
-                  }`}
-                  title="Compare two books side-by-side"
-                >
-                  <span className="text-sm">⚖️</span>
-                  <span>Compare Books</span>
-                </button>
-
-                {/* Filters dropdown triggers */}
-                <button
-                  type="button"
-                  onClick={() => setShowFilters(!showFilters)}
-                  className={`flex items-center justify-center space-x-1.5 rounded-xl border px-4 py-2.5 font-bold transition shrink-0 cursor-pointer w-full sm:w-auto ${
-                    showFilters 
-                      ? "bg-[#A8421B] text-white border-[#8F3614] hover:bg-[#8F3614]" 
-                      : "border-[#E7E1D8] hover:bg-[#FAF8F4] bg-white text-[#1F1B18]"
-                  }`}
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                  <span>Sort &amp; Filters</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Horizontal Category Filter Bar */}
-            <div className="space-y-1.5">
-              <span className="text-[9px] font-mono text-[#6E655E] font-bold uppercase tracking-wider block">Filter by Subject Genre</span>
-              <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-thin scroll-smooth flex-nowrap w-full">
-                {categories.map((cat) => {
-                  const categoryIconMap: Record<string, React.ReactNode> = {
-                    All: <Globe className="h-3.5 w-3.5" />,
-                    Fiction: <Sparkles className="h-3.5 w-3.5 text-pink-500" />,
-                    Leadership: <Crown className="h-3.5 w-3.5 text-amber-500" />,
-                    Technology: <Cpu className="h-3.5 w-3.5 text-blue-500" />,
-                    Religion: <BookOpen className="h-3.5 w-3.5 text-rose-500" />,
-                    Business: <Briefcase className="h-3.5 w-3.5 text-indigo-500" />,
-                    "Self-Help": <Smile className="h-3.5 w-3.5 text-emerald-500" />,
-                    Education: <GraduationCap className="h-3.5 w-3.5 text-amber-600" />,
-                    Health: <Heart className="h-3.5 w-3.5 text-red-500" />,
-                    Science: <Atom className="h-3.5 w-3.5 text-cyan-500" />
-                  };
-                  return (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setSelectedCategory(cat)}
-                      className={`rounded-xl px-3.5 py-2 text-xs font-bold whitespace-nowrap transition-all duration-200 cursor-pointer select-none border flex items-center space-x-2 shrink-0 ${
-                        selectedCategory === cat 
-                          ? "bg-[#A8421B] border-[#A8421B] text-white shadow-sm scale-[1.02]" 
-                          : "bg-white border-[#E7E1D8] text-[#1F1B18] hover:bg-[#FAF8F4]"
-                      }`}
-                    >
-                      <span className={selectedCategory === cat ? "[&_svg]:text-white" : ""}>
-                        {categoryIconMap[cat] || <BookOpen className="h-3.5 w-3.5" />}
+                  <div className="flex-1 min-w-0 space-y-1 text-left">
+                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#155EEF] dark:text-blue-400">
+                      <span>{activeSlide.category || "ZION DIGITAL"}</span>
+                      <span className="text-slate-300 dark:text-slate-600">·</span>
+                      <span className="font-mono text-slate-400 tabular-nums">
+                        {String(safeIndex + 1).padStart(2, "0")} / {String(showcase.slides.length).padStart(2, "0")}
                       </span>
-                      <span>{cat === "All" ? "All Publications" : cat}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Side-by-Side Compare view container block */}
-            {showCompareView && (
-              <div className="bg-orange-50/40 border border-orange-200 p-5 rounded-2xl space-y-4 animate-fade-in text-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-orange-100 pb-3 gap-2">
-                  <div>
-                    <h4 className="text-sm font-bold text-orange-950 flex items-center gap-1.5 uppercase font-mono tracking-wider">
-                      <span>⚖️ Side-by-Side Book Comparison</span>
-                    </h4>
-                    <p className="text-[11px] text-stone-500 font-medium">Select any two publications from our library catalog to compare pages, file size, rating, and price side-by-side.</p>
+                    </div>
+                    <h2 className="font-display text-sm sm:text-base font-bold text-[#0B254D] dark:text-white truncate">
+                      {activeSlide.title}
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+                      {activeSlide.subtitle}
+                    </p>
                   </div>
-                  <button
-                    onClick={() => {
-                      setCompareBookId1("");
-                      setCompareBookId2("");
-                    }}
-                    className="text-[10px] text-orange-700 font-bold hover:underline self-start sm:self-center font-mono uppercase"
-                  >
-                    Reset selects
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Select Book 1 */}
-                  <div className="flex flex-col space-y-1">
-                    <span className="font-bold text-slate-600 font-mono uppercase text-[9px] tracking-wide">First Book:</span>
-                    <select
-                      value={compareBookId1}
-                      onChange={(e) => setCompareBookId1(e.target.value)}
-                      className="w-full rounded-xl border border-indigo-200 bg-white p-2.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer text-slate-800"
-                    >
-                      <option value="">-- Select Book One --</option>
-                      {books.filter(b => b.status === 'active').map(b => (
-                        <option key={b.id} value={b.id}>{b.title} (by {b.author})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Select Book 2 */}
-                  <div className="flex flex-col space-y-1">
-                    <span className="font-bold text-slate-600 font-mono uppercase text-[9px] tracking-wide font-semibold font-mono">Second Book:</span>
-                    <select
-                      value={compareBookId2}
-                      onChange={(e) => setCompareBookId2(e.target.value)}
-                      className="w-full rounded-xl border border-indigo-200 bg-white p-2.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer text-slate-800"
-                    >
-                      <option value="">-- Select Book Two --</option>
-                      {books.filter(b => b.status === 'active').map(b => (
-                        <option key={b.id} value={b.id}>{b.title} (by {b.author})</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {compareBookId1 && compareBookId2 ? (
-                  (() => {
-                    const book1 = books.find(b => b.id === compareBookId1);
-                    const book2 = books.find(b => b.id === compareBookId2);
-                    if (!book1 || !book2) return null;
-
-                    return (
-                      <div className="overflow-x-auto border border-orange-100 rounded-2xl bg-white shadow-sm pt-1">
-                        <table className="w-full text-left text-xs border-collapse font-sans">
-                          <thead>
-                            <tr className="bg-orange-50/30 text-[9.5px] uppercase font-mono tracking-widest text-orange-950 border-b border-orange-100">
-                              <th className="py-3 px-4 font-black">Book Metric</th>
-                              <th className="py-3 px-4 font-black text-orange-800">{book1.title}</th>
-                              <th className="py-3 px-4 font-black text-orange-800 text-indigo-705">{book2.title}</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-stone-100 text-slate-700">
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Cover</td>
-                              <td className="py-2.5 px-4">
-                                <img src={book1.coverImage} className="w-12 h-16 object-cover rounded-md border shadow-xs" alt={book1.title} />
-                              </td>
-                              <td className="py-2.5 px-4">
-                                <img src={book2.coverImage} className="w-12 h-16 object-cover rounded-md border shadow-xs" alt={book2.title} />
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Author</td>
-                              <td className="py-2.5 px-4 font-sans text-slate-800 font-semibold">{book1.author}</td>
-                              <td className="py-2.5 px-4 font-sans text-slate-800 font-semibold">{book2.author}</td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Category</td>
-                              <td className="py-2.5 px-4">
-                                <span className="bg-orange-50 text-orange-850 px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase">{book1.category}</span>
-                              </td>
-                              <td className="py-2.5 px-4">
-                                <span className="bg-orange-50 text-orange-850 px-2.5 py-0.5 rounded-full font-mono text-[9px] font-bold uppercase">{book2.category}</span>
-                              </td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Pages</td>
-                              <td className="py-2.5 px-4 font-mono font-bold text-slate-800">{book1.pages || "N/A"} pp</td>
-                              <td className="py-2.5 px-4 font-mono font-bold text-slate-800">{book2.pages || "N/A"} pp</td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Reading Time</td>
-                              <td className="py-2.5 px-4 font-mono font-bold text-emerald-600">⏱️ {getReadingDuration(book1.pages)} mins read</td>
-                              <td className="py-2.5 px-4 font-mono font-bold text-emerald-600">⏱️ {getReadingDuration(book2.pages)} mins read</td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">File Size</td>
-                              <td className="py-2.5 px-4 font-mono font-bold">{book1.fileSize}</td>
-                              <td className="py-2.5 px-4 font-mono font-bold">{book2.fileSize}</td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Rating</td>
-                              <td className="py-2.5 px-4 font-bold">
-                                <span className="inline-flex items-center text-amber-500 space-x-1 font-mono text-[11px]">
-                                  <span>⭐ {book1.rating}</span>
-                                  <span className="text-stone-400 font-normal">({book1.reviewsCount} reviews)</span>
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-4 font-bold">
-                                <span className="inline-flex items-center text-amber-500 space-x-1 font-mono text-[11px]">
-                                  <span>⭐ {book2.rating}</span>
-                                  <span className="text-stone-400 font-normal">({book2.reviewsCount} reviews)</span>
-                                </span>
-                              </td>
-                            </tr>
-                            <tr className="bg-orange-50/20">
-                              <td className="py-3 px-4 font-bold text-slate-600 font-mono uppercase text-[9px]">Price</td>
-                              <td className="py-3 px-4 font-mono font-black text-red-700 text-xs">KES {book1.price.toLocaleString()}</td>
-                              <td className="py-3 px-4 font-mono font-black text-red-700 text-xs">KES {book2.price.toLocaleString()}</td>
-                            </tr>
-                            <tr>
-                              <td className="py-2.5 px-4 font-bold text-slate-500 font-mono uppercase text-[9px]">Action</td>
-                              <td className="py-2.5 px-4">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedBook(book1)}
-                                  className="bg-orange-700 hover:bg-orange-850 text-white font-bold py-1 px-3 rounded-xl text-[10px] transition uppercase cursor-pointer"
-                                >
-                                  Inspect Book
-                                </button>
-                              </td>
-                              <td className="py-2.5 px-4">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedBook(book2)}
-                                  className="bg-orange-700 hover:bg-orange-850 text-white font-bold py-1 px-3 rounded-xl text-[10px] transition uppercase cursor-pointer"
-                                >
-                                  Inspect Book
-                                </button>
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  })()
-                ) : (
-                  <div className="text-center py-4 text-[11px] text-indigo-700 bg-white rounded-xl border border-dashed border-indigo-200 font-mono font-medium">
-                    Please select two publications above from the dropdown search menus to view side-by-side metrics.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Advanced Filters Drawer options */}
-            {showFilters && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pt-4 border-t border-stone-100 uppercase tracking-wider font-mono text-[10px] font-bold text-stone-500">
-                {/* Price bounds slider config */}
-                <div className="space-y-2">
-                  <span className="block mb-1 text-stone-400">Max Price (KES)</span>
-                  <div className="flex justify-between font-mono text-neutral-800">
-                    <span>KES 100</span>
-                    <span className="text-red-700 font-bold">KES {maxPrice}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="100"
-                    max="2000"
-                    step="50"
-                    value={maxPrice}
-                    onChange={(e) => setMaxPrice(parseInt(e.target.value))}
-                    className="w-full accent-red-700 cursor-pointer"
-                  />
-                </div>
-
-                {/* File size slider config */}
-                <div className="space-y-2">
-                  <span className="block mb-1 text-stone-400">Max File Size (MB)</span>
-                  <div className="flex justify-between font-mono text-neutral-800">
-                    <span>Under 1 MB</span>
-                    <span className="text-red-700 font-bold">{maxFileSize === 10 ? "Any Size" : `${maxFileSize} MB`}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="10"
-                    step="0.5"
-                    value={maxFileSize}
-                    onChange={(e) => setMaxFileSize(parseFloat(e.target.value))}
-                    className="w-full accent-red-700 cursor-pointer"
-                  />
-                </div>
-
-                {/* Reading Duration slider config */}
-                <div className="space-y-2">
-                  <span className="block mb-1 text-stone-400">Max Duration (Mins)</span>
-                  <div className="flex justify-between font-mono text-neutral-800">
-                    <span>Quick Reads</span>
-                    <span className="text-red-700 font-bold">{maxDuration === 600 ? "Any Duration" : `${maxDuration} mins`}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="60"
-                    max="600"
-                    step="30"
-                    value={maxDuration}
-                    onChange={(e) => setMaxDuration(parseInt(e.target.value))}
-                    className="w-full accent-red-700 cursor-pointer"
-                  />
-                </div>
-
-                {/* Sorters selection */}
-                <div className="space-y-2">
-                  <span className="block mb-1 text-stone-400">Sort listings by</span>
-                  <div className="grid grid-cols-2 gap-1.5 text-neutral-800 text-[11px] font-bold font-sans">
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
                     <button
                       type="button"
-                      onClick={() => setSortBy("rating")}
-                      className={`rounded p-2 border transition cursor-pointer ${sortBy === "rating" ? "border-stone-900 bg-stone-900 text-white font-bold" : "border-stone-200 bg-white"}`}
+                      onClick={() =>
+                        setSlideIdx((prev) => (prev - 1 + showcase.slides.length) % showcase.slides.length)
+                      }
+                      className="h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
+                      aria-label="Previous spotlight"
                     >
-                      Top Rated
+                      <ChevronLeft className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSortBy("date")}
-                      className={`rounded p-2 border transition cursor-pointer ${sortBy === "date" ? "border-stone-900 bg-stone-900 text-white font-bold" : "border-stone-200 bg-white"}`}
+                      onClick={() => setSlideIdx((prev) => (prev + 1) % showcase.slides.length)}
+                      className="h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
+                      aria-label="Next spotlight"
                     >
-                      Published Date
+                      <ChevronRight className="h-4 w-4" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSortBy("alphabet")}
-                      className={`rounded p-2 border transition cursor-pointer ${sortBy === "alphabet" ? "border-stone-900 bg-stone-900 text-white" : "border-stone-200 bg-white text-stone-800 font-bold"}`}
+                      onClick={() => {
+                        if (activeSlide.targetView === "store") {
+                          document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                        } else {
+                          onNavigate?.(activeSlide.targetView);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg bg-[#0B254D] hover:bg-[#155EEF] text-white px-3 py-2 text-xs font-semibold transition cursor-pointer"
                     >
-                      Alphabetical
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSortBy("price")}
-                      className={`rounded p-2 border transition cursor-pointer ${sortBy === "price" ? "border-stone-900 bg-stone-900 text-white font-bold" : "border-stone-200 bg-white text-stone-800 font-bold"}`}
-                    >
-                      Cheapest
+                      <span>{activeSlide.ctaLabel || "Open"}</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                </div>
+                </section>
+              )}
 
-                {/* Helper recap metrics */}
-                <div className="flex flex-col justify-end space-y-1 col-span-1 md:col-span-4 mt-2 border-t pt-3">
-                  <p className="text-stone-400 font-mono text-[9px]">Filtering Results: <strong className="text-stone-850 font-bold">{sortedBooks.length} titles</strong></p>
-                  <p className="text-[11px] leading-relaxed text-stone-500 font-sans tracking-normal font-medium normal-case">
-                    All premium book items are backed globally. Includes secure digital DRM locks for your protection.
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+              {/* ORDERS LEDGER VIEW */}
+              {storeSection === "orders" ? (
+                <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <div>
+                      <h2 className="font-display text-lg font-bold text-[#0B254D] dark:text-white">
+                        My Book Orders &amp; Unlock Ledger
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Track M-Pesa &amp; eCitizen book unlock approvals and open approved titles immediately.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStoreSection("catalog")}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#155EEF] hover:bg-[#0F49C7] text-white px-3.5 py-2 text-xs font-semibold cursor-pointer"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                      <span>Back to Books</span>
+                    </button>
+                  </div>
 
-          {/* Book Card Shelf grid */}
-          {sortedBooks.length === 0 ? (
-            <div className="p-8 text-center rounded-3xl border border-dashed border-stone-200 bg-stone-50/50 max-w-md mx-auto my-8 space-y-3.5 col-span-2 lg:col-span-4 w-full">
-              <div className="mx-auto w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600">
-                <BookOpen className="h-6 w-6" />
-              </div>
-              <h3 className="font-display text-sm font-bold text-slate-950">No Ebooks Available</h3>
-              <p className="text-[11px] text-stone-500 max-w-xs mx-auto leading-relaxed">
-                Our digital catalog is empty right now. Admin uploads will instantly update this bookshelf for all readers.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-2 sm:gap-3 grid-cols-2 lg:grid-cols-4">
-              {sortedBooks.map((b, index) => (
-              <motion.div
-                key={b.id}
-                id={b.id === "b1" ? "book_card_book_1" : `book_card_${b.id}`}
-                onClick={() => setDetailModalBook(b)}
-                className="group bookstore-item-card relative flex flex-col justify-between rounded-2xl border border-stone-200 bg-white p-2.5 sm:p-3 md:p-3.5 cursor-pointer text-left transition-all duration-300 shadow-xs hover:border-amber-500/50 hover:shadow-md"
-                data-tooltip-price={`KES ${b.price.toLocaleString()}`}
-                data-tooltip-rating={`${b.rating} ★ (${b.reviewsCount})`}
-                data-tooltip-size={b.fileSize}
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{
-                  type: "spring",
-                  stiffness: 100,
-                  damping: 15,
-                  delay: index * 0.04
-                }}
-              >
-                <div>
-                  {/* Wonderful Classic Mahogany Inner-Gold Frame (Centered) */}
-                  <div className="aspect-[3/4] w-full h-40 sm:h-48 md:h-52 max-h-[180px] sm:max-h-[200px] md:max-h-[220px] flex items-center justify-center bg-stone-900 border-[6px] border-[#3e2723] rounded-xl shadow-lg relative mb-1.5 md:mb-2.5 p-1.5 ring-2 ring-amber-500/15 ring-offset-2 dark:ring-offset-stone-900 overflow-hidden">
-                    <img 
-                      src={b.coverImage} 
-                      className={`max-h-full max-w-full object-contain transition duration-300 rounded-sm shadow-md ${
-                        b.id === "b1"
-                          ? "grayscale group-hover:grayscale-0 group-hover:scale-[1.04]"
-                          : "group-hover:scale-[1.04]"
-                      }`} 
-                      alt={b.title} 
-                    />
-                    
-                    {b.isFeatured && (
-                      <span className="absolute top-1.5 left-1.5 rounded-full bg-red-750 font-mono text-[7px] sm:text-[8px] font-black text-white px-1.5 py-0.5 uppercase tracking-wider shadow z-10">
-                        Featured
-                      </span>
-                    )}
-
-                    {/* Context Menu Dropdown Trigger (ellipsis) */}
-                    <div className="absolute top-2 right-2 z-20">
+                  {bookOrders.length === 0 ? (
+                    <div className="py-10 text-center space-y-3">
+                      <ShoppingBag className="h-10 w-10 mx-auto text-slate-300 dark:text-slate-600" />
+                      <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                        No book orders recorded yet
+                      </p>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                        Select any book from the catalog to unlock with M-Pesa STK Push or read free titles instantly.
+                      </p>
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveContextMenuBookId(prev => prev === b.id ? null : b.id);
-                        }}
-                        className={`h-6 w-6 sm:h-7 sm:w-7 flex items-center justify-center rounded-full bg-white dark:bg-stone-900 text-stone-600 hover:text-stone-950 shadow-md border border-stone-200/50 hover:bg-stone-50 transition cursor-pointer ${
-                          activeContextMenuBookId === b.id ? "bg-stone-100 border-amber-400" : ""
-                        }`}
-                        title="Context Menu"
+                        onClick={() => setStoreSection("catalog")}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-[#0B254D] text-white px-4 py-2 text-xs font-semibold cursor-pointer"
                       >
-                        <MoreVertical className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        Browse Catalog
                       </button>
-
-                      {/* Context Menu Dropdown */}
-                      {activeContextMenuBookId === b.id && (
-                        <div className="absolute right-0 mt-1.5 w-44 rounded-xl bg-white dark:bg-stone-950 border border-stone-200 shadow-xl py-1.5 z-30 animate-in fade-in slide-in-from-top-1 duration-150">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveContextMenuBookId(null);
-                              handleShareBook(b);
-                            }}
-                            className="w-full text-left px-3 py-2 text-xs font-semibold text-stone-750 hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-900 flex items-center gap-2 cursor-pointer transition"
-                          >
-                            <Share2 className="h-3.5 w-3.5 text-stone-450" />
-                            <span>Share Book</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveContextMenuBookId(null);
-                              onToggleWishlist(b.id);
-                              const isFav = wishlistBookIds.includes(b.id);
-                              triggerToast(isFav ? `📚 Removed "${b.title}" from reading list.` : `📚 Added "${b.title}" to reading list!`);
-                            }}
-                            className="w-full text-left px-3 py-2 text-xs font-semibold text-stone-750 hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-900 flex items-center gap-2 cursor-pointer transition"
-                          >
-                            <Heart className="h-3.5 w-3.5 text-red-500 fill-current" />
-                            <span>{wishlistBookIds.includes(b.id) ? "In Reading List" : "Add to Reading List"}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveContextMenuBookId(null);
-                              setSelectedBook(b);
-                            }}
-                            className="w-full text-left px-3 py-2 text-xs font-semibold text-stone-750 hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-900 flex items-center gap-2 cursor-pointer transition"
-                          >
-                            <Eye className="h-3.5 w-3.5 text-blue-500" />
-                            <span>View Details</span>
-                          </button>
-                        </div>
-                      )}
                     </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                            <th className="py-2.5 pr-4">Book Title</th>
+                            <th className="py-2.5 pr-4">Date</th>
+                            <th className="py-2.5 pr-4">Reference</th>
+                            <th className="py-2.5 pr-4">Amount</th>
+                            <th className="py-2.5 pr-4">Status</th>
+                            <th className="py-2.5 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {bookOrders.map((ord) => {
+                            const matchedBook = books.find((b) => b.id === ord.bookId);
+                            return (
+                              <tr key={ord.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                <td className="py-3 pr-4 font-semibold text-[#0B254D] dark:text-white">
+                                  {ord.bookTitle || matchedBook?.title || "Digital Publication"}
+                                </td>
+                                <td className="py-3 pr-4 text-slate-500 tabular-nums">{ord.date}</td>
+                                <td className="py-3 pr-4 font-mono text-slate-600 dark:text-slate-300">
+                                  {ord.userName || ord.phoneNumber || ord.id.slice(-8)}
+                                </td>
+                                <td className="py-3 pr-4 font-semibold text-[#0B254D] dark:text-slate-200 tabular-nums">
+                                  KES {Number(ord.price || 0).toLocaleString()}
+                                </td>
+                                <td className="py-3 pr-4 font-semibold uppercase text-[11px]">
+                                  <span
+                                    className={
+                                      ord.status === "approved"
+                                        ? "text-emerald-600 dark:text-emerald-400"
+                                        : ord.status === "rejected"
+                                        ? "text-rose-600 dark:text-rose-400"
+                                        : "text-amber-600 dark:text-amber-400"
+                                    }
+                                  >
+                                    {ord.status}
+                                  </span>
+                                </td>
+                                <td className="py-3 text-right">
+                                  {matchedBook && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedBook(matchedBook)}
+                                      className="rounded-lg bg-[#155EEF] hover:bg-[#0F49C7] text-white px-3 py-1.5 text-[11px] font-semibold cursor-pointer"
+                                    >
+                                      {ord.status === "approved" ? "Open Reader" : "View Book"}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              ) : (
+                <>
+                  {/* FEATURED BOOKS SECTION (5-Up Desktop Row) */}
+                  {storeSection === "catalog" && featuredBooks.length > 0 && (
+                    <section id="featured_books_anchor" className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h2 className="font-display text-lg sm:text-xl font-bold text-[#0B254D] dark:text-white">
+                          Featured Books
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAllFeatured((prev) => !prev);
+                            if (!showAllFeatured) {
+                              document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#155EEF] hover:underline cursor-pointer"
+                        >
+                          <span>{showAllFeatured ? "Show Top 5" : "View All"}</span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
 
-                    {/* Interactive Hover Overlay with prominently displayed Author, Rating, dimmed BG, and Instant Preview */}
-                    <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-[1px] flex flex-col items-center justify-center text-center opacity-0 group-hover:opacity-100 transition duration-300 p-2 sm:p-4 z-10 select-none">
-                      <p className="text-[8px] sm:text-[9px] uppercase font-mono font-black text-amber-500 tracking-wider mb-1">
-                        {b.category}
-                      </p>
-                      <h4 className="text-white font-extrabold text-[10px] sm:text-[12px] line-clamp-2 px-1 sm:px-2 mb-1 drop-shadow-sm font-display tracking-tight leading-normal">
-                        {b.title}
-                      </h4>
-                      <p className="text-stone-300 text-[9px] sm:text-[10.5px] italic font-semibold mb-2">
-                        By {b.author}
-                      </p>
-                      
-                      {/* Prominent Rating Rating Badge */}
-                      <div className="flex items-center gap-1 mb-2 sm:mb-4 select-none">
-                        <div className="flex text-amber-400">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Star 
-                              key={i} 
-                              className={`h-2.5 w-2.5 sm:h-3 sm:w-3 ${i < Math.floor(b.rating) ? "fill-amber-400" : "text-stone-700"}`} 
-                            />
-                          ))}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {visibleFeatured.map((fb) => (
+                          <div
+                            key={fb.id}
+                            onClick={() => {
+                              recordReadingHistory(fb.id);
+                              setSelectedBook(fb);
+                            }}
+                            className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 cursor-pointer hover:border-[#155EEF]/60 transition flex flex-col"
+                          >
+                            <div className="aspect-[3/4] w-full bg-white dark:bg-transparent flex items-center justify-center mb-2.5">
+                              <img
+                                src={fb.coverImage}
+                                alt={fb.title}
+                                className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.02]"
+                              />
+                            </div>
+                            <div className="space-y-1 flex-1 flex flex-col justify-between">
+                              <div>
+                                <span className="inline-block rounded bg-[#F5B82E]/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#0B254D] dark:text-[#F5B82E] mb-1">
+                                  Featured
+                                </span>
+                                <h3 className="font-display text-xs sm:text-sm font-semibold text-[#0B254D] dark:text-white line-clamp-2 leading-snug">
+                                  {fb.title}
+                                </h3>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                                  {fb.author}
+                                </p>
+                              </div>
+                              <p className="text-xs font-bold text-[#155EEF] dark:text-blue-400 tabular-nums pt-1">
+                                {fb.price > 0 ? `KES ${fb.price.toLocaleString()}` : "Free Access"}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* BESTSELLING & RECOMMENDED SHELF (Clean Book Cover Display) */}
+                  {storeSection === "catalog" && !searchQuery && selectedCategory === "All" && bestsellingBooks.length > 0 && (
+                    <section className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-[#155EEF]" />
+                          <h2 className="font-display text-base sm:text-lg font-bold text-[#0B254D] dark:text-white">
+                            Bestsellers &amp; Recommended
+                          </h2>
                         </div>
-                        <span className="text-white text-[9px] sm:text-[10px] font-bold font-mono">
-                          {b.rating.toFixed(1)}
+                        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                          Top reader ratings ({recommendedBooks.length})
                         </span>
                       </div>
-
-                      {/* Instant Preview Buttons & Details */}
-                      <div className="flex flex-col gap-1 w-full max-w-[130px]">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setInstantPreviewBook(b);
-                            setPreviewPage(1);
-                          }}
-                          className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-black px-2 py-1 rounded-md text-[8px] sm:text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 shadow hover:scale-104 active:scale-96 transition cursor-pointer"
-                        >
-                          <BookOpen className="h-2.5 font-bold w-2.5 stroke-[2.5]" />
-                          <span>Preview</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedBook(b);
-                          }}
-                          className="bg-white/10 hover:bg-white/20 text-white border border-white/15 font-bold px-2 py-1 rounded-md text-[8px] sm:text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 hover:scale-104 active:scale-96 transition cursor-pointer"
-                        >
-                          <Eye className="h-2.5 w-2.5" />
-                          <span>Details</span>
-                        </button>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5">
+                        {bestsellingBooks.map((bb) => (
+                          <div
+                            key={`best_${bb.id}`}
+                            onClick={() => {
+                              recordReadingHistory(bb.id);
+                              setSelectedBook(bb);
+                            }}
+                            className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 cursor-pointer hover:border-[#155EEF]/55 transition flex flex-col"
+                          >
+                            <div className="aspect-[3/4] w-full bg-white dark:bg-transparent flex items-center justify-center mb-2">
+                              <img
+                                src={bb.coverImage}
+                                alt={bb.title}
+                                className="h-full w-full object-contain"
+                              />
+                            </div>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-[#155EEF] dark:text-blue-400">
+                              Bestseller · ★ {bb.rating}
+                            </span>
+                            <h3 className="font-display text-xs font-bold text-[#0B254D] dark:text-white line-clamp-1 mt-0.5">
+                              {bb.title}
+                            </h3>
+                            <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+                              {bb.price > 0 ? `KES ${bb.price.toLocaleString()}` : "Free"}
+                            </p>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                  </div>
+                    </section>
+                  )}
 
-                  <span className="font-mono text-[8px] sm:text-[9px] md:text-[10px] font-bold uppercase tracking-wider text-stone-400 block mb-0.5 transition-all duration-300 transform translate-x-[-3px] group-hover:translate-x-0">
-                    {b.category}
-                  </span>
-
-                  <h3 
-                    className={`font-display text-[10.5px] sm:text-xs md:text-sm leading-snug max-h-12 overflow-hidden truncate transition-all duration-300 transform group-hover:translate-x-0.5 ${
-                      b.id === "b1"
-                        ? "tracking-tight"
-                        : "font-bold text-neutral-900"
-                    }`}
-                    style={b.id === "b1" ? { fontWeight: 900 } : undefined}
-                  >
-                    {b.title}
-                  </h3>
-
-                  <p className="text-[9px] sm:text-[10px] md:text-[11px] text-stone-500 mt-0.5 truncate transition-all duration-500 transform translate-y-1 group-hover:translate-y-0 opacity-75 group-hover:opacity-100">By {b.author}</p>
-
-                </div>
-
-                <div className="border-t border-stone-100 pt-1.5 sm:pt-2 mt-1.5 sm:mt-2.5 flex flex-col space-y-1.5 sm:space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <span className="font-mono text-[9.5px] sm:text-[11px] md:text-xs font-bold text-red-700">KES {b.price.toLocaleString()}</span>
-                      
-                      {/* Live Star metric listed directly on listing! */}
-                      <div className="flex items-center space-x-1 mt-0.5 text-[8.5px] sm:text-[9px] md:text-[10px] font-bold text-neutral-700 font-mono">
-                        <Star className="h-2.5 w-2.5 sm:h-3 sm:w-3.5 fill-amber-500 text-amber-500 shrink-0" />
-                        <span>{b.rating}</span>
-                        <span className="text-stone-300 font-normal">({b.reviewsCount})</span>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="font-mono text-[8px] sm:text-[8.5px] md:text-[9.5px] text-stone-400 block">{b.fileSize} • PDF</span>
-                      <span className="font-mono text-[8px] sm:text-[8.5px] md:text-[9px] text-emerald-600 font-bold block mt-0.5">⏱️ {getReadingDuration(b.pages)}m read</span>
-                    </div>
-                  </div>
-
-                  {/* Reading progress indicator */}
-                  {(() => {
-                    const progressVal = getBookProgress(b.id, b.pages);
-                    return (
-                      <div className="flex flex-col space-y-0.5 sm:space-y-1 pt-1 sm:pt-1.5 border-t border-dashed border-stone-100">
-                        <div className="flex justify-between items-center text-[8px] sm:text-[9px] md:text-[10px] font-semibold text-stone-550 font-sans">
-                          <span className="text-stone-550">Progress</span>
-                          <span className={progressVal > 0 ? "text-emerald-600 font-bold" : "text-stone-400"}>
-                            {progressVal}% read
-                          </span>
+                  {/* DYNAMIC CAMPUS BUILDING PHOTO SPOTLIGHT (Linking Physical Bungoma Campus to Digital Bookstore) */}
+                  {storeSection === "catalog" && categoryBuildingPhoto && (
+                    <div className="rounded-2xl border border-stone-200 dark:border-slate-800 bg-gradient-to-r from-[#0B254D] via-[#123A78] to-[#155EEF] text-white p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5 min-w-0 w-full md:w-auto">
+                        <img
+                          src={categoryBuildingPhoto.url}
+                          alt={categoryBuildingPhoto.title}
+                          className="h-16 w-24 sm:h-20 sm:w-28 rounded-xl object-cover border border-white/20 shrink-0 shadow-xs"
+                        />
+                        <div className="min-w-0 text-left space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded bg-[#F5B82E] text-[#0B254D] text-[10px] font-black uppercase font-mono tracking-wider">
+                              Bungoma Campus Facility
+                            </span>
+                            <span className="text-[11px] text-blue-200 truncate font-mono">
+                              Category: {categoryBuildingPhoto.libraryCategory}
+                            </span>
+                          </div>
+                          <h3 className="font-display text-sm sm:text-base font-bold text-white truncate">
+                            {categoryBuildingPhoto.title}
+                          </h3>
+                          <p className="text-[11px] text-blue-100/85 line-clamp-1">
+                            {categoryBuildingPhoto.location} · {categoryBuildingPhoto.description}
+                          </p>
                         </div>
-                        <div className="w-full bg-stone-100 h-1 sm:h-1.5 rounded-full overflow-hidden">
-                          <div 
-                            className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                            style={{ width: `${progressVal || 0}%` }}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setShowCampusTourInStore(!showCampusTourInStore)}
+                          className="w-full md:w-auto px-3.5 py-2 rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] text-[#0B254D] text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Compass className="h-3.5 w-3.5" />
+                          <span>{showCampusTourInStore ? "Hide Virtual Tour" : "Take Bungoma Virtual Tour"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {showCampusTourInStore && (
+                    <div className="my-2">
+                      <VirtualTourCarousel
+                        currentUser={currentUser}
+                        onNavigate={onNavigate}
+                        titleOverride={`Virtual Tour: ${categoryBuildingPhoto?.title || "Bungoma Campus"}`}
+                        subtitleOverride="Explore the physical lecture halls, library carrels, and computer labs in Kanduyi, Bungoma."
+                      />
+                    </div>
+                  )}
+
+                  {/* FILTERS, COMPARE & CATALOG HEADER */}
+                  <div id="store_catalog_anchor" className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h2 className="font-display text-base sm:text-lg font-bold text-[#0B254D] dark:text-white">
+                          {storeSection === "library"
+                            ? "My Unlocked Library"
+                            : storeSection === "wishlist"
+                            ? "Saved Reading Wishlist"
+                            : storeSection === "history"
+                            ? "My Reading History"
+                            : selectedCategory === "All"
+                            ? "All Publications"
+                            : `${selectedCategory === "Religion" ? "Christian Books" : selectedCategory} Collection`}
+                        </h2>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                          Showing {displayedCatalogBooks.length} {displayedCatalogBooks.length === 1 ? "title" : "titles"}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {storeSection !== "catalog" && (
+                          <button
+                            type="button"
+                            onClick={() => setStoreSection("catalog")}
+                            className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            All Books
+                          </button>
+                        )}
+                        <select
+                          id="store_category_select"
+                          value={selectedCategory}
+                          onChange={(e) => {
+                            setStoreSection("catalog");
+                            setSelectedCategory(e.target.value);
+                          }}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 outline-none focus:border-[#155EEF] cursor-pointer"
+                          title="Filter publications by category"
+                        >
+                          <option value="All">All Categories</option>
+                          {categories
+                            .filter((c) => c !== "All")
+                            .map((cat) => (
+                              <option key={cat} value={cat}>
+                                {cat === "Religion" ? "Christian Books" : cat}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setShowCompareView(!showCompareView)}
+                          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                            showCompareView
+                              ? "bg-[#155EEF] text-white border-[#155EEF]"
+                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
+                          }`}
+                        >
+                          <Scale className="h-3.5 w-3.5" />
+                          <span>Compare</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Side-by-Side Compare view */}
+                    {showCompareView && (
+                      <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 p-4 rounded-xl space-y-4 text-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 dark:border-slate-700 pb-2.5 gap-2">
+                          <div>
+                            <h4 className="text-sm font-bold text-[#0B254D] dark:text-white">
+                              Side-by-Side Book Comparison
+                            </h4>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              Select any two publications to compare pages, file size, rating, and KES price.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCompareBookId1("");
+                              setCompareBookId2("");
+                            }}
+                            className="text-xs text-[#155EEF] font-semibold hover:underline cursor-pointer"
+                          >
+                            Reset selection
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <select
+                            value={compareBookId1}
+                            onChange={(e) => setCompareBookId1(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="">-- Select Book One --</option>
+                            {books
+                              .filter((b) => b.status === "active")
+                              .map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.title} ({b.author})
+                                </option>
+                              ))}
+                          </select>
+                          <select
+                            value={compareBookId2}
+                            onChange={(e) => setCompareBookId2(e.target.value)}
+                            className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-xs font-semibold text-slate-800 dark:text-slate-100"
+                          >
+                            <option value="">-- Select Book Two --</option>
+                            {books
+                              .filter((b) => b.status === "active")
+                              .map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.title} ({b.author})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        {compareBookId1 && compareBookId2 ? (
+                          (() => {
+                            const book1 = books.find((b) => b.id === compareBookId1);
+                            const book2 = books.find((b) => b.id === compareBookId2);
+                            if (!book1 || !book2) return null;
+                            return (
+                              <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900">
+                                <table className="w-full text-left text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-50 dark:bg-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                                      <th className="py-2.5 px-3">Metric</th>
+                                      <th className="py-2.5 px-3 text-[#0B254D] dark:text-white">{book1.title}</th>
+                                      <th className="py-2.5 px-3 text-[#0B254D] dark:text-white">{book2.title}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                    <tr>
+                                      <td className="py-2 px-3 font-semibold text-slate-500">Author</td>
+                                      <td className="py-2 px-3">{book1.author}</td>
+                                      <td className="py-2 px-3">{book2.author}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="py-2 px-3 font-semibold text-slate-500">Category</td>
+                                      <td className="py-2 px-3">{book1.category}</td>
+                                      <td className="py-2 px-3">{book2.category}</td>
+                                    </tr>
+                                    <tr>
+                                      <td className="py-2 px-3 font-semibold text-slate-500">Pages / Time</td>
+                                      <td className="py-2 px-3 tabular-nums">
+                                        {book1.pages} pp · {getReadingDuration(book1.pages)}m
+                                      </td>
+                                      <td className="py-2 px-3 tabular-nums">
+                                        {book2.pages} pp · {getReadingDuration(book2.pages)}m
+                                      </td>
+                                    </tr>
+                                    <tr>
+                                      <td className="py-2 px-3 font-semibold text-slate-500">Price</td>
+                                      <td className="py-2 px-3 font-bold text-[#155EEF] tabular-nums">
+                                        KES {book1.price.toLocaleString()}
+                                      </td>
+                                      <td className="py-2 px-3 font-bold text-[#155EEF] tabular-nums">
+                                        KES {book2.price.toLocaleString()}
+                                      </td>
+                                    </tr>
+                                    <tr>
+                                      <td className="py-2 px-3 font-semibold text-slate-500">Inspect</td>
+                                      <td className="py-2 px-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedBook(book1)}
+                                          className="bg-[#155EEF] text-white font-semibold py-1 px-3 rounded-lg text-[11px] cursor-pointer"
+                                        >
+                                          Open
+                                        </button>
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedBook(book2)}
+                                          className="bg-[#155EEF] text-white font-semibold py-1 px-3 rounded-lg text-[11px] cursor-pointer"
+                                        >
+                                          Open
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          <div className="text-center py-3 text-xs text-slate-500 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
+                            Select two books above to view side-by-side comparison metrics.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Advanced Filters Drawer */}
+                    {showFilters && (
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-5 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                            <span>Max Price</span>
+                            <span className="text-[#155EEF] tabular-nums">KES {maxPrice}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="100"
+                            max="2000"
+                            step="50"
+                            value={maxPrice}
+                            onChange={(e) => setMaxPrice(parseInt(e.target.value, 10))}
+                            className="w-full accent-[#155EEF] cursor-pointer"
                           />
                         </div>
-                      </div>
-                    );
-                  })()}
 
-                  {/* Add to Library / Purchase Guard */}
-                  <div className="pt-2 border-t border-[#E7E1D8] flex flex-col">
-                    {purchasedBookIds.includes(b.id) ? (
-                      <div className="w-full py-1.5 px-2.5 rounded-xl bg-emerald-50/80 text-emerald-700 text-[10px] font-bold flex items-center justify-center gap-1 border border-emerald-200/40">
-                        <Check className="h-3 w-3 text-emerald-600 font-extrabold stroke-[2.5]" />
-                        <span>Saved in Library</span>
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                            <span>Max File Size</span>
+                            <span className="text-[#155EEF] tabular-nums">
+                              {maxFileSize === 10 ? "Any" : `${maxFileSize} MB`}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="10"
+                            step="0.5"
+                            value={maxFileSize}
+                            onChange={(e) => setMaxFileSize(parseFloat(e.target.value))}
+                            className="w-full accent-[#155EEF] cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between font-semibold text-slate-600 dark:text-slate-300">
+                            <span>Max Duration</span>
+                            <span className="text-[#155EEF] tabular-nums">
+                              {maxDuration === 600 ? "Any" : `${maxDuration}m`}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="60"
+                            max="600"
+                            step="30"
+                            value={maxDuration}
+                            onChange={(e) => setMaxDuration(parseInt(e.target.value, 10))}
+                            className="w-full accent-[#155EEF] cursor-pointer"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300 block">Sort By</span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {[
+                              { id: "rating", label: "Top Rated" },
+                              { id: "date", label: "Newest" },
+                              { id: "alphabet", label: "A–Z" },
+                              { id: "price", label: "Lowest KES" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setSortBy(opt.id as any)}
+                                className={`rounded-lg py-1.5 px-2 text-[11px] font-semibold border transition cursor-pointer ${
+                                  sortBy === opt.id
+                                    ? "bg-[#0B254D] text-white border-[#0B254D]"
+                                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!currentUser) {
-                            triggerToast("Please sign in first to save or purchase eBooks.");
-                            onLogIn();
-                            return;
-                          }
-                          if ((b.price || 0) > 0) {
-                            setSelectedBook(b);
-                            triggerToast(`"${b.title}" requires KES ${b.price.toLocaleString()} checkout to unlock full reading access.`);
-                            return;
-                          }
-                          onQuickSaveToLibrary?.(b.id);
-                          triggerToast(`"${b.title}" added to your personal library.`);
-                        }}
-                        className="w-full py-1.5 px-2.5 rounded-xl bg-[#FAF8F4] hover:bg-[#A8421B] text-[#A8421B] hover:text-white text-[10px] font-bold tracking-wide uppercase flex items-center justify-center gap-1 border border-[#E7E1D8] hover:border-transparent transition-all duration-200 active:scale-95 cursor-pointer"
-                      >
-                        <Plus className="h-3 w-3 shrink-0 stroke-[2.5]" />
-                        <span>{(b.price || 0) > 0 ? `Unlock • KES ${b.price.toLocaleString()}` : "Add Free Book"}</span>
-                      </button>
                     )}
                   </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-          )}
 
-        </div>
-      )}
+                  {/* MAIN CATALOG GRID */}
+                  {displayedCatalogBooks.length === 0 ? (
+                    <div className="p-8 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-3">
+                      <BookOpen className="h-8 w-8 mx-auto text-slate-300 dark:text-slate-600" />
+                      <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white">
+                        No Matching Publications
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                        {storeSection === "library"
+                          ? "You have not unlocked any books yet. Browse the catalog to add free titles or unlock via M-Pesa."
+                          : storeSection === "wishlist"
+                          ? "Your reading wishlist is empty. Click the three-dot menu on any book to save it here."
+                          : "Adjust your search or category filter to view available titles."}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3.5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+                      {displayedCatalogBooks.map((b, index) => {
+                        const progressVal = getBookProgress(b.id, b.pages);
+                        const isPurchased = purchasedBookIds.includes(b.id);
+                        return (
+                          <motion.div
+                            key={b.id}
+                            id={b.id === "b1" ? "book_card_book_1" : `book_card_${b.id}`}
+                            onClick={() => {
+                              recordReadingHistory(b.id);
+                              setDetailModalBook(b);
+                            }}
+                            className="group bookstore-item-card relative flex flex-col justify-between rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 cursor-pointer text-left transition hover:border-[#155EEF]/55"
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.25, delay: Math.min(index * 0.03, 0.24) }}
+                          >
+                            <div>
+                              {/* Clean Unframed Portrait Book Cover (Natural Colors & Proportions, Zero Distortion/Veil) */}
+                              <div className="aspect-[3/4] w-full bg-white dark:bg-transparent relative mb-2.5 flex items-center justify-center">
+                                <img
+                                  src={b.coverImage}
+                                  className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.02]"
+                                  alt={b.title}
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between gap-1.5">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 truncate">
+                                  {b.category === "Religion" ? "Christian Books" : b.category === "Self-Help" ? "Personal Dev." : b.category}
+                                  {b.isFeatured ? " · Featured" : ""}
+                                </p>
+
+                                {/* Clean Metadata-Row Actions & Context Menu */}
+                                <div className="relative flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      recordReadingHistory(b.id);
+                                      setInstantPreviewBook(b);
+                                      setPreviewPage(1);
+                                    }}
+                                    title="Preview chapters"
+                                    className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-[#155EEF] hover:bg-[#EFF6FF] dark:hover:bg-slate-800 cursor-pointer"
+                                  >
+                                    Preview
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveContextMenuBookId((prev) => (prev === b.id ? null : b.id));
+                                    }}
+                                    className="h-6 w-6 flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                                    title="More options"
+                                  >
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                  </button>
+
+                                  {activeContextMenuBookId === b.id && (
+                                    <div className="absolute right-0 bottom-full mb-1 w-44 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1.5 z-30">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveContextMenuBookId(null);
+                                          handleShareBook(b);
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+                                      >
+                                        <Share2 className="h-3.5 w-3.5 text-slate-400" />
+                                        <span>Share Book</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveContextMenuBookId(null);
+                                          onToggleWishlist(b.id);
+                                          const isFav = wishlistBookIds.includes(b.id);
+                                          triggerToast(
+                                            isFav
+                                              ? `Removed "${b.title}" from wishlist.`
+                                              : `Added "${b.title}" to wishlist.`
+                                          );
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+                                      >
+                                        <Heart className="h-3.5 w-3.5 text-rose-500 fill-current" />
+                                        <span>{wishlistBookIds.includes(b.id) ? "In Wishlist" : "Add to Wishlist"}</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveContextMenuBookId(null);
+                                          setSelectedBook(b);
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+                                      >
+                                        <Eye className="h-3.5 w-3.5 text-[#155EEF]" />
+                                        <span>Full Details</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <h3 className="font-display text-xs sm:text-sm font-bold text-[#0B254D] dark:text-white line-clamp-2 leading-snug mt-0.5">
+                                {b.title}
+                              </h3>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                                {b.author}
+                              </p>
+                            </div>
+
+                            <div className="pt-2.5 mt-2.5 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-bold text-[#155EEF] dark:text-blue-400 tabular-nums">
+                                  {b.price > 0 ? `KES ${b.price.toLocaleString()}` : "Free"}
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300 tabular-nums">
+                                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                                  <span>{b.rating}</span>
+                                </span>
+                              </div>
+
+                              {progressVal > 0 && (
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[10px] font-medium text-slate-500 tabular-nums">
+                                    <span>Progress</span>
+                                    <span className="text-emerald-600 font-semibold">{progressVal}%</span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full overflow-hidden">
+                                    <div
+                                      className="bg-emerald-500 h-full rounded-full"
+                                      style={{ width: `${progressVal}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {isPurchased ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedBook(b);
+                                  }}
+                                  className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[11px] font-semibold flex items-center justify-center gap-1 border border-emerald-200 dark:border-emerald-800 cursor-pointer"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  <span>In Library</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!currentUser) {
+                                      triggerToast("Please sign in first to save or purchase eBooks.");
+                                      onLogIn();
+                                      return;
+                                    }
+                                    if ((b.price || 0) > 0) {
+                                      setSelectedBook(b);
+                                      triggerToast(`"${b.title}" requires KES ${b.price.toLocaleString()} checkout.`);
+                                      return;
+                                    }
+                                    onQuickSaveToLibrary?.(b.id);
+                                    triggerToast(`"${b.title}" added to your personal library.`);
+                                  }}
+                                  className="w-full py-1.5 px-2.5 rounded-lg bg-[#EFF6FF] hover:bg-[#155EEF] text-[#155EEF] hover:text-white dark:bg-slate-800 dark:text-blue-300 dark:hover:bg-[#155EEF] dark:hover:text-white text-[11px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  <span>{(b.price || 0) > 0 ? `Unlock · KES ${b.price.toLocaleString()}` : "Save Book"}</span>
+                                </button>
+                              )}
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Compact Payment & Cloud Vault Strip */}
+                  <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div className="flex items-start gap-2.5">
+                      <CreditCard className="h-4 w-4 text-[#155EEF] shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-[#0B254D] dark:text-white">M-Pesa STK &amp; PayBill {darajaShortcode}</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Instant Kenyan Shilling checkout powered by Safaricom Daraja.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <Cloud className="h-4 w-4 text-[#155EEF] shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-[#0B254D] dark:text-white">Supabase &amp; Firebase Vault</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Cross-device reading progress and unlocked library sync.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <HardDrive className="h-4 w-4 text-[#155EEF] shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-[#0B254D] dark:text-white">Offline IndexedDB Reader</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Access approved publications offline inside SecureBookReader.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 🪟 BOOKSTORE QUICK VIEW MODAL */}
       {quickViewBook && (
         <div id="bookstore_quick_view_modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/60 backdrop-blur-md animate-fade-in select-none">
           <div className="relative w-full max-w-lg bg-white dark:bg-stone-950 border border-stone-200 dark:border-stone-850 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 text-left flex flex-col md:flex-row">
             
-            {/* Visual Thumbnail */}
-            <div className="w-full md:w-2/5 bg-stone-50 dark:bg-stone-900 p-6 flex items-center justify-center border-b md:border-b-0 md:border-r border-stone-150 dark:border-stone-850 relative">
+            {/* Visual Thumbnail (Book Cover Fix: clean transparent/white, zero shadow/badge overlap) */}
+            <div className="w-full md:w-2/5 bg-white dark:bg-transparent p-6 flex items-center justify-center">
               <img 
                 src={quickViewBook.coverImage} 
                 alt={quickViewBook.title} 
-                className="w-full max-h-[220px] object-contain rounded-lg drop-shadow-lg" 
+                className="w-full max-h-[240px] object-contain" 
               />
-              {quickViewBook.isFeatured && (
-                <span className="absolute top-3 left-3 rounded-full bg-red-700 font-mono text-[9px] font-bold text-white px-2 py-0.5 uppercase tracking-wider">
-                  Featured
-                </span>
-              )}
             </div>
 
             {/* Content info */}
@@ -2191,15 +2664,10 @@ export default function Store({
 
             {/* Layout grid */}
             <div className="grid gap-6 md:grid-cols-12 mt-2">
-              {/* Left Column: Image cover, price, wishlist button */}
+              {/* Left Column: Image cover, price, wishlist button (Book Cover Fix: transparent, no border/shadow/badge) */}
               <div className="md:col-span-5 flex flex-col items-center">
-                <div className="aspect-[3/4] w-full max-w-[200px] overflow-hidden rounded-2xl border border-stone-200 relative mb-4 bg-neutral-50 shadow-md">
-                  <img src={detailModalBook.coverImage} className="w-full h-full object-contain" alt={detailModalBook.title} />
-                  {detailModalBook.isFeatured && (
-                    <span className="absolute top-3 left-3 rounded-full bg-red-700 font-mono text-[9px] font-bold text-white px-2 py-0.5 uppercase tracking-wider shadow">
-                      Featured
-                    </span>
-                  )}
+                <div className="w-full max-w-[220px] mb-4 flex items-center justify-center bg-white dark:bg-transparent">
+                  <img src={detailModalBook.coverImage} className="w-full max-h-[280px] object-contain" alt={detailModalBook.title} />
                 </div>
 
                 <div className="w-full bg-stone-50 dark:bg-stone-950 p-4 rounded-xl border border-stone-200/60 dark:border-stone-800 space-y-2 text-center">
@@ -2293,143 +2761,110 @@ export default function Store({
         </div>
       )}
 
-      {/* 6. M-PESA CHECKOUT PORTAL DIAGRAM MODAL */}
+      {/* 6. LIVE DARAJA M-PESA CHECKOUT MODAL */}
       {showMpesaModal && selectedBook && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md" onClick={() => { if (stkStatus === "idle" || stkStatus === "success") setShowMpesaModal(false); }} />
-          
-          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-100 p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-250 select-none text-xs text-left">
-            
-            {/* Mpesa Branded Badge */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div
+            className="fixed inset-0 bg-slate-950/70 backdrop-blur-md"
+            onClick={() => {
+              if (stkStatus === "idle" || stkStatus === "success" || stkStatus === "failed") {
+                setShowMpesaModal(false);
+              }
+            }}
+          />
+
+          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-100 p-6 overflow-hidden text-xs text-left my-auto">
             <div className="flex items-center justify-between border-b border-stone-100 pb-4 mb-4">
               <div className="flex items-center space-x-2.5">
                 <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-green-600 text-white font-black text-sm tracking-tighter">
                   M
                 </span>
                 <div>
-                  <h3 className="font-display font-black text-stone-900 text-sm">Lipa Na M-Pesa checkout</h3>
-                  <p className="text-[10px] text-green-600 font-mono font-bold uppercase tracking-wider">SECURE INSTANT PAYBILL</p>
+                  <h3 className="font-display font-black text-stone-900 text-sm">Lipa Na M-Pesa Checkout</h3>
+                  <p className="text-[10px] text-green-600 font-mono font-bold uppercase tracking-wider">
+                    Safaricom Daraja {darajaEnv === "production" ? "Live Production" : "Sandbox"}
+                  </p>
                 </div>
               </div>
-              
+
               <button
                 type="button"
-                onClick={() => setShowMpesaModal(false)}
-                disabled={stkStatus !== "idle" && stkStatus !== "success"}
-                className="text-stone-400 hover:text-stone-600 font-bold p-1 text-sm disabled:opacity-30"
+                onClick={() => {
+                  setShowMpesaModal(false);
+                  setStkStatus("idle");
+                  setQrCodeBase64(null);
+                  setCheckoutError("");
+                }}
+                disabled={stkStatus === "pushing"}
+                className="text-stone-400 hover:text-stone-600 font-bold p-1 text-sm disabled:opacity-30 cursor-pointer"
               >
-                ✕
+                Close
               </button>
             </div>
 
-            {/* Mpesa payload details card */}
-            <div className="bg-stone-55 rounded-2xl border border-stone-150 p-4 space-y-2.5 bg-stone-50">
+            <div className="rounded-2xl border border-stone-200 p-4 space-y-2 bg-stone-50">
               <div className="flex justify-between items-center">
-                <span className="text-stone-400 uppercase font-bold text-[9px] tracking-wider">E-Book Release</span>
+                <span className="text-stone-500 uppercase font-bold text-[9px] tracking-wider">E-Book Release</span>
                 <span className="bg-stone-200 text-stone-700 font-bold px-2 py-0.5 rounded font-mono text-[9px]">{selectedBook.fileSize} PDF</span>
               </div>
               <h4 className="font-display font-extrabold text-stone-900 text-xs truncate leading-snug">{selectedBook.title}</h4>
-              
-              <div className="border-t border-stone-200/50 pt-2 flex justify-between items-center text-xs">
+
+              <div className="border-t border-stone-200/70 pt-2 flex justify-between items-center text-xs">
                 <span className="text-stone-500 font-medium">Billed Amount:</span>
-                <span className="text-red-750 font-mono font-black text-sm text-red-700">KES {selectedBook.price.toLocaleString()}</span>
+                <span className="font-mono font-black text-sm text-red-700">KES {selectedBook.price.toLocaleString()}</span>
               </div>
             </div>
 
-            {/* Paybill Reference Details (Uneditable Admin Coordinates) */}
-            <div className="my-4 bg-emerald-50 border border-emerald-150 p-4 rounded-2xl text-xs space-y-3">
-              <div className="flex items-center space-x-1 border-b border-emerald-100 pb-1.5 mb-1">
-                <span className="text-xs">🔒</span>
-                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Locked Administrative Payment Target:</span>
+            <div className="my-4 bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-xs space-y-2">
+              <div className="flex items-center justify-between border-b border-emerald-100 pb-1.5">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-widest">PayBill Target</span>
+                <span className="text-[10px] font-mono font-bold text-emerald-700">{darajaEnv.toUpperCase()}</span>
               </div>
-              
-              <p className="text-[11px] text-emerald-700 leading-relaxed font-bold">
-                The billing credentials below are securely managed by the system administrator and cannot be altered. Ordinary members edit their own sender parameters.
-              </p>
-              
-              <div className="space-y-2 pt-1 font-mono">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white p-2 rounded-xl border border-emerald-200">
-                    <span className="text-[9px] text-stone-550 uppercase block font-bold font-sans">M-Pesa Paybill Number</span>
-                    <input
-                      type="text"
-                      disabled
-                      value="247247"
-                      className="w-full text-stone-900 font-black text-xs text-center bg-transparent border-0 select-none font-mono outline-none"
-                    />
-                  </div>
-
-                  <div className="bg-white p-2 rounded-xl border border-emerald-200">
-                    <span className="text-[9px] text-stone-550 uppercase block font-bold font-sans">Account Reference</span>
-                    <input
-                      type="text"
-                      disabled
-                      value="7770185693193"
-                      className="w-full text-stone-900 font-black text-[11px] text-center bg-transparent border-0 select-none font-mono outline-none leading-none"
-                    />
-                  </div>
+              <div className="grid grid-cols-2 gap-2 pt-1 font-mono">
+                <div className="bg-white p-2 rounded-xl border border-emerald-200 text-center">
+                  <span className="text-[9px] text-stone-500 uppercase block font-bold font-sans">Business PayBill</span>
+                  <span className="text-stone-900 font-black text-xs">{darajaShortcode}</span>
                 </div>
-
-                <div className="bg-white p-2.5 rounded-xl border border-emerald-200">
-                  <span className="text-[9px] text-stone-550 uppercase block font-bold font-sans">Registered Payee Name</span>
-                  <input
-                    type="text"
-                    disabled
-                    value="Kelvin opara wafula"
-                    className="w-full text-stone-900 font-black text-xs text-center bg-transparent border-0 select-none font-mono outline-none"
-                  />
+                <div className="bg-white p-2 rounded-xl border border-emerald-200 text-center">
+                  <span className="text-[9px] text-stone-500 uppercase block font-bold font-sans">Account Reference</span>
+                  <span className="text-stone-900 font-black text-[11px]">ZD-{selectedBook.id.slice(0, 10)}</span>
                 </div>
               </div>
             </div>
+
+            {checkoutError && (
+              <div className="mb-3 bg-rose-50 border border-rose-200 text-rose-800 p-2.5 rounded-xl font-bold text-[11px] leading-tight text-left">
+                {checkoutError}
+              </div>
+            )}
 
             {stkStatus === "idle" && (
-              <form 
-                onSubmit={(e) => { 
-                  e.preventDefault(); 
-                  if (checkoutPhone.length < 10) {
-                    setCheckoutError("Valid Safaricom Number is required!");
-                    return;
-                  }
-                  if (!checkoutCustomerID.trim()) {
-                    setCheckoutError("Customer ID reference is required!");
-                    return;
-                  }
-                  setStkStatus("pushing"); 
-                }} 
-                className="space-y-4"
-              >
-                {checkoutError && (
-                  <div className="bg-rose-50 text-rose-800 p-2.5 rounded-lg font-bold text-[10px] leading-tight text-left">
-                    ⚠️ {checkoutError}
-                  </div>
-                )}
+              <form onSubmit={handleDispatchLiveStkPush} className="space-y-4">
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-left">
+                  <span className="text-[9.5px] font-black text-slate-600 uppercase tracking-widest block">Your Payment Details</span>
 
-                {/* USER-EDITABLE PORTION */}
-                <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-2xl space-y-3 text-left">
-                  <span className="text-[9.5px] font-black text-slate-500 uppercase tracking-widest block">Your Editable Payment Details:</span>
-                  
                   <div className="space-y-1">
-                    <label className="block text-[10px] text-slate-700 font-black uppercase tracking-wide">Your Safaricom Mobile Number</label>
+                    <label className="block text-[10px] text-slate-700 font-black uppercase tracking-wide">Safaricom Mobile Number</label>
                     <input
                       type="text"
                       required
                       maxLength={13}
                       value={checkoutPhone}
                       onChange={(e) => setCheckoutPhone(e.target.value.replace(/[^0-9+]/g, ""))}
-                      placeholder="e.g. 0712345678 or +254712345678"
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-850 outline-none text-xs focus:border-green-600 font-mono tracking-wider"
+                      placeholder="e.g. 0712345678 or 254712345678"
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-900 outline-none text-xs focus:border-green-600 font-mono tracking-wider"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] text-slate-700 font-black uppercase tracking-wide">Your Customer ID / Member Account</label>
+                    <label className="block text-[10px] text-slate-700 font-black uppercase tracking-wide">Customer ID / Account Ref</label>
                     <input
                       type="text"
                       required
                       value={checkoutCustomerID || (currentUser?.email || "")}
                       onChange={(e) => setCheckoutCustomerID(e.target.value)}
-                      placeholder="Enter Member Email or ID Reference"
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-850 outline-none text-xs focus:border-indigo-600 font-mono"
+                      placeholder="Member Email or Account Ref"
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-900 outline-none text-xs focus:border-indigo-600 font-mono"
                     />
                   </div>
 
@@ -2441,60 +2876,92 @@ export default function Store({
                       value={checkoutCustomerName || (currentUser?.name || "")}
                       onChange={(e) => setCheckoutCustomerName(e.target.value)}
                       placeholder="Your registered name"
-                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-850 outline-none text-xs focus:border-indigo-600"
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-bold text-stone-900 outline-none text-xs focus:border-indigo-600"
                     />
                   </div>
                 </div>
 
+                {qrCodeBase64 && (
+                  <div className="p-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 text-center space-y-2">
+                    <p className="text-[10px] font-bold text-emerald-800 uppercase">Scan with M-Pesa App</p>
+                    <img
+                      src={`data:image/png;base64,${qrCodeBase64}`}
+                      alt="M-Pesa PayBill Dynamic QR Code"
+                      className="w-36 h-36 mx-auto rounded-lg border border-emerald-200 bg-white p-1"
+                    />
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowMpesaModal(false)}
-                    className="flex-1 rounded-xl border border-stone-200 font-bold py-2.5 hover:bg-stone-50 text-center cursor-pointer"
+                    onClick={handleGenerateDynamicQr}
+                    disabled={isLoadingQr}
+                    className="rounded-xl border border-stone-200 font-bold px-3 py-2.5 hover:bg-stone-50 text-stone-700 cursor-pointer disabled:opacity-50"
                   >
-                    Cancel
+                    {isLoadingQr ? "Loading QR..." : "PayBill QR"}
                   </button>
                   <button
                     type="submit"
                     className="flex-1 rounded-xl bg-green-600 hover:bg-green-700 text-white font-extrabold py-2.5 text-center shadow-md shadow-green-600/10 cursor-pointer"
                   >
-                    Send STK Push
+                    Send Live STK Push
                   </button>
                 </div>
               </form>
             )}
 
-            {/* Processing state diagrams */}
             {stkStatus !== "idle" && (
-              <div className="py-6 space-y-4 text-center">
-                
-                {/* Visual stage ticker animation */}
-                <div className="flex items-center justify-center space-x-1 py-2">
-                  <span className={`h-2.5 w-2.5 rounded-full transition-all ${
-                    stkStatus === "pushing" ? "bg-green-600 scale-125 animate-ping" : "bg-green-400"
-                  }`} />
-                  <span className={`h-2.5 w-2.5 rounded-full transition-all ${
-                    stkStatus === "waiting" ? "bg-green-600 scale-125 animate-ping" : stkStatus === "pushing" ? "bg-stone-200" : "bg-green-400"
-                  }`} />
-                  <span className={`h-2.5 w-2.5 rounded-full transition-all relative ${
-                    stkStatus === "finalizing" ? "bg-green-600 scale-125 animate-ping" : (stkStatus === "success") ? "bg-green-400" : "bg-stone-200"
-                  }`} />
-                </div>
-
-                <div className="space-y-1">
+              <div className="py-4 space-y-4 text-center">
+                <div className="space-y-1.5">
                   <h4 className="font-display font-extrabold text-stone-900 text-sm">
-                    {stkStatus === "pushing" && "Stage 1/3: Triggering PIN Prompt"}
-                    {stkStatus === "waiting" && "Stage 2/3: Waiting for PIN details"}
-                    {stkStatus === "finalizing" && "Stage 3/3: Verifying ledger entries"}
-                    {stkStatus === "success" && "Transaction Confirmed! 🎉"}
+                    {stkStatus === "pushing" && "Dispatching M-Pesa STK Push..."}
+                    {stkStatus === "waiting" && "Check Your Phone for M-Pesa PIN Prompt"}
+                    {stkStatus === "success" && "Payment Confirmed"}
+                    {stkStatus === "failed" && "Payment Not Completed"}
                   </h4>
-                  <p className="text-[11px] text-stone-500 max-w-xs mx-auto leading-normal">
-                    {stkStatus === "pushing" && `Sending automated paybill prompt to Safaricom endpoint for ${checkoutPhone}...`}
-                    {stkStatus === "waiting" && "Please check your mobile screen for a secure prompt requesting your M-Pesa PIN password..."}
-                    {stkStatus === "finalizing" && "Validating transaction with Paybill 247247 servers in Bungoma base nodes..."}
-                    {stkStatus === "success" && "Successfully purchased! Your ebook is unlocked permanently. Go to My Library dashboard."}
+                  <p className="text-[11px] text-stone-600 max-w-xs mx-auto leading-normal">
+                    {stkStatus === "pushing" && `Connecting to Safaricom PayBill ${darajaShortcode} for ${checkoutPhone}...`}
+                    {stkStatus === "waiting" && `Approve the KES ${selectedBook.price.toLocaleString()} prompt on ${checkoutPhone} by entering your M-Pesa PIN on your handset. Waiting for Daraja callback (${activeCheckoutId})...`}
+                    {stkStatus === "success" && `Receipt ${mpesaReceiptCode} verified. Your e-book is now unlocked in My Library.`}
+                    {stkStatus === "failed" && "You can retry the STK push or pay directly via PayBill."}
                   </p>
                 </div>
+
+                {stkStatus === "waiting" && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStkStatus("idle");
+                        setActiveCheckoutId("");
+                      }}
+                      className="flex-1 rounded-xl border border-stone-200 text-stone-700 font-bold py-2.5 hover:bg-stone-50 cursor-pointer"
+                    >
+                      Change Phone
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void queryDarajaPaymentStatus(activeCheckoutId)}
+                      className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 cursor-pointer"
+                    >
+                      Verify Status Now
+                    </button>
+                  </div>
+                )}
+
+                {stkStatus === "failed" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStkStatus("idle");
+                      setCheckoutError("");
+                    }}
+                    className="w-full rounded-xl bg-stone-900 text-white font-extrabold py-2.5 hover:bg-stone-800 cursor-pointer"
+                  >
+                    Try Payment Again
+                  </button>
+                )}
 
                 {stkStatus === "success" && (
                   <button
@@ -2502,88 +2969,15 @@ export default function Store({
                     onClick={() => {
                       setShowMpesaModal(false);
                       setStkStatus("idle");
+                      setActiveCheckoutId("");
                     }}
-                    className="w-full rounded-xl bg-stone-900 text-white font-extrabold py-2.5 hover:bg-stone-955 transition shadow-md"
+                    className="w-full rounded-xl bg-stone-900 text-white font-extrabold py-2.5 hover:bg-stone-800 transition shadow-md cursor-pointer"
                   >
                     Unlock and Read PDF
                   </button>
                 )}
-
               </div>
             )}
-
-          </div>
-        </div>
-      )}
-
-      {/* --- CELL PHONE SIM TOOLKIT INTERACTIVE PUSH POP-UP OVERLAY --- */}
-      {stkStatus === "waiting" && selectedBook && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md" />
-          
-          <div className="relative w-full max-w-xs bg-slate-900 border border-slate-700/80 shadow-2xl rounded-2xl p-6 select-none font-mono text-[#e2e8f0] text-xs">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 mb-3.5">
-              <div className="flex items-center space-x-1.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-sans font-black text-xs text-slate-300 uppercase tracking-widest">SIM TOOLKIT</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-bold">M-PESA PUSH</span>
-            </div>
-
-            {/* Prompt Statement */}
-            <div className="space-y-2 border-b border-dashed border-slate-800 pb-3 mb-4">
-              <p className="text-[11px] text-slate-300 leading-relaxed text-left">
-                Do you want to authorize payment of <strong className="text-white font-black">KES {selectedBook.price.toLocaleString()}</strong> to Paybill <strong className="text-emerald-400">247247</strong> Account <strong className="text-emerald-400">7770185693193</strong>?
-              </p>
-              <p className="text-[10px] text-slate-500 italic text-left">
-                Recipient Payee: Kelvin opara wafula
-              </p>
-            </div>
-
-            {/* Secure PIN Prompt Input */}
-            <div className="space-y-2 text-left">
-              <label className="block text-[10px] font-extrabold uppercase text-slate-450 tracking-widest text-[#94a3b8]">Enter M-PESA PIN Code:</label>
-              <input
-                type="password"
-                required
-                maxLength={4}
-                value={enteredPin}
-                onChange={(e) => setEnteredPin(e.target.value.replace(/[^0-9]/g, ""))}
-                placeholder="••••"
-                className="w-full text-center tracking-[1.5em] text-lg font-black bg-slate-950 border border-slate-700 p-2.5 rounded-xl text-white outline-none focus:border-emerald-400 focus:bg-black font-mono transition"
-              />
-            </div>
-
-            {/* Action controls */}
-            <div className="flex gap-3 mt-6">
-              <button
-                type="button"
-                onClick={() => {
-                  setStkStatus("idle");
-                  setEnteredPin("");
-                  alert("⚠️ Payment Authorization Cancelled by user.");
-                }}
-                className="flex-1 py-2 font-bold hover:text-white text-slate-400 bg-slate-800 hover:bg-slate-750 transition rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (enteredPin.length < 4) {
-                    alert("⚠️ Security Protection: Enter a valid 4-digit PIN password to confirm.");
-                    return;
-                  }
-                  // Proceed to finalized stage
-                  setStkStatus("finalizing");
-                  setEnteredPin("");
-                }}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 font-extrabold text-white transition rounded-xl text-center shadow-lg shadow-emerald-900/20"
-              >
-                Send / OK
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -2742,8 +3136,8 @@ export default function Store({
                 {/* Book Left Margin / Branding */}
                 <div className="md:col-span-3 flex md:flex-col justify-between items-center md:items-stretch border-b md:border-b-0 md:border-r border-stone-200 border-dashed pb-3 md:pb-0 md:pr-4 gap-4 text-left">
                   <div className="flex items-center md:items-stretch space-x-3.5 md:space-x-0 md:space-y-4 w-full">
-                    <div className="aspect-[3/4.5] w-12 sm:w-16 md:w-28 shrink-0 rounded-lg border shadow-md overflow-hidden bg-white">
-                      <img src={instantPreviewBook.coverImage} className="w-full h-full object-cover" alt="" />
+                    <div className="w-12 sm:w-16 md:w-28 shrink-0 bg-transparent flex items-center justify-center">
+                      <img src={instantPreviewBook.coverImage} className="w-full max-h-36 object-contain" alt={instantPreviewBook.title} />
                     </div>
                     <div className="flex-1 space-y-1.5 min-w-0">
                       <div>

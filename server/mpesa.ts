@@ -38,24 +38,25 @@ const DEFAULT_SANDBOX_SHORTCODE = "174379";
 const DEFAULT_SANDBOX_PASSKEY = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919";
 
 export function getMpesaConfig(): MpesaRuntimeConfig {
-  const envVar = (process.env.MPESA_ENV || "sandbox").toLowerCase().trim();
+  const isTestMode = process.env.ZION_TEST_MODE === "1";
+  const envVar = isTestMode ? "sandbox" : (process.env.MPESA_ENV || "sandbox").toLowerCase().trim();
   const environment: DarajaEnvironment = envVar === "production" ? "production" : "sandbox";
 
-  const consumerKey = (process.env.MPESA_CONSUMER_KEY || "").trim();
-  const consumerSecret = (process.env.MPESA_CONSUMER_SECRET || "").trim();
-  const passkey = (process.env.MPESA_PASSKEY || "").trim();
-  const shortcode = (process.env.MPESA_SHORTCODE || "").trim();
+  const consumerKey = isTestMode ? "" : (process.env.MPESA_CONSUMER_KEY || "").trim();
+  const consumerSecret = isTestMode ? "" : (process.env.MPESA_CONSUMER_SECRET || "").trim();
+  const passkey = isTestMode ? "" : (process.env.MPESA_PASSKEY || "").trim();
+  const shortcode = isTestMode ? "" : (process.env.MPESA_SHORTCODE || "").trim();
   const shortcodeType: DarajaShortcodeType =
     (process.env.MPESA_SHORTCODE_TYPE || "").toLowerCase().trim() === "till" ? "till" : "paybill";
   const storeNumber = (process.env.MPESA_STORE_NUMBER || "").trim() || undefined;
 
   const callbackUrl = (
     process.env.MPESA_CALLBACK_URL ||
-    "https://complete-digital-app-486825715709.europe-west3.run.app/api/mpesa/callback"
+    "https://ais-pre-d5s23qoulieuk3cgfupt2h-871905850700.europe-west2.run.app/api/mpesa/callback"
   ).trim();
 
   const isLiveConfigured = Boolean(
-    environment === "production" && consumerKey && consumerSecret && passkey && shortcode
+    !isTestMode && environment === "production" && consumerKey && consumerSecret && passkey && shortcode
   );
 
   return {
@@ -224,6 +225,7 @@ function resolveAuthoritativeAmount(purpose: string, targetId: string): { amount
 
   if (purpose === "subscription") {
     const planPrices: Record<string, { price: number; title: string }> = {
+      topup: { price: 250, title: "Credit Top-Up (200 AI Credits)" },
       starter: { price: 500, title: "Starter Scholar Plan (KES 500)" },
       pro: { price: 1500, title: "Executive Ministry Pro (KES 1,500)" },
       unlimited: { price: 3000, title: "Institutional Unlimited (KES 3,000)" },
@@ -260,10 +262,8 @@ mpesaRouter.get("/config", (_req: Request, res: Response) => {
     hasStoreNumber: Boolean(config.storeNumber),
     callbackUrl: config.callbackUrl,
     isLiveConfigured: config.isLiveConfigured,
-    consumerKeyMasked: config.consumerKey
-      ? `${config.consumerKey.slice(0, 4)}...${config.consumerKey.slice(-4)}`
-      : "Not set",
-    passkeyMasked: config.passkey ? `${config.passkey.slice(0, 4)}...${config.passkey.slice(-4)}` : "Not set",
+    consumerKeyStatus: config.consumerKey ? "Configured" : "Not set",
+    passkeyStatus: config.passkey ? "Configured" : "Not set",
   });
 });
 
@@ -271,9 +271,9 @@ mpesaRouter.get("/config", (_req: Request, res: Response) => {
  * POST /api/mpesa/stkpush
  * Initiates an authoritative STK Push to the customer's phone
  */
-mpesaRouter.post("/stkpush", async (req: AuthenticatedRequest, res: Response) => {
+mpesaRouter.post("/stkpush", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const actor = req.identity;
+    const actor = req.identity!;
     const { phoneNumber, purpose, targetId, customAccountRef } = req.body || {};
 
     if (!phoneNumber || !purpose || !targetId) {
@@ -628,6 +628,25 @@ function fulfillVerifiedPurchase(tx: MpesaTransactionRecord) {
       fee.verifiedBy = `M-PESA Automated (${tx.mpesaReceiptNumber})`;
       fee.updatedAt = now;
     }
+  } else if (tx.purpose === "subscription") {
+    recordAuditLog({
+      actor: {
+        uid: tx.userId || "mpesa",
+        email: tx.userEmail,
+        name: tx.userName || "Customer",
+        role: "member",
+        isMainAdmin: false,
+        isSuspended: false,
+        capabilities: {} as any,
+        authorizedCourses: [],
+        authSource: "zion_session",
+      },
+      category: "PAYMENT_CONFIRMATION",
+      action: "MPESA_SUBSCRIPTION_ACTIVATED",
+      targetType: "subscription",
+      targetId: tx.targetId,
+      details: `Subscription ${tx.targetTitle} activated via M-Pesa receipt ${tx.mpesaReceiptNumber || tx.checkoutRequestId}`,
+    });
   }
 }
 
@@ -635,13 +654,22 @@ function fulfillVerifiedPurchase(tx: MpesaTransactionRecord) {
  * GET /api/mpesa/query/:checkoutRequestId
  * Polls status of an active STK Push. Performs live Daraja Query if still pending.
  */
-mpesaRouter.get("/query/:checkoutRequestId", async (req: Request, res: Response) => {
+mpesaRouter.get("/query/:checkoutRequestId", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const actor = req.identity!;
     const { checkoutRequestId } = req.params;
     const tx = securityState.mpesaTransactions[checkoutRequestId];
 
     if (!tx) {
       return res.status(404).json({ success: false, error: "Transaction not found." });
+    }
+
+    const isFinance = hasCapability(actor, "allowConfirmPayments") || actor.role === "manager" || actor.isMainAdmin;
+    const isOwner =
+      (tx.userId && tx.userId === actor.uid) ||
+      tx.userEmail.toLowerCase() === actor.email.toLowerCase();
+    if (!isFinance && !isOwner) {
+      return res.status(403).json({ success: false, error: "Not authorized to inspect this transaction." });
     }
 
     // If transaction already resolved, return final status immediately
@@ -686,10 +714,13 @@ mpesaRouter.get("/query/:checkoutRequestId", async (req: Request, res: Response)
         const queryBody = await queryRes.json();
 
         if (queryBody.ResultCode === "0") {
+          const nowIso = new Date().toISOString();
           tx.status = "completed";
           tx.resultCode = 0;
           tx.resultDesc = queryBody.ResultDesc || "The service request is processed successfully.";
-          tx.updatedAt = new Date().toISOString();
+          tx.mpesaReceiptNumber = tx.mpesaReceiptNumber || checkoutRequestId;
+          tx.transactionDate = tx.transactionDate || nowIso;
+          tx.updatedAt = nowIso;
           fulfillVerifiedPurchase(tx);
           persistSecurityState();
         } else if (queryBody.ResultCode) {
@@ -849,4 +880,284 @@ mpesaRouter.post("/admin/simulate-sandbox-callback", requireAuth, requireManager
 
   persistSecurityState();
   return res.json({ success: true, transaction: tx });
+});
+
+/**
+ * GET /api/mpesa/admin/test-auth
+ * Verifies live Daraja OAuth 2.0 token issuance without returning the bearer token
+ */
+mpesaRouter.get("/admin/test-auth", requireAuth, requireManagerAccess, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const config = getMpesaConfig();
+    const token = await getDarajaAccessToken(config);
+    return res.json({
+      success: Boolean(token),
+      environment: config.environment,
+      shortcode: config.shortcode || DEFAULT_SANDBOX_SHORTCODE,
+      isLiveConfigured: config.isLiveConfigured,
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      error: err?.message || "Failed to authenticate with Safaricom Daraja OAuth gateway.",
+    });
+  }
+});
+
+/**
+ * POST /api/mpesa/qrcode
+ * Generates a Daraja Dynamic QR payload for PayBill / Buy Goods checkout
+ */
+mpesaRouter.post("/qrcode", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { purpose, targetId, customAccountRef } = req.body || {};
+    if (!["book", "course", "fee", "subscription"].includes(purpose) || !targetId) {
+      return res.status(400).json({ success: false, error: "Valid purpose and targetId are required." });
+    }
+
+    const config = getMpesaConfig();
+    const isProd = config.environment === "production";
+    const activeShortcode = isProd ? config.shortcode : config.shortcode || DEFAULT_SANDBOX_SHORTCODE;
+    const { amount, title } = resolveAuthoritativeAmount(purpose, String(targetId));
+    const refNo = String(customAccountRef || `ZD-${targetId}`).slice(0, 12).replace(/[^a-zA-Z0-9_-]/g, "") || "ZIONDIGITAL";
+
+    if (!isProd) {
+      return res.json({
+        success: true,
+        environment: "sandbox",
+        shortcode: activeShortcode,
+        amount,
+        reference: refNo,
+        qrCode: null,
+        message: "Dynamic Daraja QR renders live in production mode.",
+      });
+    }
+
+    const accessToken = await getDarajaAccessToken(config);
+    const qrRes = await fetch(`${PRODUCTION_BASE_URL}/mpesa/qrcode/v1/generate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        MerchantName: "Zion Digital",
+        RefNo: refNo,
+        Amount: amount,
+        TrxCode: config.shortcodeType === "till" ? "BG" : "PB",
+        CPI: activeShortcode,
+        Size: "300",
+      }),
+    });
+
+    const qrJson = await qrRes.json().catch(() => ({}));
+    if (!qrRes.ok || !qrJson?.QRCode) {
+      return res.status(502).json({
+        success: false,
+        error: qrJson?.errorMessage || qrJson?.ResponseDescription || "Could not generate Daraja QR code.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      environment: config.environment,
+      shortcode: activeShortcode,
+      amount,
+      title,
+      reference: refNo,
+      qrCode: qrJson.QRCode,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to generate QR code." });
+  }
+});
+
+/**
+ * POST /api/mpesa/c2b/register
+ * Registers Confirmation & Validation URLs with Safaricom Daraja C2B v2 for PayBill 1171473
+ */
+mpesaRouter.post("/c2b/register", requireAuth, requireManagerAccess, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const config = getMpesaConfig();
+    if (config.environment !== "production" || !config.isLiveConfigured) {
+      return res.status(400).json({
+        success: false,
+        error: "C2B URL registration requires production mode with valid shortcode and credentials.",
+      });
+    }
+
+    const baseCallbackOrigin = config.callbackUrl.replace(/\/api\/mpesa\/callback.*$/, "");
+    const confirmationUrl = `${baseCallbackOrigin}/api/mpesa/c2b/confirmation`;
+    const validationUrl = `${baseCallbackOrigin}/api/mpesa/c2b/validation`;
+    const accessToken = await getDarajaAccessToken(config);
+
+    const regRes = await fetch(`${PRODUCTION_BASE_URL}/mpesa/c2b/v2/registerurl`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ShortCode: config.shortcode,
+        ResponseType: "Completed",
+        ConfirmationURL: confirmationUrl,
+        ValidationURL: validationUrl,
+      }),
+    });
+
+    const regJson = await regRes.json().catch(() => ({}));
+    if (!regRes.ok || (regJson.ResponseCode && regJson.ResponseCode !== "0" && regJson.ResponseCode !== "00000000")) {
+      return res.status(502).json({
+        success: false,
+        error: regJson?.errorMessage || regJson?.ResponseDescription || "Daraja C2B registration failed.",
+        details: regJson,
+      });
+    }
+
+    recordAuditLog({
+      actor: req.identity!,
+      category: "PAYMENT_CONFIRMATION",
+      action: "MPESA_C2B_URLS_REGISTERED",
+      targetType: "mpesa_c2b",
+      targetId: config.shortcode,
+      details: `Registered C2B v2 PayBill URLs for shortcode ${config.shortcode}`,
+      ip: req.ip,
+    });
+
+    return res.json({
+      success: true,
+      shortcode: config.shortcode,
+      confirmationUrl,
+      validationUrl,
+      response: regJson,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || "Failed to register C2B URLs." });
+  }
+});
+
+/**
+ * POST /api/mpesa/c2b/validation
+ * Safaricom PayBill C2B pre-payment validation webhook
+ */
+mpesaRouter.post("/c2b/validation", (req: Request, res: Response) => {
+  const config = getMpesaConfig();
+  const body = req.body || {};
+  const amount = Number(body.TransAmount || 0);
+  const incomingShortcode = String(body.BusinessShortCode || "").trim();
+
+  if (config.shortcode && incomingShortcode && incomingShortcode !== config.shortcode) {
+    return res.status(200).json({ ResultCode: "C2B00015", ResultDesc: "Invalid Shortcode" });
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(200).json({ ResultCode: "C2B00013", ResultDesc: "Invalid Amount" });
+  }
+
+  return res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted" });
+});
+
+/**
+ * POST /api/mpesa/c2b/confirmation
+ * Safaricom PayBill C2B confirmed payment webhook with idempotency ledger
+ */
+mpesaRouter.post("/c2b/confirmation", (req: Request, res: Response) => {
+  res.status(200).json({ ResultCode: 0, ResultDesc: "Success" });
+
+  try {
+    const body = req.body || {};
+    const transId = String(body.TransID || "").trim();
+    const transAmount = Number(body.TransAmount || 0);
+    const msisdn = String(body.MSISDN || "").trim();
+    const billRef = String(body.BillRefNumber || "").trim();
+    const payerName = [body.FirstName, body.MiddleName, body.LastName].filter(Boolean).join(" ").trim() || "M-Pesa PayBill Customer";
+
+    if (!transId || !Number.isFinite(transAmount) || transAmount <= 0) {
+      return;
+    }
+
+    if (securityState.processedReceipts[transId]) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const config = getMpesaConfig();
+    const txId = `c2b_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+
+    const record: MpesaTransactionRecord = {
+      id: txId,
+      checkoutRequestId: transId,
+      merchantRequestId: String(body.ThirdPartyTransID || transId),
+      userEmail: billRef.includes("@") ? billRef.toLowerCase() : "paybill@zion.ke",
+      userName: payerName,
+      phoneNumber: msisdn || "254700000000",
+      amount: transAmount,
+      currency: "KES",
+      purpose: "book",
+      targetId: billRef || "paybill_direct",
+      targetTitle: `PayBill ${config.shortcode || "1171473"} (${billRef || "Direct"})`,
+      accountReference: billRef || "PAYBILL",
+      status: "completed",
+      resultCode: 0,
+      resultDesc: "C2B PayBill confirmation received",
+      mpesaReceiptNumber: transId,
+      transactionDate: String(body.TransTime || now),
+      environment: config.environment,
+      shortcode: String(body.BusinessShortCode || config.shortcode || "1171473"),
+      shortcodeType: config.shortcodeType,
+      rawCallback: body,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    securityState.mpesaTransactions[transId] = record;
+    securityState.processedReceipts[transId] = {
+      transactionId: txId,
+      processedAt: now,
+      amount: transAmount,
+      phone: msisdn,
+    };
+
+    // Reconcile matching pending order if BillRefNumber matches an order ID or book+email
+    const matchingOrder = Object.values(securityState.orders).find(
+      (o) =>
+        o.status === "pending" &&
+        (o.id === billRef || o.paymentReference === billRef) &&
+        transAmount >= o.price
+    );
+    if (matchingOrder) {
+      matchingOrder.status = "approved";
+      matchingOrder.paymentReference = transId;
+      matchingOrder.verifiedBy = `M-PESA C2B PayBill (${record.shortcode})`;
+      matchingOrder.updatedAt = now;
+      securityState.bookEntitlements[`${matchingOrder.bookId}:${matchingOrder.userEmail.toLowerCase()}`] = {
+        bookId: matchingOrder.bookId,
+        userEmail: matchingOrder.userEmail.toLowerCase(),
+        orderId: matchingOrder.id,
+        grantedAt: now,
+      };
+    }
+
+    recordAuditLog({
+      actor: {
+        uid: "mpesa_c2b",
+        email: record.userEmail,
+        name: payerName,
+        role: "member",
+        isMainAdmin: false,
+        isSuspended: false,
+        capabilities: {} as any,
+        authorizedCourses: [],
+        authSource: "zion_session",
+      },
+      category: "PAYMENT_CONFIRMATION",
+      action: "MPESA_C2B_CONFIRMED",
+      targetType: "mpesa_transaction",
+      targetId: txId,
+      details: `C2B PayBill receipt ${transId} for KES ${transAmount} (Ref: ${billRef || "N/A"})`,
+    });
+
+    persistSecurityState();
+  } catch (err) {
+    console.error("Error processing C2B confirmation:", err);
+  }
 });

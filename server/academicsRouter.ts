@@ -708,3 +708,384 @@ academicsRouter.get(
     return res.json({ success: true, card, institution });
   }
 );
+
+/**
+ * GET /api/school/institutions/:instId/operations
+ * Returns timetables, lesson plans, discipline records (staff/parent-scoped), assignments, parent messages, transport & inventory
+ */
+academicsRouter.get(
+  "/institutions/:instId/operations",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const isStaff = canManageAcademics(actor);
+    const emailLower = actor.email.toLowerCase();
+
+    const timetables = Object.values(academicState.timetables).filter((t) => t.institutionId === instId);
+    const lessonPlans = isStaff
+      ? Object.values(academicState.lessonPlans).filter((l) => l.institutionId === instId)
+      : [];
+    const disciplineRecords = isStaff
+      ? Object.values(academicState.disciplineRecords).filter((d) => d.institutionId === instId)
+      : Object.values(academicState.disciplineRecords).filter((d) => {
+          const stu = academicState.students[d.studentId];
+          return (
+            d.institutionId === instId &&
+            stu &&
+            (stu.studentEmail?.toLowerCase() === emailLower ||
+              stu.parentEmails?.some((p) => p.toLowerCase() === emailLower))
+          );
+        });
+    const assignments = Object.values(academicState.assignments)
+      .filter((a) => a.institutionId === instId)
+      .map((a) => ({
+        ...a,
+        submissions: isStaff
+          ? a.submissions
+          : a.submissions.filter((sub) => sub.studentEmail.toLowerCase() === emailLower),
+      }));
+    const parentMessages = Object.values(academicState.parentMessages).filter(
+      (m) =>
+        m.institutionId === instId &&
+        (isStaff ||
+          m.senderEmail.toLowerCase() === emailLower ||
+          m.recipientEmail.toLowerCase() === emailLower ||
+          m.recipientEmail === "all-parents")
+    );
+    const transportRoutes = Object.values(academicState.transportRoutes).filter((t) => t.institutionId === instId);
+    const inventoryItems = isStaff
+      ? Object.values(academicState.inventoryItems).filter((i) => i.institutionId === instId)
+      : [];
+    const calendarEvents = Object.values(academicState.calendarEvents)
+      .filter((c) => c.institutionId === instId)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return res.json({
+      success: true,
+      timetables,
+      lessonPlans,
+      disciplineRecords,
+      assignments,
+      parentMessages,
+      transportRoutes,
+      inventoryItems,
+      calendarEvents,
+    });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/calendar",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required to add calendar events." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+
+    const title = String(req.body?.title || "").trim();
+    const category = (["event", "holiday", "exam", "meeting"].includes(req.body?.category)
+      ? req.body.category
+      : "event") as "event" | "holiday" | "exam" | "meeting";
+    const date = String(req.body?.date || new Date().toISOString().slice(0, 10)).trim();
+    const endDate = req.body?.endDate ? String(req.body.endDate).trim() : undefined;
+    const description = String(req.body?.description || "").trim();
+
+    if (!title || !date) {
+      return res.status(400).json({ success: false, error: "Event title and date are required." });
+    }
+
+    const id = generateAcademicId("cal");
+    academicState.calendarEvents[id] = {
+      id,
+      institutionId: instId,
+      title,
+      category,
+      date,
+      endDate,
+      description,
+      createdBy: actor.name,
+    };
+    persistAcademicState();
+
+    recordAuditLog({
+      actor,
+      category: "ADMIN_ACTION",
+      action: "ACADEMIC_CALENDAR_EVENT_CREATED",
+      targetType: "calendar_event",
+      targetId: id,
+      details: `Created calendar event "${title}" (${category}) on ${date}`,
+    });
+
+    return res.status(201).json({ success: true, event: academicState.calendarEvents[id] });
+  }
+);
+
+academicsRouter.delete(
+  "/calendar/:id",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const eventId = req.params.id;
+    if (!academicState.calendarEvents[eventId]) {
+      return res.status(404).json({ success: false, error: "Calendar event not found." });
+    }
+    delete academicState.calendarEvents[eventId];
+    persistAcademicState();
+    return res.json({ success: true });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/timetable",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const classId = String(req.body?.classId || "").trim();
+    const day = String(req.body?.day || "Monday").trim();
+    const timeSlot = String(req.body?.timeSlot || "").trim();
+    const subjectName = String(req.body?.subjectName || "").trim();
+    const teacherName = String(req.body?.teacherName || actor.name).trim();
+    const room = String(req.body?.room || "Main Hall").trim();
+    if (!classId || !timeSlot || !subjectName) {
+      return res.status(400).json({ success: false, error: "Class, time slot, and subject are required." });
+    }
+    const id = generateAcademicId("tt");
+    academicState.timetables[id] = { id, institutionId: instId, classId, day, timeSlot, subjectName, teacherName, room };
+    persistAcademicState();
+    return res.status(201).json({ success: true, slot: academicState.timetables[id] });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/lesson-plans",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const classId = String(req.body?.classId || "").trim();
+    const subjectName = String(req.body?.subjectName || "").trim();
+    const topic = String(req.body?.topic || "").trim();
+    const objectives = String(req.body?.objectives || "").trim();
+    const date = String(req.body?.date || new Date().toISOString().slice(0, 10)).trim();
+    if (!topic || !subjectName) {
+      return res.status(400).json({ success: false, error: "Subject and topic are required." });
+    }
+    const id = generateAcademicId("lp");
+    academicState.lessonPlans[id] = {
+      id,
+      institutionId: instId,
+      classId,
+      subjectName,
+      topic,
+      objectives,
+      teacherEmail: actor.email.toLowerCase(),
+      date,
+    };
+    persistAcademicState();
+    return res.status(201).json({ success: true, lessonPlan: academicState.lessonPlans[id] });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/discipline",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const studentId = String(req.body?.studentId || "").trim();
+    const stu = academicState.students[studentId];
+    const studentName = stu?.name || String(req.body?.studentName || "").trim();
+    const category = (["Commendation", "Late Arrival", "Conduct Warning", "Counseling"].includes(req.body?.category)
+      ? req.body.category
+      : "Commendation") as "Commendation" | "Late Arrival" | "Conduct Warning" | "Counseling";
+    const notes = String(req.body?.notes || "").trim();
+    const actionTaken = String(req.body?.actionTaken || "").trim();
+    if (!studentName || !notes) {
+      return res.status(400).json({ success: false, error: "Student and notes are required." });
+    }
+    const id = generateAcademicId("disc");
+    academicState.disciplineRecords[id] = {
+      id,
+      institutionId: instId,
+      studentId,
+      studentName,
+      category,
+      notes,
+      actionTaken,
+      recordedBy: actor.name,
+      date: new Date().toISOString().slice(0, 10),
+    };
+    persistAcademicState();
+    return res.status(201).json({ success: true, record: academicState.disciplineRecords[id] });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/assignments",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const classId = String(req.body?.classId || "").trim();
+    const subjectName = String(req.body?.subjectName || "").trim();
+    const title = String(req.body?.title || "").trim();
+    const instructions = String(req.body?.instructions || "").trim();
+    const dueDate = String(req.body?.dueDate || "").trim();
+    if (!title || !subjectName) {
+      return res.status(400).json({ success: false, error: "Subject and title are required." });
+    }
+    const id = generateAcademicId("asg");
+    academicState.assignments[id] = {
+      id,
+      institutionId: instId,
+      classId,
+      subjectName,
+      title,
+      instructions,
+      dueDate,
+      createdBy: actor.email.toLowerCase(),
+      submissions: [],
+    };
+    persistAcademicState();
+    return res.status(201).json({ success: true, assignment: academicState.assignments[id] });
+  }
+);
+
+academicsRouter.post(
+  "/assignments/:id/submit",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    const asg = academicState.assignments[req.params.id];
+    if (!asg) return res.status(404).json({ success: false, error: "Assignment not found." });
+    const answerText = String(req.body?.answerText || "").trim();
+    if (!answerText) return res.status(400).json({ success: false, error: "Submission answer is required." });
+
+    const emailLower = actor.email.toLowerCase();
+    asg.submissions = asg.submissions.filter((s) => s.studentEmail.toLowerCase() !== emailLower);
+    asg.submissions.push({
+      studentEmail: emailLower,
+      studentName: actor.name,
+      answerText: answerText.slice(0, 4000),
+      submittedAt: new Date().toISOString(),
+    });
+    persistAcademicState();
+    return res.status(201).json({ success: true, assignment: asg });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/parent-messages",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const recipientEmail = String(req.body?.recipientEmail || "all-parents").trim().toLowerCase();
+    const subject = String(req.body?.subject || "").trim();
+    const body = String(req.body?.body || "").trim();
+    if (!subject || !body) {
+      return res.status(400).json({ success: false, error: "Subject and message body are required." });
+    }
+    const id = generateAcademicId("pm");
+    academicState.parentMessages[id] = {
+      id,
+      institutionId: instId,
+      senderName: actor.name,
+      senderEmail: actor.email.toLowerCase(),
+      recipientEmail,
+      subject: subject.slice(0, 140),
+      body: body.slice(0, 3000),
+      createdAt: new Date().toISOString(),
+    };
+    persistAcademicState();
+    return res.status(201).json({ success: true, message: academicState.parentMessages[id] });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/transport",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const routeName = String(req.body?.routeName || "").trim();
+    const vehicleReg = String(req.body?.vehicleReg || "").trim();
+    const driverName = String(req.body?.driverName || "").trim();
+    const departureTime = String(req.body?.departureTime || "06:30 AM").trim();
+    const stops = String(req.body?.stops || "").trim();
+    const assignedCount = Math.max(0, Number(req.body?.assignedCount || 0));
+    if (!routeName || !vehicleReg) {
+      return res.status(400).json({ success: false, error: "Route name and vehicle registration are required." });
+    }
+    const id = generateAcademicId("tr");
+    academicState.transportRoutes[id] = {
+      id,
+      institutionId: instId,
+      routeName,
+      vehicleReg,
+      driverName,
+      departureTime,
+      stops,
+      assignedCount,
+    };
+    persistAcademicState();
+    return res.status(201).json({ success: true, route: academicState.transportRoutes[id] });
+  }
+);
+
+academicsRouter.post(
+  "/institutions/:instId/inventory",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageAcademics(actor)) {
+      return res.status(403).json({ success: false, error: "Staff permission required." });
+    }
+    const { instId } = req.params;
+    ensureInstitution(instId);
+    const name = String(req.body?.name || "").trim();
+    const category = String(req.body?.category || "Equipment").trim();
+    const quantity = Math.max(0, Number(req.body?.quantity || 0));
+    const condition = (["Good", "Needs Repair", "Low Stock"].includes(req.body?.condition)
+      ? req.body.condition
+      : "Good") as "Good" | "Needs Repair" | "Low Stock";
+    const location = String(req.body?.location || "Store").trim();
+    if (!name) {
+      return res.status(400).json({ success: false, error: "Inventory item name is required." });
+    }
+    const id = generateAcademicId("inv");
+    academicState.inventoryItems[id] = { id, institutionId: instId, name, category, quantity, condition, location };
+    persistAcademicState();
+    return res.status(201).json({ success: true, item: academicState.inventoryItems[id] });
+  }
+);

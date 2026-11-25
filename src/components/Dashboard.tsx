@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage, UserHistoryRecord, StorageFileItem } from "../types";
 import { BADGES } from "../data";
-import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles, Video, CreditCard, History, UploadCloud, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles, Video, CreditCard, History, UploadCloud, FileText, Image as ImageIcon, Loader2, RefreshCw, CheckCircle2, AlertCircle, HardDrive } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import SecureBookReader from "./SecureBookReader";
+import VirtualTourCarousel from "./VirtualTourCarousel";
 import {
   fetchUserHistory,
   deleteUserHistory,
@@ -15,6 +16,15 @@ import {
   deleteUserFile,
   getUserFileSignedUrl,
 } from "../lib/supabaseClient";
+import {
+  getSyncHistory,
+  clearSyncHistory,
+  recordSyncEvent,
+  SYNC_HISTORY_UPDATED_EVENT,
+  SyncHistoryEntry,
+  SyncEventStatus,
+} from "../lib/syncHistory";
+import { getAllOfflinePdfs } from "../utils/pdfDb";
 
 interface DashboardProps {
   currentUser: User | null;
@@ -29,6 +39,8 @@ interface DashboardProps {
   communityMessages: CommunityMessage[];
   onRemoveWishlist: (id: string) => void;
   onAddNewDocument?: (doc: SavedDocument) => void;
+  isOnline?: boolean;
+  onTriggerSync?: () => Promise<void> | void;
 }
 
 const getBookProgress = (bookId: string, totalPages: number) => {
@@ -62,7 +74,9 @@ export default function Dashboard({
   uploadRequests,
   communityMessages,
   onRemoveWishlist,
-  onAddNewDocument
+  onAddNewDocument,
+  isOnline = true,
+  onTriggerSync
 }: DashboardProps) {
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState(30);
   const [userStreak, setUserStreak] = useState(5);
@@ -77,8 +91,57 @@ export default function Dashboard({
   const [storageStatusMsg, setStorageStatusMsg] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<StorageFileItem | null>(null);
 
+  // Sync History & Offline Data Verification States
+  const [syncHistory, setSyncHistory] = useState<SyncHistoryEntry[]>(() => getSyncHistory());
+  const [syncFilter, setSyncFilter] = useState<"all" | SyncEventStatus>("all");
+  const [offlinePdfCount, setOfflinePdfCount] = useState<number>(0);
+  const [isSyncingNow, setIsSyncingNow] = useState<boolean>(false);
+  const hasLoggedProgressSyncRef = useRef<boolean>(false);
+
   // Synchronize reading progress from Firestore
   const [firestoreProgress, setFirestoreProgress] = useState<Record<string, { currentPage: number; percentage: number }>>({});
+
+  useEffect(() => {
+    const refreshSyncState = () => {
+      setSyncHistory(getSyncHistory());
+      getAllOfflinePdfs()
+        .then((map) => setOfflinePdfCount(map.size))
+        .catch(() => {});
+    };
+
+    refreshSyncState();
+    window.addEventListener(SYNC_HISTORY_UPDATED_EVENT, refreshSyncState);
+    window.addEventListener("storage", refreshSyncState);
+    return () => {
+      window.removeEventListener(SYNC_HISTORY_UPDATED_EVENT, refreshSyncState);
+      window.removeEventListener("storage", refreshSyncState);
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    if (isSyncingNow) return;
+    setIsSyncingNow(true);
+    try {
+      if (onTriggerSync) {
+        await onTriggerSync();
+      } else {
+        recordSyncEvent({
+          title: isOnline ? "Offline status verified" : "Offline mode active",
+          detail: isOnline
+            ? `${books.length} books and ${savedDocuments.length} documents verified locally`
+            : "Device is offline; cached items remain available locally",
+          category: "offline_cache",
+          status: isOnline ? "synced" : "queued",
+          itemCount: books.length + savedDocuments.length,
+        });
+      }
+      const pdfMap = await getAllOfflinePdfs();
+      setOfflinePdfCount(pdfMap.size);
+      setSyncHistory(getSyncHistory());
+    } finally {
+      setIsSyncingNow(false);
+    }
+  };
 
   useEffect(() => {
     if (!currentUser) return;
@@ -102,6 +165,16 @@ export default function Dashboard({
         }
       });
       setFirestoreProgress(data);
+      if (snapshot.size > 0 && !hasLoggedProgressSyncRef.current) {
+        hasLoggedProgressSyncRef.current = true;
+        recordSyncEvent({
+          title: "Reading progress synced",
+          detail: `${snapshot.size} book bookmarks synchronized across devices`,
+          category: "progress",
+          status: "synced",
+          itemCount: snapshot.size,
+        });
+      }
     }, (err) => {
       console.error("Error subscribing to Firestore reading progress:", err);
     });
@@ -109,34 +182,47 @@ export default function Dashboard({
     return () => unsubscribe();
   }, [currentUser?.id]);
 
+  const storageOwnerKey = currentUser?.id || currentUser?.email || "";
+
   // Load Supabase AI History and Private Storage Files
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!storageOwnerKey) return;
     let active = true;
-    fetchUserHistory(currentUser.id).then((items) => {
+    fetchUserHistory(storageOwnerKey).then((items) => {
       if (active) setAiHistory(items);
     });
-    listUserFiles(currentUser.id).then((files) => {
+    listUserFiles(storageOwnerKey).then((files) => {
       if (active) setUserFiles(files);
     });
     return () => {
       active = false;
     };
-  }, [currentUser?.id]);
+  }, [storageOwnerKey]);
 
   const handleStorageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !currentUser?.id) return;
+    if (!file || !storageOwnerKey) return;
     setIsUploadingStorage(true);
     setStorageStatusMsg(null);
     try {
       const folder = file.type.startsWith("image/") ? "images" : "documents";
-      await uploadUserFile(currentUser.id, file, folder);
-      const updated = await listUserFiles(currentUser.id);
+      const result = await uploadUserFile(storageOwnerKey, file, folder);
+      const updated = await listUserFiles(storageOwnerKey);
       setUserFiles(updated);
-      setStorageStatusMsg(`Uploaded "${file.name}" securely to private storage.`);
+      const backendLabel =
+        result.storageBackend === "supabase"
+          ? "Supabase private bucket and offline browser cache"
+          : "durable offline browser database";
+      setStorageStatusMsg(`Saved "${file.name}" securely in ${backendLabel}.`);
+      recordSyncEvent({
+        title: "Storage file saved",
+        detail: `Stored "${file.name}" (${result.storageBackend === "supabase" ? "Supabase + IndexedDB" : "IndexedDB vault"})`,
+        category: "uploads",
+        status: result.storageBackend === "supabase" ? "synced" : "queued",
+        itemCount: 1,
+      });
     } catch (err: any) {
-      setStorageStatusMsg(err?.message || "Upload failed. Ensure user-uploads bucket exists in Supabase.");
+      setStorageStatusMsg(err?.message || "Upload failed. Please verify file size and format.");
     } finally {
       setIsUploadingStorage(false);
       e.target.value = "";
@@ -148,7 +234,7 @@ export default function Dashboard({
     if (url) {
       setPreviewFile({ ...item, signedUrl: url });
     } else {
-      setStorageStatusMsg("Could not generate signed URL for this file.");
+      setStorageStatusMsg("Could not load file preview URL from storage.");
     }
   };
 
@@ -1544,6 +1630,187 @@ export default function Dashboard({
           onAddNewDocument={onAddNewDocument}
         />
       )}
+
+      {/* SYNC HISTORY LOG SECTION */}
+      <section
+        id="sync_history_section"
+        aria-labelledby="sync-history-heading"
+        className="rounded-2xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-5 sm:p-6 shadow-xs space-y-4 text-left"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 dark:border-stone-800 pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <HardDrive className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <h3
+                id="sync-history-heading"
+                className="font-display text-sm sm:text-base font-bold text-stone-900 dark:text-stone-100"
+              >
+                Sync History
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
+              <span className={isOnline ? "font-semibold text-emerald-700 dark:text-emerald-400" : "font-semibold text-amber-700 dark:text-amber-400"}>
+                {isOnline ? "Connected" : "Offline Mode"}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="tabular-nums font-mono">{offlinePdfCount} offline PDFs cached</span>
+              <span aria-hidden="true">·</span>
+              <span className="tabular-nums font-mono">{syncHistory.length} recent events</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 p-1 bg-stone-100 dark:bg-stone-950 rounded-lg border border-stone-200 dark:border-stone-800">
+              {(
+                [
+                  { id: "all", label: "All" },
+                  { id: "synced", label: "Synced" },
+                  { id: "queued", label: "Queued" },
+                  { id: "failed", label: "Failed" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSyncFilter(tab.id)}
+                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    syncFilter === tab.id
+                      ? "bg-white dark:bg-stone-800 text-stone-900 dark:text-white shadow-xs"
+                      : "text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={isSyncingNow}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isSyncingNow ? "animate-spin" : ""}`} />
+              <span>{isSyncingNow ? "Syncing..." : "Sync Now"}</span>
+            </button>
+
+            {syncHistory.length > 0 && (
+              <button
+                type="button"
+                onClick={() => clearSyncHistory()}
+                className="px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-stone-700 text-xs font-semibold text-stone-600 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Clear Log
+              </button>
+            )}
+          </div>
+        </div>
+
+        {(() => {
+          const filteredEvents =
+            syncFilter === "all"
+              ? syncHistory
+              : syncHistory.filter((item) => item.status === syncFilter);
+
+          if (filteredEvents.length === 0) {
+            return (
+              <div className="py-8 px-4 text-center space-y-3">
+                <p className="text-xs text-stone-600 dark:text-stone-300 font-medium">
+                  {syncHistory.length === 0
+                    ? "No background synchronization events recorded yet."
+                    : `No ${syncFilter} synchronization events found.`}
+                </p>
+                <p className="text-[11px] text-stone-500 dark:text-stone-400 max-w-md mx-auto">
+                  Events such as synced books, uploaded files, saved documents, and offline PDF caches appear here automatically.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleManualSync}
+                  disabled={isSyncingNow}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-xs font-semibold text-stone-800 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors cursor-pointer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isSyncingNow ? "animate-spin" : ""}`} />
+                  <span>Verify Offline Data Now</span>
+                </button>
+              </div>
+            );
+          }
+
+          return (
+            <div className="max-h-80 overflow-y-auto divide-y divide-stone-100 dark:divide-stone-800 pr-1 custom-scrollbar">
+              {filteredEvents.map((event) => {
+                const statusMeta =
+                  event.status === "synced"
+                    ? {
+                        label: "Synced",
+                        textClass: "text-emerald-700 dark:text-emerald-400",
+                        Icon: CheckCircle2,
+                      }
+                    : event.status === "queued"
+                      ? {
+                          label: "Queued",
+                          textClass: "text-amber-700 dark:text-amber-400",
+                          Icon: Clock,
+                        }
+                      : {
+                          label: "Failed",
+                          textClass: "text-red-700 dark:text-red-400",
+                          Icon: AlertCircle,
+                        };
+                const StatusIcon = statusMeta.Icon;
+
+                return (
+                  <div
+                    key={event.id}
+                    className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-stone-50/70 dark:hover:bg-stone-800/30 px-2 rounded-lg transition-colors"
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <StatusIcon className={`h-4 w-4 mt-0.5 shrink-0 ${statusMeta.textClass}`} />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-stone-900 dark:text-stone-100 truncate">
+                          {event.title}
+                        </p>
+                        <p className="text-[11px] text-stone-500 dark:text-stone-400 leading-snug">
+                          {event.detail}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 text-[11px] shrink-0 pl-6 sm:pl-0">
+                      <span className={`font-semibold ${statusMeta.textClass}`}>
+                        {statusMeta.label}
+                      </span>
+                      <span aria-hidden="true" className="text-stone-300 dark:text-stone-700">·</span>
+                      <span className="font-mono tabular-nums text-stone-600 dark:text-stone-300">
+                        {event.itemCount} {event.itemCount === 1 ? "item" : "items"}
+                      </span>
+                      <span aria-hidden="true" className="text-stone-300 dark:text-stone-700">·</span>
+                      <span className="font-mono tabular-nums text-stone-500 dark:text-stone-400">
+                        {new Date(event.timestamp).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </section>
+
+      <div className="mt-12 pt-8 border-t border-stone-200 dark:border-slate-800">
+        <VirtualTourCarousel
+          currentUser={currentUser}
+          onNavigate={(view) => {
+            window.dispatchEvent(new CustomEvent("WAFULA_NAVIGATE", { detail: { view } }));
+          }}
+          titleOverride="Bungoma Campus Virtual Tour & Facilities"
+          subtitleOverride="Explore the physical lecture blocks, digital archives, and computer labs in Western Kenya where your diploma & degree cohorts convene."
+        />
+      </div>
 
     </div>
   );

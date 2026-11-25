@@ -365,6 +365,167 @@ interface SecurityDatabaseState {
     }[];
     updatedAt?: string;
   };
+  socialProfiles: Record<string, {
+    email: string;
+    name: string;
+    headline?: string;
+    bio?: string;
+    avatar?: string;
+    coverImage?: string;
+    location?: string;
+    onlineStatusVisible?: boolean;
+    lastSeenAt?: string;
+    skills?: string[];
+    updatedAt: string;
+  }>;
+  userFollows: Record<string, string[]>;
+  blockedUsers: Record<string, string[]>;
+  moderationReports: {
+    id: string;
+    targetType: string;
+    targetId: string;
+    reason: string;
+    reportedBy: string;
+    createdAt: string;
+    status: string;
+  }[];
+  privateConversations: Record<string, {
+    id: string;
+    participants: string[];
+    disappearingTimer: "off" | "24h" | "7d";
+    archivedBy: string[];
+    mutedBy: string[];
+    updatedAt: string;
+    lastMessagePreview?: string;
+  }>;
+  privateMessages: Record<string, {
+    id: string;
+    conversationId: string;
+    senderEmail: string;
+    senderName: string;
+    text: string;
+    replyToId?: string;
+    attachments?: {
+      id: string;
+      kind: "image" | "video" | "audio" | "document";
+      name: string;
+      mimeType: string;
+      dataUrl: string;
+      sizeBytes?: number;
+    }[];
+    reactions?: Record<string, string[]>;
+    readBy: string[];
+    edited?: boolean;
+    deleted?: boolean;
+    expiresAt?: string;
+    createdAt: string;
+  }>;
+  callSignals: Record<string, {
+    id: string;
+    conversationId: string;
+    fromEmail: string;
+    toEmail: string;
+    callType: "audio" | "video";
+    signalType: "offer" | "answer" | "candidate" | "end";
+    payload: unknown;
+    createdAt: string;
+  }[]>;
+  reels: Record<string, {
+    id: string;
+    title: string;
+    authorName: string;
+    authorEmail: string;
+    description: string;
+    hashtags: string[];
+    videoUrl: string;
+    thumbnailUrl: string;
+    duration: string;
+    views: number;
+    likes: string[];
+    comments: { id: string; userName: string; userEmail: string; text: string; createdAt: string }[];
+    createdAt: string;
+  }>;
+  reelPlaylists: Record<string, {
+    id: string;
+    ownerEmail: string;
+    name: string;
+    reelIds: string[];
+    updatedAt: string;
+  }>;
+  communityGroups: Record<string, {
+    id: string;
+    name: string;
+    category: string;
+    description: string;
+    privacy: "public" | "private";
+    coverUrl: string;
+    creatorEmail: string;
+    admins: string[];
+    moderators: string[];
+    members: string[];
+    invitedEmails: string[];
+    events: { id: string; title: string; date: string; location: string; rsvps: string[] }[];
+    discussions: { id: string; userName: string; userEmail: string; text: string; createdAt: string }[];
+    createdAt: string;
+  }>;
+  professionalProfiles: Record<string, {
+    email: string;
+    name: string;
+    headline: string;
+    summary: string;
+    location: string;
+    cvName?: string;
+    cvDataUrl?: string;
+    skills: { name: string; endorsedBy: string[] }[];
+    experience: { role: string; org: string; period: string }[];
+    updatedAt: string;
+  }>;
+  professionalJobs: Record<string, {
+    id: string;
+    title: string;
+    orgName: string;
+    location: string;
+    jobType: string;
+    salaryRange: string;
+    description: string;
+    postedBy: string;
+    applicants: { email: string; name: string; note: string; cvName?: string; appliedAt: string }[];
+    createdAt: string;
+  }>;
+  professionalOrgs: Record<string, {
+    id: string;
+    name: string;
+    sector: string;
+    location: string;
+    description: string;
+    website?: string;
+    followers: string[];
+    createdBy: string;
+    createdAt: string;
+  }>;
+  professionalArticles: Record<string, {
+    id: string;
+    title: string;
+    summary: string;
+    body: string;
+    authorName: string;
+    authorEmail: string;
+    category: string;
+    likes: string[];
+    createdAt: string;
+  }>;
+  scheduledPosts: Record<string, {
+    id: string;
+    ownerEmail: string;
+    ownerName: string;
+    title: string;
+    content: string;
+    posterImageUrl?: string;
+    targetPlatform: "Zion Connect" | "WhatsApp" | "Facebook";
+    scheduledFor: string;
+    status: "draft" | "scheduled" | "published";
+    createdAt: string;
+  }>;
 }
 
 function buildInitialState(): SecurityDatabaseState {
@@ -456,28 +617,228 @@ function buildInitialState(): SecurityDatabaseState {
     mpesaTransactions: {},
     processedReceipts: {},
     auditLogs: [],
+    socialProfiles: {},
+    userFollows: {},
+    blockedUsers: {},
+    moderationReports: [],
+    privateConversations: {},
+    privateMessages: {},
+    callSignals: {},
+    reels: {
+      reel_seed_1: {
+        id: "reel_seed_1",
+        title: "Morning Devotional: Walking in Kingdom Purpose",
+        authorName: "Pastor Kelvin Wafula",
+        authorEmail: "wafulak435@gmail.com",
+        description: "Short daily charge from Bungoma Fellowship Hub on faithfulness in study and leadership.",
+        hashtags: ["#MorningDevotion", "#FaithInAction", "#ZionConnect"],
+        videoUrl: "",
+        thumbnailUrl: "",
+        duration: "0:48",
+        views: 1240,
+        likes: [],
+        comments: [],
+        createdAt: "2026-05-01T07:00:00.000Z",
+      },
+      reel_seed_2: {
+        id: "reel_seed_2",
+        title: "CBC & 8-4-4 Study Discipline Tips",
+        authorName: "Grace Achieng",
+        authorEmail: "grace.achieng@ziondigital.co.ke",
+        description: "Practical daily revision structure for scholars preparing for term assessments.",
+        hashtags: ["#StudyTips", "#ZionSchool", "#Excellence"],
+        videoUrl: "",
+        thumbnailUrl: "",
+        duration: "1:05",
+        views: 890,
+        likes: [],
+        comments: [],
+        createdAt: "2026-05-02T09:30:00.000Z",
+      },
+    },
+    reelPlaylists: {},
+    communityGroups: {
+      grp_bible_study: {
+        id: "grp_bible_study",
+        name: "Bible Study Group",
+        category: "Bible Study",
+        description: "Weekly verse-by-verse study across all 66 NIV books with discussion notes.",
+        privacy: "public",
+        coverUrl: "",
+        creatorEmail: "wafulak435@gmail.com",
+        admins: ["wafulak435@gmail.com"],
+        moderators: ["grace.achieng@ziondigital.co.ke"],
+        members: ["wafulak435@gmail.com", "grace.achieng@ziondigital.co.ke"],
+        invitedEmails: [],
+        events: [
+          {
+            id: "gevt_1",
+            title: "Romans Chapter 8 Deep Dive",
+            date: "2026-06-20 18:00",
+            location: "Zion Fellowship Hall & Live Audio",
+            rsvps: ["wafulak435@gmail.com"],
+          },
+        ],
+        discussions: [
+          {
+            id: "gdisc_1",
+            userName: "Pastor Kelvin Wafula",
+            userEmail: "wafulak435@gmail.com",
+            text: "Welcome to this week's Bible study thread. Share your key takeaway from Romans 8.",
+            createdAt: "2026-05-03T10:00:00.000Z",
+          },
+        ],
+        createdAt: "2026-05-01T08:00:00.000Z",
+      },
+      grp_youth_christ: {
+        id: "grp_youth_christ",
+        name: "Youth for Christ",
+        category: "Fellowship",
+        description: "Empowering young believers in Bungoma and East Africa through mentorship and service.",
+        privacy: "public",
+        coverUrl: "",
+        creatorEmail: "wafulak435@gmail.com",
+        admins: ["wafulak435@gmail.com"],
+        moderators: [],
+        members: ["wafulak435@gmail.com"],
+        invitedEmails: [],
+        events: [],
+        discussions: [],
+        createdAt: "2026-05-01T09:00:00.000Z",
+      },
+    },
+    professionalProfiles: {
+      "wafulak435@gmail.com": {
+        email: "wafulak435@gmail.com",
+        name: "Kelvin Opara Wafula",
+        headline: "Chancellor & Lead Educator · Zion Digital Academy",
+        summary: "Author, Christian educator, and digital systems architect equipping leaders across East Africa.",
+        location: "Bungoma, Kenya",
+        skills: [
+          { name: "Leadership", endorsedBy: ["grace.achieng@ziondigital.co.ke"] },
+          { name: "Curriculum Design", endorsedBy: [] },
+          { name: "Theology & Ethics", endorsedBy: [] },
+        ],
+        experience: [
+          { role: "Chancellor & Founder", org: "Zion Digital Academy", period: "2022 – Present" },
+        ],
+        updatedAt: "2026-05-01T08:00:00.000Z",
+      },
+    },
+    professionalJobs: {
+      job_seed_1: {
+        id: "job_seed_1",
+        title: "CBC STEM & Computer Studies Tutor",
+        orgName: "Zion Digital Academy",
+        location: "Bungoma / Hybrid",
+        jobType: "Full-Time",
+        salaryRange: "KES 45,000 – 65,000",
+        description: "Teach Junior School CBC Computer Science & Mathematics with digital grading tools.",
+        postedBy: "wafulak435@gmail.com",
+        applicants: [],
+        createdAt: "2026-05-01T10:00:00.000Z",
+      },
+      job_seed_2: {
+        id: "job_seed_2",
+        title: "Christian Media & Reels Editor (Internship)",
+        orgName: "Zion Digital Publishers",
+        location: "Remote / Kenya",
+        jobType: "Internship",
+        salaryRange: "KES 20,000 Stipend",
+        description: "Edit short devotional clips, sermon highlights, and scripture graphics for Zion Connect.",
+        postedBy: "wafulak435@gmail.com",
+        applicants: [],
+        createdAt: "2026-05-02T11:00:00.000Z",
+      },
+    },
+    professionalOrgs: {
+      org_seed_1: {
+        id: "org_seed_1",
+        name: "Zion Digital Publishers & Academy",
+        sector: "Education & Christian Publishing",
+        location: "Bungoma, Kenya",
+        description: "Digital bookstore, accredited leadership academy, and community learning ecosystem.",
+        website: "https://ziondigital.co.ke",
+        followers: ["wafulak435@gmail.com"],
+        createdBy: "wafulak435@gmail.com",
+        createdAt: "2026-05-01T08:00:00.000Z",
+      },
+      org_seed_2: {
+        id: "org_seed_2",
+        name: "East Africa Christian Educators Network",
+        sector: "Ministry & Schools",
+        location: "Nairobi & Bungoma",
+        description: "Supporting 8-4-4 and CBC teachers with Christian ethos curriculum resources.",
+        followers: [],
+        createdBy: "wafulak435@gmail.com",
+        createdAt: "2026-05-02T08:00:00.000Z",
+      },
+    },
+    professionalArticles: {
+      art_seed_1: {
+        id: "art_seed_1",
+        title: "Building Ethical Digital Schools Across East Africa",
+        summary: "How transparent grading, CBC competency portfolios, and faith-anchored mentorship raise future leaders.",
+        body: "Modern African education thrives when digital record-keeping pairs with character formation. At Zion Digital Academy, teachers maintain real-time mark sheets and attendance logs while parents stay connected every week.",
+        authorName: "Kelvin Opara Wafula",
+        authorEmail: "wafulak435@gmail.com",
+        category: "Leadership & Education",
+        likes: [],
+        createdAt: "2026-05-01T12:00:00.000Z",
+      },
+    },
+    scheduledPosts: {},
+  };
+}
+
+const STATE_BACKUP_FILE = `${STATE_FILE}.bak`;
+
+function hydrateSecurityState(base: SecurityDatabaseState, raw: any): SecurityDatabaseState {
+  return {
+    ...base,
+    ...raw,
+    exams: { ...base.exams, ...(raw.exams || {}) },
+    examAnswerKeys: { ...base.examAnswerKeys, ...(raw.examAnswerKeys || {}) },
+    subAdminPermissions: { ...base.subAdminPermissions, ...(raw.subAdminPermissions || {}) },
+    restrictedChannels: { ...base.restrictedChannels, ...(raw.restrictedChannels || {}) },
+    mpesaTransactions: { ...(base.mpesaTransactions || {}), ...(raw.mpesaTransactions || {}) },
+    processedReceipts: { ...(base.processedReceipts || {}), ...(raw.processedReceipts || {}) },
+    auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
+    socialProfiles: { ...base.socialProfiles, ...(raw.socialProfiles || {}) },
+    userFollows: { ...base.userFollows, ...(raw.userFollows || {}) },
+    blockedUsers: { ...base.blockedUsers, ...(raw.blockedUsers || {}) },
+    moderationReports: Array.isArray(raw.moderationReports) ? raw.moderationReports : [],
+    privateConversations: { ...base.privateConversations, ...(raw.privateConversations || {}) },
+    privateMessages: { ...base.privateMessages, ...(raw.privateMessages || {}) },
+    callSignals: { ...base.callSignals, ...(raw.callSignals || {}) },
+    reels: { ...base.reels, ...(raw.reels || {}) },
+    reelPlaylists: { ...base.reelPlaylists, ...(raw.reelPlaylists || {}) },
+    communityGroups: { ...base.communityGroups, ...(raw.communityGroups || {}) },
+    professionalProfiles: { ...base.professionalProfiles, ...(raw.professionalProfiles || {}) },
+    professionalJobs: { ...base.professionalJobs, ...(raw.professionalJobs || {}) },
+    professionalOrgs: { ...base.professionalOrgs, ...(raw.professionalOrgs || {}) },
+    professionalArticles: { ...base.professionalArticles, ...(raw.professionalArticles || {}) },
+    scheduledPosts: { ...base.scheduledPosts, ...(raw.scheduledPosts || {}) },
   };
 }
 
 function loadSecurityState(): SecurityDatabaseState {
   const base = buildInitialState();
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-      return {
-        ...base,
-        ...raw,
-        exams: { ...base.exams, ...(raw.exams || {}) },
-        examAnswerKeys: { ...base.examAnswerKeys, ...(raw.examAnswerKeys || {}) },
-        subAdminPermissions: { ...base.subAdminPermissions, ...(raw.subAdminPermissions || {}) },
-        restrictedChannels: { ...base.restrictedChannels, ...(raw.restrictedChannels || {}) },
-        mpesaTransactions: { ...(base.mpesaTransactions || {}), ...(raw.mpesaTransactions || {}) },
-        processedReceipts: { ...(base.processedReceipts || {}), ...(raw.processedReceipts || {}) },
-        auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
-      };
+  const candidates = [STATE_FILE, STATE_BACKUP_FILE];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        const rawText = fs.readFileSync(candidate, "utf8");
+        if (!rawText.trim()) continue;
+        const raw = JSON.parse(rawText);
+        if (candidate === STATE_BACKUP_FILE) {
+          console.warn("Recovered security state automatically from rolling .bak backup.");
+        }
+        return hydrateSecurityState(base, raw);
+      }
+    } catch (err) {
+      console.warn(`Failed parsing security state file (${path.basename(candidate)}):`, err);
     }
-  } catch (err) {
-    console.warn("Could not load existing security state JSON, initializing clean store:", err);
   }
   return base;
 }
@@ -486,12 +847,139 @@ export const securityState: SecurityDatabaseState = loadSecurityState();
 
 export function persistSecurityState(): void {
   try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const serialized = JSON.stringify(securityState, null, 2);
     const tmpFile = `${STATE_FILE}.tmp`;
-    fs.writeFileSync(tmpFile, JSON.stringify(securityState, null, 2), "utf8");
+    fs.writeFileSync(tmpFile, serialized, "utf8");
+    // Preserve previous valid state file as .bak before replacing primary
+    if (fs.existsSync(STATE_FILE)) {
+      try {
+        const prevRaw = fs.readFileSync(STATE_FILE, "utf8");
+        if (prevRaw.trim().startsWith("{")) {
+          fs.writeFileSync(STATE_BACKUP_FILE, prevRaw, "utf8");
+        }
+      } catch {
+        // non-fatal backup copy failure
+      }
+    }
     fs.renameSync(tmpFile, STATE_FILE);
   } catch (err) {
     console.error("Failed persisting security state:", err);
   }
+}
+
+export function getSecurityStorageInfo() {
+  const primaryBytes = fs.existsSync(STATE_FILE) ? fs.statSync(STATE_FILE).size : 0;
+  const backupExists = fs.existsSync(STATE_BACKUP_FILE);
+  const backupBytes = backupExists ? fs.statSync(STATE_BACKUP_FILE).size : 0;
+  return {
+    stateFile: path.basename(STATE_FILE),
+    primaryBytes,
+    backupExists,
+    backupBytes,
+    counts: {
+      books: Object.keys(securityState.books || {}).length,
+      orders: Object.keys(securityState.orders || {}).length,
+      enrollments: Object.keys(securityState.enrollments || {}).length,
+      feePayments: Object.keys(securityState.feePayments || {}).length,
+      certificates: Object.keys(securityState.certificates || {}).length,
+      chatMessages: Object.keys(securityState.chatMessages || {}).length,
+      socialPosts: Object.keys(securityState.socialPosts || {}).length,
+      auditLogs: (securityState.auditLogs || []).length,
+    },
+  };
+}
+
+export function exportSanitizedSecuritySnapshot() {
+  const sanitizedAccounts: Record<string, any> = {};
+  for (const [email, acc] of Object.entries(securityState.accounts || {})) {
+    sanitizedAccounts[email] = {
+      id: acc.id,
+      email: acc.email,
+      name: acc.name,
+      role: acc.role,
+      authorizedCourses: acc.authorizedCourses || [],
+      suspended: Boolean(acc.suspended),
+      suspendedReason: acc.suspendedReason,
+      createdAt: acc.createdAt,
+    };
+  }
+  const { adminPasscodeHash: _omitPass, accounts: _omitAcc, ...rest } = securityState;
+  return {
+    ...rest,
+    accountsMetadata: sanitizedAccounts,
+  };
+}
+
+export function restoreSecurityFromSnapshot(snapshot: any): { restoredKeys: string[] } {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new Error("Invalid security snapshot object.");
+  }
+
+  // Snapshot existing state to a dedicated pre-restore backup before mutating memory
+  if (fs.existsSync(STATE_FILE)) {
+    try {
+      fs.copyFileSync(STATE_FILE, `${STATE_FILE}.pre-restore.bak`);
+    } catch {
+      // ignore
+    }
+  }
+
+  const recordMaps: Array<keyof SecurityDatabaseState> = [
+    "subAdminPermissions",
+    "tutorCourses",
+    "suspendedUsers",
+    "books",
+    "bookEntitlements",
+    "orders",
+    "feePayments",
+    "enrollments",
+    "certificates",
+    "exams",
+    "examAnswerKeys",
+    "examAttempts",
+    "chatMessages",
+    "socialPosts",
+    "restrictedChannels",
+    "mpesaTransactions",
+    "processedReceipts",
+    "socialProfiles",
+    "userFollows",
+    "blockedUsers",
+    "privateConversations",
+    "privateMessages",
+    "callSignals",
+    "reels",
+    "reelPlaylists",
+    "communityGroups",
+    "professionalProfiles",
+    "professionalJobs",
+    "professionalOrgs",
+    "professionalArticles",
+    "scheduledPosts",
+  ];
+
+  const restoredKeys: string[] = [];
+  for (const key of recordMaps) {
+    if (snapshot[key] && typeof snapshot[key] === "object" && !Array.isArray(snapshot[key])) {
+      (securityState as any)[key] = { ...(securityState as any)[key], ...snapshot[key] };
+      restoredKeys.push(String(key));
+    }
+  }
+
+  if (snapshot.siteShowcase && typeof snapshot.siteShowcase === "object") {
+    securityState.siteShowcase = snapshot.siteShowcase;
+    restoredKeys.push("siteShowcase");
+  }
+  if (Array.isArray(snapshot.moderationReports)) {
+    securityState.moderationReports = snapshot.moderationReports;
+    restoredKeys.push("moderationReports");
+  }
+
+  persistSecurityState();
+  return { restoredKeys };
 }
 
 export function recordAuditLog(params: {
@@ -721,17 +1209,31 @@ function buildSupabaseEnvOverrides() {
 
 export function getSupabaseServerStatus(): {
   configured: boolean;
+  hasUrl: boolean;
   hasPublishableKey: boolean;
   hasSecretKey: boolean;
   jwksConfigured: boolean;
+  missingEnvVars: string[];
 } {
   const overrides = buildSupabaseEnvOverrides();
   const { data: env } = resolveEnv(overrides);
+  const hasUrl = Boolean(env?.url);
+  const hasPublishableKey = Boolean(env && Object.keys(env.publishableKeys || {}).length > 0);
+  const hasSecretKey = Boolean(env && Object.keys(env.secretKeys || {}).length > 0);
+  const jwksConfigured = Boolean(env?.jwks);
+
+  const missingEnvVars: string[] = [];
+  if (!hasUrl) missingEnvVars.push("SUPABASE_URL (or VITE_SUPABASE_URL)");
+  if (!hasPublishableKey) missingEnvVars.push("SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY)");
+  if (!hasSecretKey) missingEnvVars.push("SUPABASE_SECRET_KEY");
+
   return {
-    configured: Boolean(env?.url),
-    hasPublishableKey: Boolean(env && Object.keys(env.publishableKeys || {}).length > 0),
-    hasSecretKey: Boolean(env && Object.keys(env.secretKeys || {}).length > 0),
-    jwksConfigured: Boolean(env?.jwks),
+    configured: hasUrl && hasPublishableKey,
+    hasUrl,
+    hasPublishableKey,
+    hasSecretKey,
+    jwksConfigured,
+    missingEnvVars,
   };
 }
 

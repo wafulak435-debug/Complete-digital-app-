@@ -401,9 +401,25 @@ export default function AdminPanel({
     }
   };
 
+  const [storageStatus, setStorageStatus] = useState<any>(null);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+
+  const loadStorageStatus = async () => {
+    try {
+      const res = await secureApiFetch("/api/storage/status");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setStorageStatus(data);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     if (activeAdminTab === "security-audit" && isMainAdmin) {
       loadAuditLogs();
+      loadStorageStatus();
     }
   }, [activeAdminTab, isMainAdmin]);
 
@@ -1811,18 +1827,9 @@ export default function AdminPanel({
       bookCategory = newBookCategory as BookCategory;
     }
 
-    // Assign appropriate Unsplash cover based on category selection or separate base64 cover if loaded!
-    let bookCoverUrl = coverFileBase64 || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
-    if (!coverFileBase64) {
-      if (bookCategory === "Religion") {
-        bookCoverUrl = "https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&q=80&w=350";
-      } else if (bookCategory === "Fiction") {
-        bookCoverUrl = "https://images.unsplash.com/photo-1474932430478-367db2683bfc?auto=format&fit=crop&q=80&w=350";
-      } else if (bookCategory === "Business") {
-        bookCoverUrl = "https://images.unsplash.com/photo-1554774853-aae0a22c8aa4?auto=format&fit=crop&q=80&w=350";
-      } else if (bookCategory === "Technology") {
-        bookCoverUrl = "https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop&q=80&w=350";
-      }
+    let bookCoverUrl = coverFileBase64 || BOOKS_DEFAULT_COVER;
+    if (!coverFileBase64 && bookCategory === "Non-Fiction") {
+      bookCoverUrl = BOOKS_DEFAULT_COVER;
     }
 
     const bookId = editingBook ? editingBook.id : "book_" + Date.now();
@@ -1963,19 +1970,7 @@ export default function AdminPanel({
         bookCategory = newBookCategory as BookCategory;
       }
 
-      // Assign cover
-      let bookCoverUrl = coverFileBase64 || "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&q=80&w=350";
-      if (!coverFileBase64) {
-        if (bookCategory === "Religion") {
-          bookCoverUrl = "https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&q=80&w=350";
-        } else if (bookCategory === "Fiction") {
-          bookCoverUrl = "https://images.unsplash.com/photo-1474932430478-367db2683bfc?auto=format&fit=crop&q=80&w=350";
-        } else if (bookCategory === "Business") {
-          bookCoverUrl = "https://images.unsplash.com/photo-1554774853-aae0a22c8aa4?auto=format&fit=crop&q=80&w=350";
-        } else if (bookCategory === "Technology") {
-          bookCoverUrl = "https://images.unsplash.com/photo-1488590528505-98d2b5aba04b?auto=format&fit=crop&q=80&w=350";
-        }
-      }
+      const bookCoverUrl = coverFileBase64 || BOOKS_DEFAULT_COVER;
 
       // 3. Call publish-document AI API
       const data = await invokeGeminiAction("publish-document", "/api/ai/publish-document", {
@@ -2683,6 +2678,133 @@ export default function AdminPanel({
                 ))
               )}
             </div>
+          </div>
+
+          {/* Storage Health & Server Backup / Restore */}
+          <div className="rounded-2xl border border-[#E7E1D8] bg-white p-5 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-[#1F1B18]">Storage Health and Data Backup</h3>
+                <p className="text-[11px] text-[#6E655E]">
+                  Monitors rolling server backups, Supabase private bucket readiness, Firebase sync, and manual state export/restore.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadStorageStatus}
+                  className="rounded-lg border border-[#E7E1D8] px-3 py-1.5 text-xs font-bold text-[#1F1B18] hover:bg-[#FAF8F4] cursor-pointer"
+                >
+                  Check Storage
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setBackupNotice(null);
+                    const res = await secureApiFetch("/api/admin/backup");
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || !data?.backup) {
+                      setBackupNotice(data?.error || "Failed to export backup.");
+                      return;
+                    }
+                    const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `zion-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    setBackupNotice("Downloaded verified full server backup file.");
+                    loadAuditLogs();
+                  }}
+                  className="rounded-lg bg-[#1F1B18] hover:bg-black px-3 py-1.5 text-xs font-bold text-white cursor-pointer"
+                >
+                  Export Backup JSON
+                </button>
+                <label className="rounded-lg bg-[#A8421B] hover:bg-[#8F3614] px-3 py-1.5 text-xs font-bold text-white cursor-pointer">
+                  Restore Backup JSON
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      try {
+                        const rawText = await file.text();
+                        const parsed = JSON.parse(rawText);
+                        const res = await secureApiFetch("/api/admin/restore", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ backup: parsed }),
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (res.ok && data?.success) {
+                          setBackupNotice(`Restored sections: ${(data.restoredSections || []).join(", ")}`);
+                          loadStorageStatus();
+                          loadAuditLogs();
+                        } else {
+                          setBackupNotice(data?.error || "Restore rejected by server.");
+                        }
+                      } catch {
+                        setBackupNotice("Could not parse backup JSON file.");
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {backupNotice && (
+              <div className="rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] px-3 py-2 text-xs font-semibold text-[#1F1B18]">
+                {backupNotice}
+              </div>
+            )}
+
+            {storageStatus && (
+              <div className="grid gap-3 sm:grid-cols-3 text-xs">
+                <div className="rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] p-3 space-y-1">
+                  <p className="font-bold text-[#1F1B18]">Server Disk and Rolling Backup</p>
+                  <p className="text-[#6E655E]">
+                    Security DB: {Math.round((storageStatus.diskPersistence?.security?.primaryBytes || 0) / 1024)} KB (
+                    {storageStatus.diskPersistence?.security?.backupExists ? "Backup Ready" : "Pending First Write"})
+                  </p>
+                  <p className="text-[#6E655E]">
+                    Academics DB: {Math.round((storageStatus.diskPersistence?.academics?.primaryBytes || 0) / 1024)} KB (
+                    {storageStatus.diskPersistence?.academics?.backupExists ? "Backup Ready" : "Pending First Write"})
+                  </p>
+                  <p className="text-[#6E655E]">
+                    Uploaded PDFs/Docs: {storageStatus.diskPersistence?.uploadsCount || 0} files
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] p-3 space-y-1">
+                  <p className="font-bold text-[#1F1B18]">Supabase Private Storage</p>
+                  <p className="text-[#6E655E]">
+                    Bucket: {storageStatus.supabase?.storageBucket || "user-uploads"}
+                  </p>
+                  <p className="text-[#6E655E]">
+                    Cloud Status:{" "}
+                    {storageStatus.supabase?.bucketReady
+                      ? "Connected and Bucket Ready"
+                      : storageStatus.supabase?.configured
+                        ? "Connected"
+                        : "Keys Pending (IndexedDB Fallback Active)"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[#E7E1D8] bg-[#FAF8F4] p-3 space-y-1">
+                  <p className="font-bold text-[#1F1B18]">Firebase Firestore</p>
+                  <p className="text-[#6E655E]">
+                    Project: {storageStatus.firebase?.projectId || "Unconfigured"}
+                  </p>
+                  <p className="text-[#6E655E]">
+                    Status: {storageStatus.firebase?.configured ? "Connected" : "Offline"}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

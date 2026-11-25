@@ -1,12 +1,28 @@
 import React, { useState } from "react";
-import { Phone, Mail, Facebook, MapPin, CheckCircle, Send, Landmark } from "lucide-react";
+import { Phone, Mail, Facebook, MapPin, CheckCircle, Send, Landmark, Calendar, Compass } from "lucide-react";
+import VirtualTourCarousel from "./VirtualTourCarousel";
+import { User } from "../types";
 
 interface ContactProps {
+  currentUser?: User | null;
   onOpenMap?: () => void;
+  onNavigate?: (view: string) => void;
 }
 
-export default function Contact({ onOpenMap }: ContactProps = {}) {
+export default function Contact({ currentUser, onOpenMap, onNavigate }: ContactProps = {}) {
   const [formState, setFormState] = useState({ name: "", email: "", message: "", sent: false });
+
+  const handleFacilityInquiry = (facilityName: string, location: string) => {
+    setFormState((prev) => ({
+      ...prev,
+      message: `Hello Kelvin & Zion Leadership Team, I would like to schedule a campus visit and guided tour of the "${facilityName}" located at ${location}. Please let me know available cohort visit dates and visiting requirements.`
+    }));
+    const formElem = document.getElementById("contact_message_box");
+    if (formElem) {
+      formElem.scrollIntoView({ behavior: "smooth", block: "center" });
+      formElem.focus();
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,12 +188,13 @@ export default function Contact({ onOpenMap }: ContactProps = {}) {
               <div>
                 <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wide mb-1.5">Your Message *</label>
                 <textarea
+                  id="contact_message_box"
                   required
                   rows={4}
                   value={formState.message}
                   onChange={(e) => setFormState({ ...formState, message: e.target.value })}
                   className="w-full rounded-lg border border-stone-200 bg-neutral-50 px-3.5 py-2.5 text-sm outline-none transition focus:border-red-700 focus:bg-white"
-                  placeholder="How can Kelvin and the publishing team assist you?"
+                  placeholder="How can Kelvin and the publishing team assist you? (Or tap 'Schedule Campus Visit' in the tour below)"
                 />
               </div>
 
@@ -191,7 +208,7 @@ export default function Contact({ onOpenMap }: ContactProps = {}) {
               ) : (
                 <button
                   type="submit"
-                  className="flex w-full items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 text-sm font-bold text-white shadow-md hover:bg-red-800 transition active:scale-95"
+                  className="flex w-full items-center justify-center space-x-2 rounded-lg bg-red-700 py-3 text-sm font-bold text-white shadow-md hover:bg-red-800 transition active:scale-95 cursor-pointer"
                 >
                   <Send className="h-4 w-4" />
                   <span>Send Message</span>
@@ -200,6 +217,17 @@ export default function Contact({ onOpenMap }: ContactProps = {}) {
             </form>
           </div>
         </div>
+      </div>
+
+      {/* Interactive Virtual Tour Carousel of Bungoma Campus */}
+      <div className="mt-12 pt-8 border-t border-stone-200 dark:border-slate-800">
+        <VirtualTourCarousel
+          currentUser={currentUser}
+          onNavigate={onNavigate}
+          onSelectFacilityForInquiry={handleFacilityInquiry}
+          titleOverride="Interactive Virtual Tour of Bungoma Campus Facilities"
+          subtitleOverride="Swipe or tap through our lecture halls, library, prayer sanctuary, and computer engineering labs. Tap 'Schedule Campus Visit' to inquiry about any building."
+        />
       </div>
     </div>
   );

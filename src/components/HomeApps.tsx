@@ -8,6 +8,11 @@ import {
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 import GoogleSimView from "./GoogleSimView";
+import seminarImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import bibleImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import sermonImg from "../assets/images/slide_sermon_media_1795421934360.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import academyImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
 
 interface PhoneApp {
   id: string;
@@ -406,9 +411,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
     title: "Bungoma County, Western Kenya",
     description: "Bungoma is a county in the former Western Province of Kenya. It bordering Uganda and features scenic valleys, scholastic institutions, and vast agricultural potential. Home of the Bukusu ethnic community, it acts as a central node for education and trade under Wafula Digital leadership models.",
     images: [
-      "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&q=80&w=600",
-      "https://images.unsplash.com/photo-1523805009345-7448845a9e53?auto=format&fit=crop&q=80&w=600",
-      "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=600"
+      seminarImg,
+      bookstoreImg,
+      academyImg
     ],
     videos: [
       {
@@ -600,9 +605,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
         title: `Grace & Biblical Faith in Modern Literature`,
         description: `Faith is defined as an intrinsic trust and confidence in spiritual truth, biblical tenets, and eternal principles. It guides ethical living, community cohesion, and academic focus. Advanced research studies suggest active spiritual practice enhances core leadership capabilities, personal resilience, and community harmony under Wafula teachings.`,
         images: [
-          "https://images.unsplash.com/photo-1504052434569-70ad5836ab65?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1438232992991-995b7058bbb3?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&q=80&w=600"
+          bibleImg,
+          sermonImg,
+          bookstoreImg
         ],
         videos: [
           {
@@ -620,9 +625,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
         title: "Bungoma County & Western Kenya Tourism",
         description: "Bungoma County is a beautiful agricultural and cultural hub nestled in the Western province of Kenya. Notable landmarks include Mt. Elgon, the scenic Sang'alo Hills, and a highly active community of agrarian scholarship and leadership. Digital advancement is driving educational equity in Bungoma.",
         images: [
-          "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1523805009345-7448845a9e53?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=600"
+          seminarImg,
+          bookstoreImg,
+          academyImg
         ],
         videos: [
           {
@@ -640,9 +645,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
         title: "Advanced Scholarly Leadership & Management",
         description: "Leadership is the art of motivating a group of people to act toward achieving a common goal. Modern academic theory stresses that digital platforms, strict self-management, and high ethical standards are vital when guiding organizations in the 21st century. It requires consistent study of literature, books, and technological media.",
         images: [
-          "https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&q=80&w=600"
+          seminarImg,
+          academyImg,
+          bibleImg
         ],
         videos: [
           {
@@ -660,9 +665,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
         title: "Agribusiness & Sustainable Wealth Generation",
         description: "Agribusiness combines agricultural production with modern business concepts. In Bungoma and broader Western Kenya, it represents the primary engine of development, allowing families to scale crops, maize, and organic products effectively using high-speed digital accounting software and offline cashbooks.",
         images: [
-          "https://images.unsplash.com/photo-1595974482597-4b8da8879bc5?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1464226184884-fa280b87c3e9?auto=format&fit=crop&q=80&w=600"
+          bookstoreImg,
+          seminarImg,
+          academyImg
         ],
         videos: [
           {
@@ -682,9 +687,9 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
         title: `${capitalized} - Global AI Search Dossier`,
         description: `This is a highly responsive AI-synthesized research report for '${capitalized}' organized by the Wafula Ingestion system. Our cognitive engine explores library cross-references, academic publications, and multimedia archives to provide real-time definition models, actionable paradigms, and high-fidelity insights.`,
         images: [
-          "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=600",
-          "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=600"
+          academyImg,
+          bookstoreImg,
+          seminarImg
         ],
         videos: [
           {
@@ -1491,12 +1496,12 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
                     <p className="text-[10px] text-stone-350 italic">Centred micro bookstore preview. Select any volume to load full study course:</p>
                     <div className="grid grid-cols-2 gap-3 pb-4">
                       {[
-                        { id: "b1", title: "Vocational Leadership", author: "Wafula Opara", cover: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=200", price: "Free" },
-                        { id: "b2", title: "Agribusiness & Self Reliance", author: "Kelvin Wafula", cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&q=80&w=200", price: "KES 500" }
+                        { id: "b1", title: "Vocational Leadership", author: "Wafula Opara", cover: bookstoreImg, price: "Free" },
+                        { id: "b2", title: "Agribusiness & Self Reliance", author: "Kelvin Wafula", cover: bibleImg, price: "KES 500" }
                       ].map((bk) => (
                         <div key={bk.id} className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-center flex flex-col justify-between space-y-2">
-                          <div className="aspect-[3/4] w-full flex items-center justify-center bg-stone-950 border-[6px] border-[#3e2723] rounded-lg shadow p-1 relative">
-                            <img src={bk.cover} className="max-h-full max-w-full object-contain rounded-xs" alt="" referrerPolicy="no-referrer" />
+                          <div className="aspect-[3/4] w-full flex items-center justify-center bg-transparent p-1 relative">
+                            <img src={bk.cover} className="max-h-full max-w-full object-contain" alt={bk.title} />
                           </div>
                           <div>
                             <h5 className="text-[10.5px] font-bold text-white truncate">{bk.title}</h5>

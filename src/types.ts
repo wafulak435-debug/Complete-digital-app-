@@ -91,7 +91,9 @@ export type BookCategory =
   | 'Health'
   | 'Science'
   | 'Religion'
-  | 'Leadership';
+  | 'Leadership'
+  | 'Mathematics'
+  | 'Personal Development';
 
 export interface Book {
   id: string;
@@ -392,3 +394,177 @@ export interface SermonVideo {
   likesCount?: number;
   viewsCount?: number;
 }
+
+export interface SocialProfile {
+  email: string;
+  name: string;
+  username: string;
+  bio: string;
+  headline: string;
+  location?: string;
+  avatarUrl?: string;
+  coverPhotoUrl?: string;
+  education?: string;
+  occupation?: string;
+  skills: string[];
+  showOnlineStatus: boolean;
+  isOnline?: boolean;
+  lastSeen?: string;
+  dmPrivacy: 'everyone' | 'connections';
+}
+
+export interface PrivateConversation {
+  id: string;
+  participants: string[]; // strict 2-element lowercased email list
+  participantNames: Record<string, string>;
+  disappearingTimer: 'off' | '24h' | '7d';
+  archivedBy: string[];
+  mutedBy: string[];
+  lastMessageText?: string;
+  lastMessageAt?: string;
+  unreadCounts: Record<string, number>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PrivateMessageAttachment {
+  name: string;
+  type: 'image' | 'video' | 'audio' | 'document';
+  dataUrl?: string;
+  sizeStr?: string;
+  durationSec?: number;
+}
+
+export interface PrivateMessage {
+  id: string;
+  conversationId: string;
+  senderEmail: string;
+  senderName: string;
+  text: string;
+  replyToId?: string;
+  replyPreview?: string;
+  attachment?: PrivateMessageAttachment;
+  reactions: Record<string, string[]>; // emoji -> array of user emails
+  readBy: string[];
+  isEdited?: boolean;
+  deletedForAll?: boolean;
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ReelComment {
+  id: string;
+  userEmail: string;
+  userName: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface ReelItem {
+  id: string;
+  creatorEmail: string;
+  creatorName: string;
+  title: string;
+  caption: string;
+  category: 'Christian Reels' | 'Sermons' | 'Worship' | 'Youth' | 'Leadership' | 'Education';
+  hashtags: string[];
+  taggedUsers: string[];
+  videoUrl: string;
+  thumbnailUrl?: string;
+  likes: string[];
+  views: number;
+  comments: ReelComment[];
+  createdAt: string;
+}
+
+export interface CommunityGroupEvent {
+  id: string;
+  title: string;
+  date: string;
+  location: string;
+  description: string;
+  rsvps: string[];
+  createdBy: string;
+}
+
+export interface CommunityGroupPost {
+  id: string;
+  authorEmail: string;
+  authorName: string;
+  text: string;
+  attachmentName?: string;
+  createdAt: string;
+}
+
+export interface CommunityGroup {
+  id: string;
+  name: string;
+  category: 'Bible Study' | 'Prayer' | 'Fellowship' | 'Youth' | 'Leadership' | 'Professional';
+  privacy: 'public' | 'private';
+  description: string;
+  coverImage?: string;
+  creatorEmail: string;
+  admins: string[];
+  moderators: string[];
+  members: string[];
+  events: CommunityGroupEvent[];
+  posts: CommunityGroupPost[];
+  createdAt: string;
+}
+
+export interface ProfessionalJob {
+  id: string;
+  title: string;
+  organization: string;
+  location: string;
+  type: 'Full-Time' | 'Part-Time' | 'Internship' | 'Ministry' | 'Remote';
+  salaryRange: string;
+  description: string;
+  skillsRequired: string[];
+  postedByEmail: string;
+  postedByName: string;
+  applicants: { email: string; name: string; note: string; cvName?: string; appliedAt: string }[];
+  createdAt: string;
+}
+
+export interface ProfessionalOrg {
+  id: string;
+  name: string;
+  sector: string;
+  location: string;
+  description: string;
+  website?: string;
+  ownerEmail: string;
+  followers: string[];
+  verified?: boolean;
+  createdAt: string;
+}
+
+export interface ProfessionalArticle {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  content: string;
+  authorEmail: string;
+  authorName: string;
+  likes: string[];
+  createdAt: string;
+}
+
+export interface ScheduledStudioPost {
+  id: string;
+  authorEmail: string;
+  authorName: string;
+  title: string;
+  caption: string;
+  hashtags: string[];
+  targetChannel: 'zion_connect' | 'group' | 'professional';
+  status: 'draft' | 'scheduled' | 'published';
+  scheduledFor?: string;
+  posterDataUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

@@ -7,6 +7,8 @@ import {
   Tv, ListTodo, GraduationCap
 } from "lucide-react";
 import { googleSignIn, googleLogout, getAccessToken, listGmailMessages, sendGmailMessage } from "../lib/firebase";
+import leadershipImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import zionLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 
 interface GmailMessage {
   id: string;
@@ -59,7 +61,7 @@ export default function GmailConsole() {
   const [driveFiles, setDriveFiles] = useState<any[]>([
     { id: "d1", name: "Sermon_Evangelist_FinalDraft.pdf", type: "PDF Document", size: "2.4 MB", shared: true, url: "/assets/sample.pdf" },
     { id: "d2", name: "Bungoma_Leadership_School_Guide.docx", type: "Word Outline", size: "1.1 MB", shared: false, url: "/assets/guide.docx" },
-    { id: "d3", name: "Youths_Empowerment_ClassPhoto.png", type: "Image / Photo", size: "4.8 MB", shared: true, url: "https://images.unsplash.com/photo-1522202176988-66273c2fd55f" },
+    { id: "d3", name: "Youths_Empowerment_ClassPhoto.png", type: "Image / Photo", size: "4.8 MB", shared: true, url: leadershipImg },
     { id: "d4", name: "Worship_Harmonies_Solfeggio.mp3", type: "Music / Audio File", size: "8.2 MB", shared: true, url: "/assets/audio.mp3" }
   ]);
   const [newDriveFileName, setNewDriveFileName] = useState("");
@@ -598,7 +600,7 @@ export default function GmailConsole() {
             {token ? (
               <div className="flex items-center space-x-3 bg-white/10 backdrop-blur-md p-3 rounded-xl border border-white/10 shadow-lg">
                 <img 
-                  src={googleUser?.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop"} 
+                  src={googleUser?.photoURL || zionLogo} 
                   alt="Google Avatar" 
                   className="h-9 w-9 rounded-full border-2 border-green-400 object-cover"
                 />

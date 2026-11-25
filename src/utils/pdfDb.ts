@@ -1,12 +1,49 @@
 /**
- * IndexedDB offline buffer engine for storing uploaded large PDF files securely.
- * This allows users to read uploaded books directly from the application without a download,
- * and maintains the file availability across page reloads and offline sessions.
+ * IndexedDB offline buffer engine for storing uploaded PDFs and user files durably.
+ * Maintains file availability across page reloads, offline sessions, and browser restarts,
+ * and requests persistent storage permission to prevent browser eviction.
  */
 
 const DB_NAME = "WafulaUploadedPDFsDB";
 const STORE_NAME = "uploaded_pdfs";
 const VERSION = 1;
+
+let persistenceRequested = false;
+
+/**
+ * Requests durable browser storage so IndexedDB blobs are protected from automatic eviction.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (persistenceRequested) return true;
+  persistenceRequested = true;
+  try {
+    if (typeof navigator !== "undefined" && navigator.storage && typeof navigator.storage.persist === "function") {
+      const already = typeof navigator.storage.persisted === "function" ? await navigator.storage.persisted() : false;
+      if (already) return true;
+      return await navigator.storage.persist();
+    }
+  } catch {
+    // Non-fatal in unsupported browsers
+  }
+  return false;
+}
+
+export async function getOfflineStorageEstimate(): Promise<{ usageBytes: number; quotaBytes: number; persisted: boolean }> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.storage) {
+      const estimate = typeof navigator.storage.estimate === "function" ? await navigator.storage.estimate() : {};
+      const persisted = typeof navigator.storage.persisted === "function" ? await navigator.storage.persisted() : false;
+      return {
+        usageBytes: Number(estimate.usage || 0),
+        quotaBytes: Number(estimate.quota || 0),
+        persisted,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { usageBytes: 0, quotaBytes: 0, persisted: false };
+}
 
 export function openPdfDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -35,22 +72,34 @@ export function openPdfDb(): Promise<IDBDatabase> {
 }
 
 /**
- * Saves a file blob indexed by bookId.
+ * Saves a file blob indexed by bookId and waits for transaction commit before resolving.
  */
-export async function savePdfToOfflineDb(bookId: string, file: Blob): Promise<void> {
-  try {
-    const db = await openPdfDb();
-    return new Promise<void>((resolve, reject) => {
+export async function savePdfToOfflineDb(bookId: string, file: Blob): Promise<boolean> {
+  requestPersistentStorage().catch(() => {});
+  const db = await openPdfDb();
+  return new Promise<boolean>((resolve, reject) => {
+    try {
       const transaction = db.transaction(STORE_NAME, "readwrite");
       const store = transaction.objectStore(STORE_NAME);
-      const request = store.put({ bookId, file });
+      store.put({ bookId, file, savedAt: new Date().toISOString() });
 
-      request.onsuccess = () => resolve();
-      request.onerror = (event) => reject((event.target as IDBRequest).error);
-    });
-  } catch (err) {
-    console.error("Failed to store PDF file in IndexedDB:", err);
-  }
+      transaction.oncomplete = () => {
+        db.close();
+        resolve(true);
+      };
+      transaction.onerror = (event) => {
+        db.close();
+        reject((event.target as IDBTransaction).error || new Error("IndexedDB transaction failed."));
+      };
+      transaction.onabort = () => {
+        db.close();
+        reject(new Error("IndexedDB write was aborted."));
+      };
+    } catch (err) {
+      db.close();
+      reject(err);
+    }
+  });
 }
 
 /**
@@ -59,7 +108,7 @@ export async function savePdfToOfflineDb(bookId: string, file: Blob): Promise<vo
 export async function getPdfFromOfflineDb(bookId: string): Promise<Blob | null> {
   try {
     const db = await openPdfDb();
-    return new Promise<Blob | null>((resolve, reject) => {
+    return await new Promise<Blob | null>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, "readonly");
       const store = transaction.objectStore(STORE_NAME);
       const request = store.get(bookId);
@@ -69,6 +118,8 @@ export async function getPdfFromOfflineDb(bookId: string): Promise<Blob | null> 
         resolve(result ? result.file : null);
       };
       request.onerror = (event) => reject((event.target as IDBRequest).error);
+      transaction.oncomplete = () => db.close();
+      transaction.onabort = () => db.close();
     });
   } catch (err) {
     console.error("Failed to retrieve PDF file from IndexedDB:", err);
@@ -83,7 +134,7 @@ export async function getAllOfflinePdfs(): Promise<Map<string, Blob>> {
   const map = new Map<string, Blob>();
   try {
     const db = await openPdfDb();
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, "readonly");
       const store = transaction.objectStore(STORE_NAME);
       const request = store.getAll();
@@ -96,6 +147,8 @@ export async function getAllOfflinePdfs(): Promise<Map<string, Blob>> {
         resolve(map);
       };
       request.onerror = (event) => reject((event.target as IDBRequest).error);
+      transaction.oncomplete = () => db.close();
+      transaction.onabort = () => db.close();
     });
   } catch (err) {
     console.error("Failed to load all local PDF files from IndexedDB:", err);
@@ -109,13 +162,19 @@ export async function getAllOfflinePdfs(): Promise<Map<string, Blob>> {
 export async function deletePdfFromOfflineDb(bookId: string): Promise<void> {
   try {
     const db = await openPdfDb();
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(STORE_NAME, "readwrite");
       const store = transaction.objectStore(STORE_NAME);
-      const request = store.delete(bookId);
+      store.delete(bookId);
 
-      request.onsuccess = () => resolve();
-      request.onerror = (event) => reject((event.target as IDBRequest).error);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = (event) => {
+        db.close();
+        reject((event.target as IDBTransaction).error);
+      };
     });
   } catch (err) {
     console.error("Failed to delete PDF file from IndexedDB:", err);

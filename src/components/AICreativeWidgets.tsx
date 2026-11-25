@@ -1,5 +1,10 @@
 import React, { useState } from "react";
 import { Sparkles, Upload, Download, MapPin, Smile, RefreshCw, Layers, Copy, Check, Video } from "lucide-react";
+import seminarImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import bibleImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import academyImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
+import { sanitizeSvgMarkup } from "../lib/sanitizeSvg";
 
 // ==========================================
 // A. VEO 3.1 CINEMATIC TEXT-TO-VIDEO
@@ -130,19 +135,19 @@ export function PetAdventureEngine() {
 
   const destinationBackdrops: { [key: string]: { url: string; story: string } } = {
     "Egypt Pyramids": {
-      url: "https://images.unsplash.com/photo-1539650116574-8efeb43e2750?auto=format&fit=crop&w=500&q=80",
+      url: bibleImg,
       story: "Tracing ancient sandy mysteries, our brave companion trotted alongside golden camels! Basking happily near Giza, local guides named them the 'Golden Pharaoh Protector'."
     },
     "Paris Eiffel Tower": {
-      url: "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=500&q=80",
+      url: seminarImg,
       story: "Strolling casually past cozy cafes, our pet gathered multiple compliments from Parisian artists. Looking grand under the majestic Eiffel sky, they masterfully chased French pigeons!"
     },
     "Bungoma High Cliffs": {
-      url: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=500&q=80",
+      url: bookstoreImg,
       story: "Bravely ascending the steep volcanic ridges, our adventurer barked triumphantly overlooking the sprawling green Bungoma sugar belts. A local elder decorated them with a garland of honor."
     },
     "The Great Wall of China": {
-      url: "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?auto=format&fit=crop&w=500&q=80",
+      url: academyImg,
       story: "Pacing along the legendary stone corridors, our loyal pet stood tall as an absolute general! Running down ancient defense watchtowers, they were crowned the most athletic hiking explorer."
     }
   };
@@ -411,7 +416,7 @@ export function VectorArtMaker() {
       {renderedSvg ? (
         <div className="bg-white border text-center border-stone-200 rounded-xl p-4 space-y-3 relative">
           <div className="h-[120px] w-[120px] mx-auto border border-stone-100 flex items-center justify-center bg-stone-50 rounded-lg p-2 overflow-hidden shadow-inner">
-            <div dangerouslySetInnerHTML={{ __html: renderedSvg }} className="w-full h-full block" />
+            <div dangerouslySetInnerHTML={{ __html: sanitizeSvgMarkup(renderedSvg) }} className="w-full h-full block" />
           </div>
 
           <div className="flex gap-2 justify-center pt-2">

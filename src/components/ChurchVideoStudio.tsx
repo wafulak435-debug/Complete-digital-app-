@@ -8,6 +8,12 @@ import {
 } from "lucide-react";
 import { exportPDF, exportWordDoc } from "../lib/docExporter";
 import { invokeGeminiAction } from "../lib/aiClient";
+import sermonMediaImg from "../assets/images/slide_sermon_media_1795421934360.jpg";
+import bibleSchoolImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import leadershipImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import computerAcademyImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
+import creamSpineImg from "../assets/images/hero_cream_spine_1795421934538.jpg";
 
 // Preloaded congregation & evangelism videos
 interface PresetVideo {
@@ -58,37 +64,37 @@ const PRELOADED_PHOTOS: ChurchPhoto[] = [
   {
     id: "photo_congregation",
     title: "Zion Sunday Praise Circle",
-    url: "https://images.unsplash.com/photo-1438029071396-1e831a7fa6d8?q=80&w=800&auto=format&fit=crop",
+    url: sermonMediaImg,
     author: "Zion Fellowship, Bungoma"
   },
   {
     id: "photo_preacher",
     title: "Sunday Sermon Devotional Study",
-    url: "https://images.unsplash.com/photo-1544427920-c49ccfb85579?q=80&w=800&auto=format&fit=crop",
+    url: bibleSchoolImg,
     author: "Brother Wafula"
   },
   {
     id: "photo_choir",
     title: "Saintly Choral Hymnal Choir",
-    url: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=800&auto=format&fit=crop",
+    url: leadershipImg,
     author: "Zion Bungoma Choir"
   },
   {
     id: "photo_bible",
     title: "Sacred Scriptures Open on Altar",
-    url: "https://images.unsplash.com/photo-1504051771394-dd2e66b2e08f?q=80&w=800&auto=format&fit=crop",
+    url: bookstoreImg,
     author: "Altar Library"
   },
   {
     id: "photo_sunlight",
-    title: "Sanctuan Stained Glass Dawn",
-    url: "https://images.unsplash.com/photo-1548625361-155de0cbb55a?q=80&w=800&auto=format&fit=crop",
+    title: "Sanctuary Study & Media Wing",
+    url: computerAcademyImg,
     author: "Bungoma Cathedral"
   },
   {
     id: "photo_mountain_chapel",
-    title: "Highland Grace Sanctuary Sunrise",
-    url: "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?q=80&w=800&auto=format&fit=crop",
+    title: "Highland Grace Sanctuary Volume",
+    url: creamSpineImg,
     author: "Western Kenya Missions"
   }
 ];

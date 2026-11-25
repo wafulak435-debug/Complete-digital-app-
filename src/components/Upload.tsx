@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Upload as UploadIcon, FileText, Video, Image, CheckCircle, RefreshCw, Trash2, HeartHandshake, AlertCircle, Download, Music, Headphones, Eye, Loader2, Search, Play, Pause, X, Zap, Wifi } from "lucide-react";
 import { MemberUploadRequest, User, AppSettings } from "../types";
-import { getPdfFromOfflineDb } from "../utils/pdfDb";
+import { getPdfFromOfflineDb, savePdfToOfflineDb } from "../utils/pdfDb";
+import { getUserFileSignedUrl } from "../lib/supabaseClient";
 
 interface UploadProps {
   currentUser: User | null;
@@ -592,22 +593,44 @@ export default function Upload({
   });
 
   const handleDownloadFile = async (u: MemberUploadRequest) => {
-    if (u.hasLocalBlob) {
+    try {
+      const localBlob = await getPdfFromOfflineDb(u.id);
+      if (localBlob) {
+        const url = URL.createObjectURL(localBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = u.title;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return;
+      }
+    } catch (err) {
+      console.error("Failed to load local blob for download:", err);
+    }
+
+    if (u.contentUrl?.startsWith("supabase://")) {
       try {
-        const localBlob = await getPdfFromOfflineDb(u.id);
-        if (localBlob) {
-          const url = URL.createObjectURL(localBlob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = u.title;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          return;
+        const signed = await getUserFileSignedUrl(u.contentUrl, 3600);
+        if (signed) {
+          const resp = await fetch(signed);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            await savePdfToOfflineDb(u.id, blob).catch(() => {});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = u.title;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            return;
+          }
         }
       } catch (err) {
-        console.error("Failed to load local blob for download:", err);
+        console.warn("Could not download from Supabase storage fallback:", err);
       }
     }
 
@@ -659,8 +682,8 @@ export default function Upload({
       setActivePreviewUrl(null);
     }
 
-    // If it has local payload inside IndexedDB
-    if (u.hasLocalBlob) {
+    // Check IndexedDB first even if hasLocalBlob wasn't set on legacy metadata
+    if (u.hasLocalBlob || u.contentUrl?.startsWith("supabase://")) {
       setIsPreviewLoading(true);
       try {
         const fileBlob = await getPdfFromOfflineDb(u.id);
@@ -668,16 +691,36 @@ export default function Upload({
           const objectUrl = URL.createObjectURL(fileBlob);
           setActivePreviewUrl(objectUrl);
           setActivePreviewUpload(u);
-        } else {
-          alert("Attached file payload could not be loaded from local IndexedDB storage indices.");
+          return;
+        }
+        if (u.contentUrl?.startsWith("supabase://")) {
+          const signed = await getUserFileSignedUrl(u.contentUrl, 3600);
+          if (signed) {
+            const resp = await fetch(signed);
+            if (resp.ok) {
+              const cloudBlob = await resp.blob();
+              await savePdfToOfflineDb(u.id, cloudBlob).catch(() => {});
+              const objectUrl = URL.createObjectURL(cloudBlob);
+              setActivePreviewUrl(objectUrl);
+              setActivePreviewUpload(u);
+              return;
+            }
+            setActivePreviewUrl(signed);
+            setActivePreviewUpload(u);
+            return;
+          }
+        }
+        if (u.hasLocalBlob) {
+          alert("Attached file payload could not be loaded from local IndexedDB or cloud storage.");
+          return;
         }
       } catch (err) {
-        console.error("Failed to load PDF blob for inline reader:", err);
+        console.error("Failed to load file blob for inline reader:", err);
         alert("Error launching secure inline reader.");
+        return;
       } finally {
         setIsPreviewLoading(false);
       }
-      return;
     }
 
     // Seed mock data fallbacks:

@@ -5,6 +5,7 @@ import {
   ensureUserProfile,
   mapProfileToAppUser,
 } from "../lib/supabaseClient";
+import { firebaseGoogleSignIn, firebaseConfigInfo } from "../lib/firebase";
 import { secureApiFetch, setSessionToken } from "../lib/aiClient";
 import {
   loadShowcaseLocal,
@@ -264,25 +265,41 @@ export default function AuthScreen({
   const handleGoogleOAuth = async () => {
     setErrorMsg("");
     setSuccessMsg("");
-
-    if (!isSupabaseConfigured || !supabase) {
-      setErrorMsg(
-        "Google Sign-In requires Supabase Auth configuration in production, or use Email Sign-In / Instant Member Preview."
-      );
-      return;
-    }
-
     setIsLoading(true);
+
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: window.location.origin,
-        },
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: window.location.origin,
+          },
+        });
+        if (error) throw error;
+        return;
+      }
+
+      // Firebase Authentication Google Sign-In connected to /api/auth/session
+      const { user, idToken } = await firebaseGoogleSignIn();
+      const verifiedUser = await exchangeServerSession({
+        mode: "firebase",
+        idToken,
       });
-      if (error) throw error;
+      onAuthenticated(
+        {
+          ...verifiedUser,
+          avatarUrl: user.photoURL || verifiedUser.avatarUrl,
+          readingStreak: 1,
+          dailyGoalMinutes: 30,
+        },
+        "Firebase Google Sign-In"
+      );
     } catch (err: any) {
-      setErrorMsg(err?.message || "Google sign-in failed. Ensure Google OAuth is enabled in Supabase.");
+      setErrorMsg(
+        err?.message ||
+          "Google sign-in failed. Please allow popups or sign in with your email and password."
+      );
+    } finally {
       setIsLoading(false);
     }
   };
@@ -501,12 +518,13 @@ export default function AuthScreen({
                 <AlertTriangle className="h-4 w-4 text-[#A8421B] shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
                   <p className="font-semibold text-[11px] uppercase tracking-wider text-[#A8421B]">
-                    Server Session Mode
+                    Firebase Connected ({firebaseConfigInfo.projectId}) · Supabase Setup Needed
                   </p>
                   <p className="text-[11px] leading-relaxed">
-                    Configure <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_URL</code> and{" "}
+                    Firebase Auth and Cloud Firestore are active. Add{" "}
+                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_URL</code> and{" "}
                     <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> (or{" "}
-                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_ANON_KEY</code>) to connect external cloud authentication.
+                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_ANON_KEY</code>) to connect Supabase Auth and storage.
                   </p>
                 </div>
               </div>

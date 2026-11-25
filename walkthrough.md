@@ -31,38 +31,53 @@ This document summarizes the Phase 0 security hardening, access-control architec
 - Unified the application palette around Warm Ivory (`#FAF8F4`), Crisp Linen (`#FFFFFF`), Soft Taupe (`#E7E1D8`), Espresso Ink (`#1F1B18`), Muted Ink (`#6E655E`), and Terracotta (`#A8421B`), paired with `Playfair Display`, `Plus Jakarta Sans`, and `JetBrains Mono`.
 - Added 2-second auto-sliding welcome & campus showcases on `AuthScreen.tsx` and `Store.tsx`, synchronized with `GET/PUT /api/site/showcase` and editable live in `ManagerPortal.tsx` along with Vision, Mission, Slogan, Featured Books, and Paystack KES (M-Pesa + Card) / Supabase / Firebase integration strips.
 
+## 6. Supabase Storage, Data Durability & Input Hardening
+- **Supabase Storage (`user-uploads` bucket) & Durable IndexedDB Vault (`src/lib/supabaseClient.ts`, `src/utils/pdfDb.ts`)**: Replaced `localStorage` Base64 data URL storage (which risks silent quota loss) with IndexedDB binary caching (`supa_vault_<path>`), `navigator.storage.persist()` quota protection, `transaction.oncomplete` write guarantees, and automatic Supabase `user-uploads` bucket upload/signed-URL resolution plus background vault migration (`syncLocalVaultFilesToSupabase`) when Supabase is configured and authenticated.
+- **Anti-Data-Loss Book Sync (`src/App.tsx`)**: Fixed the Firestore `onSnapshot` race where newly created books could be removed before confirming cloud write by marking new uploads `isSynced: false` until `saveBookToFirestore` succeeds, merging server `/api/books` on startup, and preserving live local `blob:` / `indexeddb://` PDF pointers during remote snapshot updates.
+- **Rolling Disk Backups & Admin Restore (`server/security.ts`, `server/academicLogic.ts`, `server.ts`, `src/components/AdminPanel.tsx`)**: Added `.bak` rolling recovery backups written before atomic `.tmp` renames, automatic primary-to-`.bak` fallback on state load, pre-restore snapshots (`.pre-restore.bak`), authenticated storage diagnostics (`GET /api/storage/status`), and `main_admin`-only backup export/restore (`GET /api/admin/backup`, `POST /api/admin/restore`) that exclude `passwordHash` and `adminPasscodeHash` from exports.
+- **Upload Signature & SVG Script Sanitization (`server.ts`, `src/lib/sanitizeSvg.ts`, `src/components/AICreativeWidgets.tsx`, `src/components/AITutorStudio.tsx`)**: Added upload byte-length bounds (1 byte to 35 MB), `%PDF-` / `PK` (ZIP/DOCX) header checks, path traversal rejection on document endpoints, restricted public `/api/health` and `/api/connections/status` metadata so internal env var names are not exposed anonymously, and stripped active `<script>`, `<foreignObject>`, inline event attributes, and `javascript:` URIs from AI-generated inline SVG diagrams.
+
+## 7. Live Safaricom M-Pesa Daraja Production Gateway
+- **Server-Side Secret Storage (`/.env`, `/server/mpesa.ts`)**: Configured `MPESA_ENV=production`, PayBill shortcode `1171473`, `MPESA_SHORTCODE_TYPE=paybill`, `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_PASSKEY`, and `MPESA_CALLBACK_URL` strictly on the server while keeping public `/api/mpesa/config` masked (`"Configured"` / `"Not set"`).
+- **Authenticated Checkout & Authoritative Pricing (`/server/mpesa.ts`)**: Required authentication (`requireAuth`) on `POST /api/mpesa/stkpush` and `POST /api/mpesa/qrcode`, enforced owner-or-finance authorization (`403`) on `GET /api/mpesa/query/:checkoutRequestId`, enforced server-derived amounts for books (`book`), tuition (`course`), fees (`fee`), and plans (`subscription` including `topup`, `starter`, `pro`, `unlimited`), and enforced manager authorization (`requireManagerAccess`) on `GET /api/mpesa/admin/test-auth` and `POST /api/mpesa/c2b/register`.
+- **C2B v2 PayBill & Dynamic QR Endpoints (`/server/mpesa.ts`)**: Added Dynamic QR generation (`POST /api/mpesa/qrcode`), C2B v2 URL registration (`POST /api/mpesa/c2b/register`), PayBill validation webhook (`POST /api/mpesa/c2b/validation`), and idempotent confirmation webhook (`POST /api/mpesa/c2b/confirmation`) backed by `processedReceipts`.
+- **Live Checkout UI Integration (`/src/components/Store.tsx`, `/src/components/UpgradeModal.tsx`, `/src/components/MpesaApiConsole.tsx`, `/src/components/ManagerPortal.tsx`, `/src/App.tsx`)**: Replaced legacy simulated PayBill `247247` prompts and dummy M-Pesa consoles with live Daraja STK Push, Dynamic PayBill QR checkout, real-time polling against `/api/mpesa/query/:checkoutRequestId`, and Manager Portal OAuth verification / C2B URL registration controls.
+
 ---
 
 ## PoC Verification
 
-All verification checks below were executed directly against the compiled workspace and live Express application (`tests/security-verify.ts` with `ZION_TEST_MODE=1`):
+All verification checks below were executed directly against the current codebase and live Express server after the final code edit:
 
 1. **Automated Security Verification Suite (`npx tsx tests/security-verify.ts`)**:
    - **Result**: Exited `0` — printed `ALL_SECURITY_VERIFICATION_CHECKS_PASSED`.
-   - Verified anonymous callers receive `401`/`403` on `/api/admin/*`, `/api/orders`, `/api/fee-payments`, `/api/enrollments`, `/api/exams`, `/api/ai/assistant`, `PUT /api/site/showcase`, `/admin`, `/manager-portal`, and paid `/api/books/pdf/:id`.
-   - Verified ordinary members and non-finance/clerk sub-admins receive `403` on privilege escalation attempts, answer-key endpoints, sub-admin permission writes, suspension routes, order confirmation tampering, and unpurchased paid book downloads, while free active books and paid book previews return `200`.
-   - Verified order creation ignores client-supplied `status: "approved"` and `price: 0` (forces `"pending"` at catalog price `KES 1200`), and finance sub-admin approval grants `200` PDF download access.
-   - Verified exam endpoints strip `correctIndex`/`explanation`, reject tampered `score: 100` (`403`), grade accurately server-side, withhold unreleased answer breakdowns, and enforce `maxAttempts`.
-   - Verified immutable audit logs record `ORDER_APPROVED` and `EXAM_RESULTS_RELEASED` while blocking `POST /api/admin/audit-logs` with `403`.
+   - Verified anonymous callers receive `401`/`403` on `/api/admin/*`, `/api/storage/status`, `/api/admin/backup`, `/api/orders`, `/api/fee-payments`, `/api/enrollments`, `/api/exams`, `/api/ai/assistant`, `PUT /api/site/showcase`, `/admin`, `/manager-portal`, and paid `/api/books/pdf/:id`.
+   - Verified Safaricom Daraja RBAC and secret masking: `GET /api/mpesa/config` does not leak `consumerSecret` or `passkey`, anonymous `POST /api/mpesa/stkpush` and `POST /api/mpesa/qrcode` return `401`, cross-user `GET /api/mpesa/query/:id` returns `403`, and non-manager `GET /api/mpesa/admin/test-auth` & `POST /api/mpesa/c2b/register` return `403`.
+   - Verified ordinary members and non-finance/clerk sub-admins receive `403` on privilege escalation attempts, answer-key endpoints, sub-admin permission writes, suspension routes, backup/restore routes, order confirmation tampering, and unpurchased paid book downloads, while free active books and paid book previews return `200`.
+   - Verified disallowed upload extensions, spoofed PDF uploads lacking the `%PDF-` header, and path traversal document IDs are rejected with `400`.
+   - Verified `GET /api/admin/backup` returns `200` to `main_admin` without leaking `passwordHash` or `adminPasscodeHash`, and `GET /api/connections/status` returns `200` without exposing secret env var names.
+   - Verified `sanitizeSvgMarkup` strips `<script>`, `<foreignObject>`, `onload=`, `onclick=`, and `javascript:` URIs.
 
-2. **Compilation & Static Analysis**:
+2. **End-to-End Persistence & Recovery Suite (`npx tsx tests/e2e-verify.ts`)**:
+   - **Result**: Exited `0` — printed `ALL_E2E_VERIFICATION_CHECKS_PASSED`.
+   - Verified `/api/health`, `/api/connections/status` (`firebase.configured: true`), `/api/storage/status` (`supabase.storageBucket: "user-uploads"`), M-Pesa/eCitizen order approval & PDF download, enrollment & certificate verification, community & messaging persistence, rolling `.bak` file generation on `data/zion-security-state.json.bak` and `data/zion-academics-state.json.bak`, and full backup export -> record delete -> backup restore recovery.
+
+3. **Compilation, Type-Checking & Live Gateway Verification**:
    - `tsc --noEmit` (`lint_applet`): Passed cleanly (exit code `0`, 0 errors).
    - `npm run build` (`vite build` + `esbuild server.ts`): Succeeded cleanly, producing `dist/assets/` and `dist/server.cjs`.
-   - Production client bundle scan (`dist/assets/`): Verified zero server secrets (`MOCK_KEY`, `sk_live`, `sk_test`, `PAYSTACK_SECRET_KEY`, or private Gemini keys) and zero school assessment answer keys leaked in client assets (only the public Firebase Web SDK config in `firebase-applet-config.json` and placeholder documentation strings appear).
-   - `npm audit`: Reported 20 advisories across transitive packages (`vite`, `esbuild`, `body-parser`, `proxy-addr`, `postcss`, `browserslist`, `dompurify`, `nanoid`, `protobufjs`, `qs`, `source-map-js`, `websocket-driver`, `ws`, `baseline-browser-mapping`).
-   - Firestore rules deployment (`deploy_firebase`): `firestore.rules` deployed successfully.
+   - Production client bundle scan (`dist/assets/`): Printed `ZERO_SECRET_LEAKAGE` (zero Daraja or Supabase secrets bundled into client assets).
+   - Live Safaricom Daraja Production OAuth check against `https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials` with PayBill `1171473`: Succeeded (`true`).
 
 ---
 
 ## Manual Post-Deployment Actions
-1. **Rotate Previously Exposed Credentials**: Rotate the previously used Gemini API key in Google Cloud / AI Studio before configuring production secrets.
-2. **Set Server-Side Secrets** (Google AI Studio Secrets / host env & Supabase Edge Function Secrets — never prefixed with `VITE_`):
-   - `GEMINI_API_KEY`
-   - `PAYSTACK_SECRET_KEY`
-   - `SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY`
-   - `ADMIN_ACCESS_PASSCODE`
-3. **Set Public Client Environment Variables** (Vite / Cloudflare Pages build env):
+1. **Verify Public Callback Reachability**: Confirm Safaricom Daraja can reach `MPESA_CALLBACK_URL` (`https://<your-live-domain>/api/mpesa/callback`) and use **Register C2B v2 PayBill URLs** inside Manager Portal -> M-Pesa Finance if accepting direct PayBill `1171473` C2B payments.
+2. **Set Server-Side Secrets in Host Environment** (never prefixed with `VITE_`):
+   - `MPESA_ENV`, `MPESA_SHORTCODE`, `MPESA_SHORTCODE_TYPE`, `MPESA_CONSUMER_KEY`, `MPESA_CONSUMER_SECRET`, `MPESA_PASSKEY`, `MPESA_CALLBACK_URL`
+   - `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_JWKS_URL`
+   - `GEMINI_API_KEY`, `ADMIN_ACCESS_PASSCODE`
+3. **Set Public Client Environment Variables**:
    - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-   - `VITE_PAYSTACK_PUBLIC_KEY`
-4. **Supabase SQL Schema**: Execute `/supabase_schema.sql` in the Supabase SQL Editor if setting up a fresh Supabase project and deploy `supabase/functions/call-gemini` and `supabase/functions/paystack-webhook`.
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+4. **Supabase SQL Schema**: Execute `/supabase_schema.sql` in the Supabase SQL Editor if full SQL table syncing (`profiles`, `user_history`) is desired alongside the active `user-uploads` storage bucket.
+

@@ -1,5 +1,10 @@
 import React, { useState } from "react";
 import { Play, Sparkles, Compass, Youtube, Search, Check, FileText, BookOpen, Volume2, Film, RefreshCw, Layers } from "lucide-react";
+import leadershipImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import computerImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import bibleImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import sermonImg from "../assets/images/slide_sermon_media_1795421934360.jpg";
 
 interface RecreationProps {
   currentUser: any;
@@ -56,7 +61,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "Swim Elite Global",
       views: "1.2M views",
       embedId: "swimming_class",
-      thumbnail: "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?q=80&w=400&auto=format&fit=crop"
+      thumbnail: sermonImg
     },
     {
       id: "v2",
@@ -66,7 +71,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "Civil Pro Kenya",
       views: "240k views",
       embedId: "bungoma_stadium",
-      thumbnail: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?q=80&w=400&auto=format&fit=crop"
+      thumbnail: computerImg
     },
     {
       id: "v3",
@@ -76,7 +81,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "Tactics Lounge",
       views: "850k views",
       embedId: "football_tactics",
-      thumbnail: "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=400&auto=format&fit=crop"
+      thumbnail: leadershipImg
     },
     {
       id: "v4",
@@ -86,7 +91,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "Smart Literacy Hub",
       views: "3.1M views",
       embedId: "reading_daily",
-      thumbnail: "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?q=80&w=400&auto=format&fit=crop"
+      thumbnail: bookstoreImg
     },
     {
       id: "v5",
@@ -96,7 +101,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "MegaStructures Intl",
       views: "1.5M views",
       embedId: "mega_bridge",
-      thumbnail: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=400&auto=format&fit=crop"
+      thumbnail: computerImg
     },
     {
       id: "v6",
@@ -106,7 +111,7 @@ export default function Recreation({ currentUser, onUnlockBadge }: RecreationPro
       channel: "KPL Sports News",
       views: "180k views",
       embedId: "kpl_football",
-      thumbnail: "https://images.unsplash.com/photo-1518063319789-7217e6706b04?q=80&w=400&auto=format&fit=crop"
+      thumbnail: bibleImg
     }
   ];
 

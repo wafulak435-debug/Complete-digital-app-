@@ -5,6 +5,12 @@ import {
   Bookmark, MapPin, TrendingUp, History, User, Image, AlertCircle, X,
   FileText, ArrowRight, ArrowLeft, RefreshCw
 } from "lucide-react";
+import leadershipImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
+import computerImg from "../assets/images/slide_computer_academy_1795421934691.jpg";
+import bookstoreImg from "../assets/images/slide_bookstore_volumes_1795421934714.jpg";
+import bibleImg from "../assets/images/slide_bible_school_1795421934851.jpg";
+import sermonImg from "../assets/images/slide_sermon_media_1795421934360.jpg";
+import creamSpineImg from "../assets/images/hero_cream_spine_1795421934538.jpg";
 
 interface GoogleSimViewProps {
   iframeUrl: string;
@@ -441,16 +447,16 @@ export default function GoogleSimView({ iframeUrl, onNavigate }: GoogleSimViewPr
                   <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest font-mono mb-4">📷 Google Image Results</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {[
-                      "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&q=80&w=300",
-                      "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=300",
-                      "https://images.unsplash.com/photo-1464226184884-fa280b87c3e9?auto=format&fit=crop&q=80&w=300",
-                      "https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&q=80&w=300",
-                      "https://images.unsplash.com/photo-1504052434569-70ad5836ab65?auto=format&fit=crop&q=80&w=300",
-                      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=300"
+                      leadershipImg,
+                      computerImg,
+                      bookstoreImg,
+                      bibleImg,
+                      sermonImg,
+                      creamSpineImg
                     ].map((imgSrc, idx) => (
                       <div key={idx} className="group aspect-video rounded-xl border border-stone-200 overflow-hidden relative cursor-zoom-in">
                         <img src={imgSrc} className="w-full h-full object-cover group-hover:scale-[1.05] transition duration-305" alt="Visual" referrerPolicy="no-referrer" />
-                        <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[9px] p-1 truncate font-mono text-center">Unsplash Standard</div>
+                        <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[9px] p-1 truncate font-mono text-center">Zion Campus Archive</div>
                       </div>
                     ))}
                   </div>
@@ -577,10 +583,10 @@ export default function GoogleSimView({ iframeUrl, onNavigate }: GoogleSimViewPr
                   <img 
                     src={
                       queryParam.toLowerCase().includes("bungoma")
-                        ? "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&q=80&w=350"
+                        ? leadershipImg
                         : queryParam.toLowerCase().includes("faith")
-                        ? "https://images.unsplash.com/photo-1504052434569-70ad5836ab65?auto=format&fit=crop&q=80&w=350"
-                        : "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&q=80&w=350"
+                        ? bibleImg
+                        : computerImg
                     } 
                     className="w-full h-full object-cover" 
                     alt="Knowledge Graph Thumbnail"
@@ -698,8 +704,8 @@ export default function GoogleSimView({ iframeUrl, onNavigate }: GoogleSimViewPr
             {/* Presets Grid */}
             <div className="grid grid-cols-2 gap-2.5 mb-4">
               {[
-                { label: "Agribusiness Maize Crop", url: "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=200" },
-                { label: "Scholastic Literature Cover", url: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=200" }
+                { label: "Agribusiness Maize Crop", url: leadershipImg },
+                { label: "Scholastic Literature Cover", url: bookstoreImg }
               ].map((p, idx) => (
                 <div 
                   key={idx} 

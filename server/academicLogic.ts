@@ -137,6 +137,101 @@ export interface ReportCardData {
   comment: string;
 }
 
+export interface TimetableSlot {
+  id: string;
+  institutionId: string;
+  classId: string;
+  day: string;
+  timeSlot: string;
+  subjectName: string;
+  teacherName: string;
+  room: string;
+}
+
+export interface LessonPlanRecord {
+  id: string;
+  institutionId: string;
+  classId: string;
+  subjectName: string;
+  topic: string;
+  objectives: string;
+  teacherEmail: string;
+  date: string;
+}
+
+export interface DisciplineRecord {
+  id: string;
+  institutionId: string;
+  studentId: string;
+  studentName: string;
+  category: "Commendation" | "Late Arrival" | "Conduct Warning" | "Counseling";
+  notes: string;
+  actionTaken: string;
+  recordedBy: string;
+  date: string;
+}
+
+export interface AssignmentRecord {
+  id: string;
+  institutionId: string;
+  classId: string;
+  subjectName: string;
+  title: string;
+  instructions: string;
+  dueDate: string;
+  createdBy: string;
+  submissions: {
+    studentEmail: string;
+    studentName: string;
+    answerText: string;
+    submittedAt: string;
+    gradeNote?: string;
+  }[];
+}
+
+export interface ParentMessageRecord {
+  id: string;
+  institutionId: string;
+  senderName: string;
+  senderEmail: string;
+  recipientEmail: string;
+  subject: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface TransportRouteRecord {
+  id: string;
+  institutionId: string;
+  routeName: string;
+  vehicleReg: string;
+  driverName: string;
+  departureTime: string;
+  stops: string;
+  assignedCount: number;
+}
+
+export interface InventoryItemRecord {
+  id: string;
+  institutionId: string;
+  name: string;
+  category: string;
+  quantity: number;
+  condition: "Good" | "Needs Repair" | "Low Stock";
+  location: string;
+}
+
+export interface AcademicCalendarEvent {
+  id: string;
+  institutionId: string;
+  title: string;
+  category: "event" | "holiday" | "exam" | "meeting";
+  date: string;
+  endDate?: string;
+  description: string;
+  createdBy: string;
+}
+
 export interface AcademicStoreState {
   institutions: Record<string, AcademicInstitution>;
   years: Record<string, AcademicYear>;
@@ -147,6 +242,14 @@ export interface AcademicStoreState {
   assessments: Record<string, AcademicAssessment>;
   scores: Record<string, AssessmentScore>; // key: `${assessmentId}:${studentId}`
   attendance: Record<string, AttendanceRecord>; // key: `${classId}:${date}:${studentId}`
+  timetables: Record<string, TimetableSlot>;
+  lessonPlans: Record<string, LessonPlanRecord>;
+  disciplineRecords: Record<string, DisciplineRecord>;
+  assignments: Record<string, AssignmentRecord>;
+  parentMessages: Record<string, ParentMessageRecord>;
+  transportRoutes: Record<string, TransportRouteRecord>;
+  inventoryItems: Record<string, InventoryItemRecord>;
+  calendarEvents: Record<string, AcademicCalendarEvent>;
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -232,29 +335,190 @@ function createDefaultAcademicState(): AcademicStoreState {
     assessments: {},
     scores: {},
     attendance: {},
+    timetables: {
+      tt_seed_1: {
+        id: "tt_seed_1",
+        institutionId: instId,
+        classId: clsForm2E,
+        day: "Monday",
+        timeSlot: "08:00 - 09:00",
+        subjectName: "Mathematics",
+        teacherName: "Mr. Kelvin Wafula",
+        room: "Room 2A",
+      },
+      tt_seed_2: {
+        id: "tt_seed_2",
+        institutionId: instId,
+        classId: clsForm2E,
+        day: "Monday",
+        timeSlot: "09:15 - 10:15",
+        subjectName: "Christian Religious Education",
+        teacherName: "Ms. Grace Achieng",
+        room: "Chapel Hall",
+      },
+      tt_seed_3: {
+        id: "tt_seed_3",
+        institutionId: instId,
+        classId: clsGrade6,
+        day: "Tuesday",
+        timeSlot: "10:30 - 11:30",
+        subjectName: "Computer Studies",
+        teacherName: "Mr. David Ochieng",
+        room: "ICT Lab 1",
+      },
+    },
+    lessonPlans: {
+      lp_seed_1: {
+        id: "lp_seed_1",
+        institutionId: instId,
+        classId: clsForm2E,
+        subjectName: "Mathematics",
+        topic: "Linear Equations & Practical Word Problems",
+        objectives: "Solve two-step linear equations and model real Kenyan financial word problems.",
+        teacherEmail: "wafulak435@gmail.com",
+        date: "2026-06-08",
+      },
+    },
+    disciplineRecords: {},
+    assignments: {
+      asg_seed_1: {
+        id: "asg_seed_1",
+        institutionId: instId,
+        classId: clsForm2E,
+        subjectName: "Christian Religious Education",
+        title: "Servant Leadership Essay (500 words)",
+        instructions: "Explain three principles of servant leadership modeled in Nehemiah and modern civic leadership.",
+        dueDate: "2026-06-25",
+        createdBy: "wafulak435@gmail.com",
+        submissions: [],
+      },
+    },
+    parentMessages: {},
+    transportRoutes: {
+      tr_seed_1: {
+        id: "tr_seed_1",
+        institutionId: instId,
+        routeName: "Bungoma Town – Kanduyi Route",
+        vehicleReg: "KDK 412Z",
+        driverName: "Samuel Wekesa",
+        departureTime: "06:30 AM",
+        stops: "Kanduyi, Bungoma CBD, Kibabii",
+        assignedCount: 38,
+      },
+      tr_seed_2: {
+        id: "tr_seed_2",
+        institutionId: instId,
+        routeName: "Webuye – Kimilili Express",
+        vehicleReg: "KDM 809M",
+        driverName: "Peter Simiyu",
+        departureTime: "06:15 AM",
+        stops: "Webuye, Bokoli, Kimilili",
+        assignedCount: 42,
+      },
+    },
+    inventoryItems: {
+      inv_seed_1: {
+        id: "inv_seed_1",
+        institutionId: instId,
+        name: "Student Chromebooks & Lab PCs",
+        category: "ICT Equipment",
+        quantity: 45,
+        condition: "Good",
+        location: "Computer Lab A",
+      },
+      inv_seed_2: {
+        id: "inv_seed_2",
+        institutionId: instId,
+        name: "KNEC & CBC Mathematics Textbooks",
+        category: "Library Stock",
+        quantity: 180,
+        condition: "Good",
+        location: "Main Library",
+      },
+    },
+    calendarEvents: {
+      cal_1: {
+        id: "cal_1",
+        institutionId: instId,
+        title: "Term 2 Opening & Assembly",
+        category: "event",
+        date: "2026-05-04",
+        description: "All students return for Term 2 morning devotion and registration.",
+        createdBy: "Principal Administrator",
+      },
+      cal_2: {
+        id: "cal_2",
+        institutionId: instId,
+        title: "Mid-Term Examinations",
+        category: "exam",
+        date: "2026-06-15",
+        endDate: "2026-06-19",
+        description: "Official 8-4-4 and CBC mid-term assessments across all classes.",
+        createdBy: "Examinations Dean",
+      },
+      cal_3: {
+        id: "cal_3",
+        institutionId: instId,
+        title: "Madaraka Day Holiday",
+        category: "holiday",
+        date: "2026-06-01",
+        description: "National public holiday. Campus closed for regular classes.",
+        createdBy: "Administration",
+      },
+      cal_4: {
+        id: "cal_4",
+        institutionId: instId,
+        title: "Parent-Teacher Academic Clinic",
+        category: "meeting",
+        date: "2026-06-26",
+        description: "Review progress reports and report cards with parents.",
+        createdBy: "Staff Faculty",
+      },
+    },
+  };
+}
+
+const ACADEMICS_BACKUP_FILE = `${ACADEMICS_STATE_FILE}.bak`;
+
+function hydrateAcademicState(parsed: Partial<AcademicStoreState>): AcademicStoreState {
+  const fallback = createDefaultAcademicState();
+  return {
+    institutions: parsed.institutions && Object.keys(parsed.institutions).length > 0 ? parsed.institutions : fallback.institutions,
+    years: parsed.years || fallback.years,
+    terms: parsed.terms || fallback.terms,
+    classes: parsed.classes || fallback.classes,
+    subjects: parsed.subjects || fallback.subjects,
+    students: parsed.students || {},
+    assessments: parsed.assessments || {},
+    scores: parsed.scores || {},
+    attendance: parsed.attendance || {},
+    timetables: parsed.timetables || fallback.timetables,
+    lessonPlans: parsed.lessonPlans || fallback.lessonPlans,
+    disciplineRecords: parsed.disciplineRecords || {},
+    assignments: parsed.assignments || fallback.assignments,
+    parentMessages: parsed.parentMessages || {},
+    transportRoutes: parsed.transportRoutes || fallback.transportRoutes,
+    inventoryItems: parsed.inventoryItems || fallback.inventoryItems,
+    calendarEvents: parsed.calendarEvents || fallback.calendarEvents,
   };
 }
 
 function loadAcademicState(): AcademicStoreState {
-  try {
-    if (fs.existsSync(ACADEMICS_STATE_FILE)) {
-      const raw = fs.readFileSync(ACADEMICS_STATE_FILE, "utf8");
-      const parsed = JSON.parse(raw) as Partial<AcademicStoreState>;
-      const fallback = createDefaultAcademicState();
-      return {
-        institutions: parsed.institutions && Object.keys(parsed.institutions).length > 0 ? parsed.institutions : fallback.institutions,
-        years: parsed.years || fallback.years,
-        terms: parsed.terms || fallback.terms,
-        classes: parsed.classes || fallback.classes,
-        subjects: parsed.subjects || fallback.subjects,
-        students: parsed.students || {},
-        assessments: parsed.assessments || {},
-        scores: parsed.scores || {},
-        attendance: parsed.attendance || {},
-      };
+  const candidates = [ACADEMICS_STATE_FILE, ACADEMICS_BACKUP_FILE];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        const raw = fs.readFileSync(candidate, "utf8");
+        if (!raw.trim()) continue;
+        const parsed = JSON.parse(raw) as Partial<AcademicStoreState>;
+        if (candidate === ACADEMICS_BACKUP_FILE) {
+          console.warn("Recovered academic state automatically from rolling .bak backup.");
+        }
+        return hydrateAcademicState(parsed);
+      }
+    } catch (err) {
+      console.warn(`Failed parsing academic state file (${path.basename(candidate)}):`, err);
     }
-  } catch {
-    // Fallback cleanly to default seeded state
   }
   return createDefaultAcademicState();
 }
@@ -263,12 +527,53 @@ export const academicState: AcademicStoreState = loadAcademicState();
 
 export function persistAcademicState(): void {
   try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
     const tmp = `${ACADEMICS_STATE_FILE}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(academicState, null, 2), "utf8");
+    if (fs.existsSync(ACADEMICS_STATE_FILE)) {
+      try {
+        const prevRaw = fs.readFileSync(ACADEMICS_STATE_FILE, "utf8");
+        if (prevRaw.trim().startsWith("{")) {
+          fs.writeFileSync(ACADEMICS_BACKUP_FILE, prevRaw, "utf8");
+        }
+      } catch {
+        // non-fatal backup copy failure
+      }
+    }
     fs.renameSync(tmp, ACADEMICS_STATE_FILE);
   } catch (err) {
     console.error("Failed to persist academic state:", err instanceof Error ? err.message : "unknown");
   }
+}
+
+export function getAcademicStorageInfo() {
+  const primaryBytes = fs.existsSync(ACADEMICS_STATE_FILE) ? fs.statSync(ACADEMICS_STATE_FILE).size : 0;
+  const backupExists = fs.existsSync(ACADEMICS_BACKUP_FILE);
+  const backupBytes = backupExists ? fs.statSync(ACADEMICS_BACKUP_FILE).size : 0;
+  return {
+    stateFile: path.basename(ACADEMICS_STATE_FILE),
+    primaryBytes,
+    backupExists,
+    backupBytes,
+    counts: {
+      students: Object.keys(academicState.students || {}).length,
+      classes: Object.keys(academicState.classes || {}).length,
+      assessments: Object.keys(academicState.assessments || {}).length,
+      scores: Object.keys(academicState.scores || {}).length,
+      attendance: Object.keys(academicState.attendance || {}).length,
+    },
+  };
+}
+
+export function restoreAcademicSnapshot(snapshot: Partial<AcademicStoreState>): void {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new Error("Invalid academic snapshot payload.");
+  }
+  const hydrated = hydrateAcademicState(snapshot);
+  Object.assign(academicState, hydrated);
+  persistAcademicState();
 }
 
 export function generateAcademicId(prefix: string): string {
