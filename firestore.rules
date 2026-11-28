@@ -17,7 +17,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -56,29 +56,40 @@ service cloud.firestore {
       );
     }
 
-    function isMainAdmin() {
+    function isSuperAdmin() {
       return notSuspended() && (
         isEmailMainAdmin() ||
-        (userDocExists() && (userDoc().role == "main_admin" || userDoc().role == "admin"))
+        (userDocExists() && (userDoc().role == "super_admin" || userDoc().role == "main_admin" || userDoc().role == "admin"))
       );
+    }
+
+    function isMainAdmin() {
+      return isSuperAdmin();
     }
 
     function isAdmin() {
       return notSuspended() && (
-        isMainAdmin() ||
+        isSuperAdmin() ||
         (userDocExists() && userDoc().role == "sub_admin")
       );
     }
 
     function isManager() {
       return notSuspended() && (
-        isMainAdmin() ||
+        isSuperAdmin() ||
         (userDocExists() && userDoc().role == "manager")
       );
     }
 
+    function isManagerForSection(sectionKey) {
+      return notSuspended() && (
+        isSuperAdmin() ||
+        (userDocExists() && (userDoc().role == "manager" || userDoc().role == "sub_admin") && (sectionKey in userDoc().get('assigned_sections', [])))
+      );
+    }
+
     function hasSubAdminPerm(permField) {
-      return isMainAdmin() || (
+      return isSuperAdmin() || (
         userDocExists() &&
         userDoc().role == "sub_admin" &&
         exists(/databases/$(database)/documents/subAdminPermissions/$(request.auth.token.email)) &&
@@ -99,17 +110,86 @@ service cloud.firestore {
       );
     }
 
+    // --- ENTITY VALIDATION BLUEPRINTS ---
+    function isValidUserProfile(data) {
+      return data.email is string && data.email.size() > 0 && data.email.size() <= 256
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 128
+        && data.role is string && data.role in ["super_admin", "manager", "user", "main_admin", "sub_admin", "admin", "tutor", "member", "guest"]
+        && (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 2048));
+    }
+
+    function isValidBook(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 300
+        && data.status is string && data.status in ["active", "draft"];
+    }
+
+    function isValidSavedDoc(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 256;
+    }
+
+    function isValidUserHistory(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.title is string && data.title.size() <= 200
+        && data.category is string && data.category.size() <= 80;
+    }
+
+    function isValidUserFile(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.name is string && data.name.size() <= 256
+        && data.path is string && data.path.size() <= 512;
+    }
+
+    function isValidReadingProgress(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.bookId is string && data.bookId.size() > 0 && data.bookId.size() <= 128
+        && data.currentPage is int && data.currentPage >= 0;
+    }
+
+    function isValidAnnotation(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.text is string && data.text.size() <= 4000;
+    }
+
+    function isValidAnnouncement(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.text is string && data.text.size() > 0 && data.text.size() <= 4000
+        && data.category is string && data.category in ["general", "academic", "financial", "technical", "important"]
+        && data.author is string && data.author.size() > 0 && data.author.size() <= 128;
+    }
+
+    function isValidCampusPhoto(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.libraryCategory is string && data.libraryCategory.size() <= 128
+        && data.url is string && data.url.size() > 0 && data.url.size() <= 2048;
+    }
+
+    function isValidEnrollment(data) {
+      return data.userId is string && data.userId.size() > 0 && data.userId.size() <= 256
+        && data.studentName is string && data.studentName.size() > 0 && data.studentName.size() <= 160
+        && data.status is string && data.status in ["pending", "approved", "rejected"]
+        && data.feeStatus is string && data.feeStatus in ["unpaid", "paid"]
+        && data.certificateIssued is bool;
+    }
+
+    function isValidSermonVideo(data) {
+      return data.title is string && data.title.size() > 0 && data.title.size() <= 256
+        && data.speaker is string && data.speaker.size() > 0 && data.speaker.size() <= 160
+        && data.videoUrl is string && data.videoUrl.size() > 0 && data.videoUrl.size() <= 2048
+        && data.category is string && data.category in ["Sermon", "Motivation", "Evangelism", "Worship Songs"];
+    }
+
     // --- 3. USER PROFILES ---
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin() || isManager();
-      allow create: if isSignedIn() && isOwner(userId)
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin() || isManager());
+      allow list: if isAdmin() || isManager();
+      allow create: if isValidId(userId) && isSignedIn() && isOwner(userId)
+        && isValidUserProfile(incoming())
         && incoming().role == "member"
         && incoming().get('isSuspended', false) == false
         && incoming().get('credits', 0) <= 20
-        && incoming().get('subscription_status', 'free') == 'free'
-        && incoming().email is string && incoming().email.size() <= 256
-        && incoming().name is string && incoming().name.size() <= 128;
-      allow update: if isSignedIn() && (
+        && incoming().get('subscription_status', 'free') == 'free';
+      allow update: if isValidId(userId) && isSignedIn() && isValidUserProfile(incoming()) && (
         isMainAdmin() ||
         (
           isOwner(userId) &&
@@ -120,7 +200,7 @@ service cloud.firestore {
           incoming().get('authorizedCourses', []) == existing().get('authorizedCourses', [])
         )
       );
-      allow delete: if isMainAdmin();
+      allow delete: if isValidId(userId) && isMainAdmin();
     }
 
     // --- 4. SUB-ADMIN PERMISSIONS (Main Admin ONLY writes) ---
@@ -129,22 +209,31 @@ service cloud.firestore {
       allow create, update, delete: if isMainAdmin();
     }
 
-    // --- 5. GLOBAL APP SETTINGS ---
+    // --- 5. GLOBAL APP SETTINGS (Main Admin ONLY writes) ---
     match /appSettings/{settingsId} {
-      allow read: if true;
-      allow write: if isMainAdmin() || hasSubAdminPerm("allowVault");
+      allow get: if isValidId(settingsId);
+      allow list: if true;
+      allow write: if isValidId(settingsId) && isMainAdmin();
     }
 
     // --- 6. PRODUCTS / BOOKS ---
     match /books/{bookId} {
-      allow read: if existing().status == "active"
-        || isOwner(existing().get('authorId', ''))
-        || hasSubAdminPerm("allowManageBooks");
-      allow create: if isSignedIn() && (
+      allow read: if true;
+      allow create: if isValidId(bookId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection("bookstore") ||
         hasSubAdminPerm("allowManageBooks") ||
         (isOwner(incoming().get('authorId', '')) && incoming().status == "draft")
       );
-      allow update, delete: if isSignedIn() && (
+      allow update: if isValidId(bookId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection("bookstore") ||
+        hasSubAdminPerm("allowManageBooks") ||
+        isOwner(existing().get('authorId', ''))
+      );
+      allow delete: if isValidId(bookId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection("bookstore") ||
         hasSubAdminPerm("allowManageBooks") ||
         isOwner(existing().get('authorId', ''))
       );
@@ -153,41 +242,39 @@ service cloud.firestore {
     // --- 7. REVIEWS, COMMENTS & SOCIAL POSTS ---
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId)
+      allow create: if isValidId(reviewId) && isSignedIn() && isOwner(incoming().userId)
         && incoming().rating is int && incoming().rating >= 1 && incoming().rating <= 5
         && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000;
-      allow update, delete: if isSignedIn() && (
-        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
-        hasSubAdminPerm("allowModeration")
-      );
+      allow update: if isValidId(reviewId) && isSignedIn()
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000
+        && ((isOwner(existing().userId) && incoming().userId == existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow delete: if isValidId(reviewId) && isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
     match /comments/{commentId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId)
+      allow create: if isValidId(commentId) && isSignedIn() && isOwner(incoming().userId)
         && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000;
-      allow update: if isSignedIn() && (
-        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
-        hasSubAdminPerm("allowModeration")
-      );
-      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow update: if isValidId(commentId) && isSignedIn()
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 2000
+        && ((isOwner(existing().userId) && incoming().userId == existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow delete: if isValidId(commentId) && isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
     match /socialPosts/{postId} {
       allow read: if true;
-      allow create: if isSignedIn() && isOwner(incoming().userId)
+      allow create: if isValidId(postId) && isSignedIn() && isOwner(incoming().userId)
         && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000;
-      allow update: if isSignedIn() && (
-        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
-        hasSubAdminPerm("allowModeration")
-      );
-      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow update: if isValidId(postId) && isSignedIn()
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000
+        && ((isOwner(existing().userId) && incoming().userId == existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow delete: if isValidId(postId) && isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
     // --- 8. COMMUNITY MESSAGES & GROUP MEMBERSHIPS ---
     match /groupMemberships/{membershipId} {
       allow read: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
-      allow write: if hasSubAdminPerm("allowModeration");
+      allow write: if isValidId(membershipId) && hasSubAdminPerm("allowModeration");
     }
 
     match /communityMessages/{messageId} {
@@ -199,7 +286,7 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/groupMemberships/$(existing().channel + "_" + request.auth.uid))
         )
       );
-      allow create: if isSignedIn() && notSuspended()
+      allow create: if isValidId(messageId) && isSignedIn() && notSuspended()
         && isOwner(incoming().userId)
         && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000
         && (
@@ -207,38 +294,60 @@ service cloud.firestore {
           hasSubAdminPerm("allowModeration") ||
           exists(/databases/$(database)/documents/groupMemberships/$(incoming().channel + "_" + request.auth.uid))
         );
-      allow update: if isSignedIn() && (
-        (isOwner(existing().userId) && incoming().userId == existing().userId) ||
-        hasSubAdminPerm("allowModeration")
-      );
-      allow delete: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow update: if isValidId(messageId) && isSignedIn()
+        && incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 4000
+        && ((isOwner(existing().userId) && incoming().userId == existing().userId) || hasSubAdminPerm("allowModeration"));
+      allow delete: if isValidId(messageId) && isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowModeration"));
     }
 
-    // --- 9. SAVED DOCUMENTS, UPLOAD REQUESTS & ANNOTATIONS ---
+    // --- 9. SAVED DOCUMENTS, UPLOAD REQUESTS, ANNOTATIONS, HISTORY, FILES & PROGRESS ---
     match /savedDocuments/{docId} {
       allow read: if isSignedIn() && (isOwner(existing().userId) || hasSubAdminPerm("allowVault"));
-      allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && isOwner(existing().userId);
+      allow create: if isValidId(docId) && isSignedIn() && isOwner(incoming().userId) && isValidSavedDoc(incoming());
+      allow update: if isValidId(docId) && isSignedIn() && isValidSavedDoc(incoming()) && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isValidId(docId) && isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /userHistory/{historyId} {
+      allow read: if isSignedIn() && isOwner(existing().userId);
+      allow create: if isValidId(historyId) && isSignedIn() && isOwner(incoming().userId) && isValidUserHistory(incoming());
+      allow update: if isValidId(historyId) && isSignedIn() && isValidUserHistory(incoming()) && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isValidId(historyId) && isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /userFiles/{fileId} {
+      allow read: if isSignedIn() && isOwner(existing().userId);
+      allow create: if isValidId(fileId) && isSignedIn() && isOwner(incoming().userId) && isValidUserFile(incoming());
+      allow update: if isValidId(fileId) && isSignedIn() && isValidUserFile(incoming()) && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isValidId(fileId) && isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /reading_progress/{progressId} {
+      allow read: if isSignedIn() && isOwner(existing().userId);
+      allow create: if isValidId(progressId) && isSignedIn() && isOwner(incoming().userId) && isValidReadingProgress(incoming());
+      allow update: if isValidId(progressId) && isSignedIn() && isValidReadingProgress(incoming())
+        && isOwner(existing().userId)
+        && incoming().userId == existing().userId;
+      allow delete: if isValidId(progressId) && isSignedIn() && isOwner(existing().userId);
     }
 
     match /uploadRequests/{requestId} {
       allow read: if existing().status == "approved" && existing().get('allowedToPublic', false) == true
         || isOwner(existing().userId)
         || hasSubAdminPerm("allowApproval");
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update: if isSignedIn() && (
+      allow create: if isValidId(requestId) && isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update: if isValidId(requestId) && isSignedIn() && (
         hasSubAdminPerm("allowApproval") ||
         (isOwner(existing().userId) && incoming().status == "pending_delete" && incoming().userId == existing().userId)
       );
-      allow delete: if hasSubAdminPerm("allowApproval");
+      allow delete: if isValidId(requestId) && hasSubAdminPerm("allowApproval");
     }
 
     match /annotations/{annotationId} {
       allow read: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
-      allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow create: if isValidId(annotationId) && isSignedIn() && isOwner(incoming().userId) && isValidAnnotation(incoming());
+      allow update: if isValidId(annotationId) && isSignedIn() && isValidAnnotation(incoming()) && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isValidId(annotationId) && isSignedIn() && (isOwner(existing().userId) || isAdmin());
     }
 
     // --- 10. BOOK ORDERS, FEE PAYMENTS & WIFI PURCHASES ---
@@ -248,8 +357,8 @@ service cloud.firestore {
         hasSubAdminPerm("allowConfirmPayments") ||
         isManager()
       );
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
+      allow create: if isValidId(orderId) && isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update, delete: if isValidId(orderId) && (hasSubAdminPerm("allowConfirmPayments") || isManager());
     }
 
     match /feePayments/{paymentId} {
@@ -258,8 +367,8 @@ service cloud.firestore {
         hasSubAdminPerm("allowConfirmPayments") ||
         isManager()
       );
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
+      allow create: if isValidId(paymentId) && isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update, delete: if isValidId(paymentId) && (hasSubAdminPerm("allowConfirmPayments") || isManager());
     }
 
     match /wifiPurchases/{purchaseId} {
@@ -268,8 +377,8 @@ service cloud.firestore {
         hasSubAdminPerm("allowConfirmPayments") ||
         isManager()
       );
-      allow create: if isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
-      allow update, delete: if hasSubAdminPerm("allowConfirmPayments") || isManager();
+      allow create: if isValidId(purchaseId) && isSignedIn() && isOwner(incoming().userId) && incoming().status == "pending";
+      allow update, delete: if isValidId(purchaseId) && (hasSubAdminPerm("allowConfirmPayments") || isManager());
     }
 
     // --- 11. ENROLLMENTS & CERTIFICATES ---
@@ -279,11 +388,13 @@ service cloud.firestore {
         hasSubAdminPerm("allowManageEnrollments") ||
         isManager()
       );
-      allow create: if isSignedIn() && isOwner(incoming().userId)
+      allow create: if isValidId(enrollmentId) && isSignedIn() && isOwner(incoming().userId)
+        && isValidEnrollment(incoming())
         && incoming().status == "pending"
         && incoming().feeStatus == "unpaid"
         && incoming().certificateIssued == false;
-      allow update, delete: if hasSubAdminPerm("allowManageEnrollments") || isManager();
+      allow update: if isValidId(enrollmentId) && isValidEnrollment(incoming()) && (hasSubAdminPerm("allowManageEnrollments") || isManager());
+      allow delete: if isValidId(enrollmentId) && (hasSubAdminPerm("allowManageEnrollments") || isManager());
     }
 
     match /certificate_downloads/{certId} {
@@ -292,20 +403,23 @@ service cloud.firestore {
         hasSubAdminPerm("allowIssueCertificates") ||
         isManager()
       );
-      allow create: if hasSubAdminPerm("allowIssueCertificates") || isManager();
-      allow update, delete: if isMainAdmin();
+      allow create: if isValidId(certId) && isSignedIn() && (
+        hasSubAdminPerm("allowIssueCertificates") ||
+        isManager() ||
+        isOwner(incoming().get('userId', ''))
+      );
+      allow update, delete: if isValidId(certId) && isMainAdmin();
     }
 
     // --- 12. EXAMS, CONFIDENTIAL ANSWER KEYS & ATTEMPTS ---
     match /exams/{examId} {
       allow read: if isSignedIn();
-      allow write: if isExaminer(incoming().get('courseTrack', 'leadership'));
+      allow write: if isValidId(examId) && isExaminer(incoming().get('courseTrack', 'leadership'));
     }
 
-    // Strictly isolated: students can NEVER read or list answer keys
     match /examAnswerKeys/{examId} {
-      allow read: if isExaminer(existing().get('courseTrack', 'leadership'));
-      allow write: if isExaminer(incoming().get('courseTrack', 'leadership'));
+      allow read: if isValidId(examId) && isExaminer(existing().get('courseTrack', 'leadership'));
+      allow write: if isValidId(examId) && isExaminer(incoming().get('courseTrack', 'leadership'));
     }
 
     match /examAttempts/{attemptId} {
@@ -313,11 +427,11 @@ service cloud.firestore {
         isOwner(existing().userId) ||
         isExaminer(existing().get('courseTrack', 'leadership'))
       );
-      allow create: if isSignedIn() && isOwner(incoming().userId)
+      allow create: if isValidId(attemptId) && isSignedIn() && isOwner(incoming().userId)
         && incoming().status == "in_progress"
         && !('score' in incoming().keys())
         && !('passed' in incoming().keys());
-      allow update: if isSignedIn() && (
+      allow update: if isValidId(attemptId) && isSignedIn() && (
         isExaminer(existing().get('courseTrack', 'leadership')) ||
         (
           isOwner(existing().userId) &&
@@ -325,31 +439,125 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['answers', 'updatedAt'])
         )
       );
-      allow delete: if isMainAdmin();
+      allow delete: if isValidId(attemptId) && isMainAdmin();
     }
 
-    // --- 13. NOTIFICATIONS, PRIVATE SEARCH HISTORIES & SERMON VIDEOS ---
+    // --- 13. NOTIFICATIONS, ANNOUNCEMENTS, CAMPUS PHOTOS, SEARCH HISTORIES & SERMON VIDEOS ---
     match /notifications/{notificationId} {
       allow read: if isSignedIn();
-      allow write: if hasSubAdminPerm("allowBroadcast");
+      allow write: if isValidId(notificationId) && hasSubAdminPerm("allowBroadcast");
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow create: if isValidId(announcementId) && isValidAnnouncement(incoming()) && (hasSubAdminPerm("allowBroadcast") || isAdmin());
+      allow update: if isValidId(announcementId) && isValidAnnouncement(incoming()) && (hasSubAdminPerm("allowBroadcast") || isAdmin());
+      allow delete: if isValidId(announcementId) && (hasSubAdminPerm("allowBroadcast") || isAdmin());
+    }
+
+    match /campusPhotos/{photoId} {
+      allow read: if true;
+      allow create: if isValidId(photoId) && isValidCampusPhoto(incoming()) && (hasSubAdminPerm("allowManageBooks") || isManager() || isAdmin());
+      allow update: if isValidId(photoId) && isValidCampusPhoto(incoming()) && (hasSubAdminPerm("allowManageBooks") || isManager() || isAdmin());
+      allow delete: if isValidId(photoId) && (hasSubAdminPerm("allowManageBooks") || isManager() || isAdmin());
     }
 
     match /searchHistories/{historyId} {
       allow read: if isSignedIn() && (isOwner(existing().userId) || isMainAdmin());
-      allow create: if isSignedIn() && isOwner(incoming().userId);
-      allow update: if isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && (isOwner(existing().userId) || isMainAdmin());
+      allow create: if isValidId(historyId) && isSignedIn() && isOwner(incoming().userId);
+      allow update: if isValidId(historyId) && isSignedIn() && isOwner(existing().userId) && incoming().userId == existing().userId;
+      allow delete: if isValidId(historyId) && isSignedIn() && (isOwner(existing().userId) || isMainAdmin());
     }
 
     match /sermonVideos/{videoId} {
       allow read: if true;
-      allow write: if hasSubAdminPerm("allowManageBooks") || isMainAdmin();
+      allow create: if isValidId(videoId) && isValidSermonVideo(incoming()) && (hasSubAdminPerm("allowManageBooks") || isMainAdmin());
+      allow update: if isValidId(videoId) && isValidSermonVideo(incoming()) && (
+        hasSubAdminPerm("allowManageBooks") ||
+        isMainAdmin() ||
+        (
+          isSignedIn() &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['likesCount']) &&
+          incoming().likesCount == existing().get('likesCount', 0) + 1
+        ) ||
+        (
+          isSignedIn() &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount']) &&
+          incoming().viewsCount == existing().get('viewsCount', 0) + 1
+        )
+      );
+      allow delete: if isValidId(videoId) && (hasSubAdminPerm("allowManageBooks") || isMainAdmin());
     }
 
-    // --- 14. APPEND-ONLY AUDIT LOGS ---
+    // --- 14. COURSES (School 1 & School 2) ---
+    match /courses/{courseId} {
+      allow read: if true;
+      allow create: if isValidId(courseId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection(incoming().section)
+      );
+      allow update: if isValidId(courseId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection(existing().section)
+      );
+      allow delete: if isValidId(courseId) && isSignedIn() && (
+        isSuperAdmin() ||
+        isManagerForSection(existing().section)
+      );
+    }
+
+    // --- 15. EVANGELISM & MISSION ---
+    match /missionEvents/{eventId} {
+      allow read: if true;
+      allow create: if isValidId(eventId) && isSignedIn() && (
+        isSuperAdmin() || isManagerForSection("mission")
+      );
+      allow update: if isValidId(eventId) && isSignedIn() && (
+        isSuperAdmin() || isManagerForSection("mission") ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['rsvpsCount']))
+      );
+      allow delete: if isValidId(eventId) && isSignedIn() && (
+        isSuperAdmin() || isManagerForSection("mission")
+      );
+    }
+
+    match /missionVolunteers/{volunteerId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isSuperAdmin() || isManagerForSection("mission"));
+      allow create: if isValidId(volunteerId) && isSignedIn();
+      allow update, delete: if isSuperAdmin() || isManagerForSection("mission");
+    }
+
+    match /prayerRequests/{requestId} {
+      allow read: if true;
+      allow create: if isValidId(requestId);
+      allow update: if isSuperAdmin() || isManagerForSection("mission") || (isSignedIn() && isOwner(existing().get('userId', '')));
+      allow delete: if isSuperAdmin() || isManagerForSection("mission") || (isSignedIn() && isOwner(existing().get('userId', '')));
+    }
+
+    match /missionReports/{reportId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(reportId) && isSignedIn() && (
+        isSuperAdmin() || isManagerForSection("mission")
+      );
+    }
+
+    // --- 16. PAYMENT SETTINGS (Super Admin Only) ---
+    match /paymentSettings/{settingId} {
+      allow read, write: if isValidId(settingId) && isSuperAdmin();
+    }
+
+    // --- 17. USER ACTIVITIES & APPEND-ONLY AUDIT LOGS ---
+    match /user_activities/{logId} {
+      allow read: if isAdmin() || isManager();
+      allow create: if isValidId(logId) && isSignedIn()
+        && isOwner(incoming().get('userId', ''))
+        && incoming().actionType is string && incoming().actionType.size() <= 80;
+      allow update, delete: if false;
+    }
+
     match /auditLogs/{logId} {
-      allow read: if hasSubAdminPerm("allowVault");
-      allow create: if isAdmin() || isManager();
+      allow read: if isSuperAdmin() || hasSubAdminPerm("allowVault");
+      allow create: if isValidId(logId) && isSignedIn();
       allow update, delete: if false;
     }
   }

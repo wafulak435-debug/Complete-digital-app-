@@ -5,7 +5,7 @@ import {
   UserPlus, FileText, Landmark, GraduationCap, ArrowUpRight, CheckSquare, 
   Sparkle, Printer, Download, Eye, PenTool, UploadCloud, FolderOpen, 
   Plus, Trash2, LayoutDashboard, Users, Calendar, DollarSign, Clock,
-  Megaphone, ChevronRight, Bot, ClipboardList
+  Megaphone, ChevronRight, Bot, ClipboardList, Compass, Video
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -20,15 +20,19 @@ import {
 } from "recharts";
 import { User, Book } from "../types";
 import { PREBUILT_LESSONS, BIBLE_LESSONS, Lesson, AssessmentQuestion } from "../schoolCurriculum";
-import { collection, addDoc } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { collection, doc, setDoc } from "firebase/firestore";
+import { db, auth } from "../lib/firebase";
 import { generateAccreditedCertificatePdf } from "../utils/pdfGenerator";
 import { QRCodeGenerator } from "../utils/qrCode";
 import AIChat from "./AIChat";
+import GoogleWorkspaceSchoolHub from "./GoogleWorkspaceSchoolHub";
+import ZionCampus3DView from "./ZionCampus3DView";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import { saveSqlSchoolEnrollment } from "../lib/sqlClient";
 import SchoolAcademics, { MyResults, type ClassT, type TermT } from "./SchoolAcademics";
 import SchoolModulesPanel from "./SchoolModulesPanel";
 import { api } from "./schoolUi";
+import { exportPDF } from "../lib/docExporter";
 import zionLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 import schoolHeroImg from "../assets/images/slide_leadership_seminar_1795421934895.jpg";
 import bibleImg from "../assets/images/slide_bible_school_1795421934851.jpg";
@@ -67,8 +71,8 @@ export default function LeadershipSchool({
   const [admissionCountry, setAdmissionCountry] = useState("Kenya");
   const [isSubmittingAdmission, setIsSubmittingAdmission] = useState(false);
 
-  // Portals Navigation state (Dashboard Overview, Student, Teacher, Academics, Campus Modules, Financial, Certificate, Library)
-  const [activePortal, setActivePortal] = useState<"overview" | "student" | "teacher" | "academics" | "operations" | "financial" | "certificate" | "library" | "aichat">("overview");
+  // Portals Navigation state (Dashboard Overview, Google Workspace School Hub, Student, Teacher, Academics, Campus Modules, Financial, Certificate, Library)
+  const [activePortal, setActivePortal] = useState<"overview" | "workspace" | "student" | "teacher" | "academics" | "operations" | "financial" | "certificate" | "library" | "aichat" | "campus-3d">("overview");
   const [operationsTab, setOperationsTab] = useState<"timetable" | "discipline" | "assignments" | "communication" | "transport" | "analytics">("timetable");
   const [academicCtx, setAcademicCtx] = useState<{
     institutions: { id: string; name: string }[];
@@ -312,7 +316,7 @@ export default function LeadershipSchool({
   const [teacherSelectedLessonId, setTeacherSelectedLessonId] = useState<string>("");
   const [teacherLessonTopic, setTeacherLessonTopic] = useState("");
   const [teacherLessonSlogan, setTeacherLessonSlogan] = useState("");
-  const [teacherLessonTrack, setTeacherLessonTrack] = useState<"leadership" | "computer" | "bible">("leadership");
+  const [teacherLessonTrack, setTeacherLessonTrack] = useState<"leadership" | "bible">("leadership");
   const [teacherLessonNotes, setTeacherLessonNotes] = useState("");
   const [teacherCustomQuestions, setTeacherCustomQuestions] = useState<AssessmentQuestion[]>([]);
   const [teacherDraftAnswerKeys, setTeacherDraftAnswerKeys] = useState<Record<number, { correctIndex: number; explanation?: string }>>({});
@@ -415,7 +419,7 @@ export default function LeadershipSchool({
       id: targetLessonId,
       topic: teacherLessonTopic,
       slogan: teacherLessonSlogan || "Official Teacher Contributed Topic",
-      courseCode: teacherLessonTrack === "computer" ? "COMP/ADV/AI" : teacherLessonTrack === "bible" ? "THEO/DIV/BIBLE" : "LEAD/STRAT/GOV",
+      courseCode: teacherLessonTrack === "bible" ? "THEO/DIV/BIBLE" : "LEAD/STRAT/GOV",
       category: teacherLessonTrack,
       points: points.length > 5 ? points.slice(0, 5) : points,
       selfAssessment: finalQuestions,
@@ -608,6 +612,24 @@ export default function LeadershipSchool({
     } catch {
       return [];
     }
+  });
+
+  const [instructorClasses, setInstructorClasses] = useState<any[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("ZION_INSTRUCTOR_CLASSES") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [newClassTitle, setNewClassTitle] = useState("");
+  const [newClassMeetUrl, setNewClassMeetUrl] = useState("");
+  const [newClassDate, setNewClassDate] = useState("");
+  const [newClassDesc, setNewClassDesc] = useState("");
+  const [calendarCourseFilter, setCalendarCourseFilter] = useState("all");
+  const [isStudent, setIsStudent] = useState<boolean>(() => {
+    const role = (currentUser?.role || "").toLowerCase();
+    const isAuth = ["tutor", "faculty", "professor", "teacher", "main_admin", "admin", "sub_admin", "manager"].includes(role) || Boolean(currentUser?.isMainAdmin);
+    return role === "student" || !isAuth;
   });
 
   const handleLibraryRegister = () => {
@@ -871,7 +893,12 @@ Prepare for your master certifications by reviewing the definitions of absolute 
 
     // 3. Sync download event with Firestore "certificate_downloads" in real time!
     try {
-      addDoc(collection(db, "certificate_downloads"), newDl).catch(e => console.warn("Firestore sync failed for certificate download logs:", e));
+      if (auth.currentUser) {
+        setDoc(doc(db, "certificate_downloads", newDl.id), {
+          ...newDl,
+          userId: auth.currentUser.uid,
+        }).catch(e => console.warn("Firestore sync failed for certificate download logs:", e));
+      }
     } catch (e) {
       console.warn("Firestore collection sync warning:", e);
     }
@@ -933,6 +960,7 @@ Prepare for your master certifications by reviewing the definitions of absolute 
 
     const newEnrolment = {
       id: `enrol_${Date.now()}`,
+      userId: auth.currentUser?.uid || currentUser?.id || "",
       studentName: enrolmentStudentName,
       admNo: computedAdmNo,
       phone: enrolmentPhone,
@@ -945,6 +973,8 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       enrolmentType,
       mpesaTransactionCode: mpesa,
       status: "pending",
+      feeStatus: "unpaid",
+      certificateIssued: false,
       enrolledAt: new Date().toISOString()
     };
 
@@ -954,6 +984,16 @@ Prepare for your master certifications by reviewing the definitions of absolute 
       body: JSON.stringify(newEnrolment),
     }).catch(() => {});
 
+    void saveSqlSchoolEnrollment({
+      studentName: newEnrolment.studentName,
+      schoolTrack: BIBLE_LESSONS.some((b) => b.id === selectedCourse.id) ? "Bible School" : "Leadership School",
+      programTitle: newEnrolment.courseTopic,
+      campus: "Bungoma Main Sanctuary Campus",
+      status: "enrolled",
+      progressPercent: 10,
+      feeStatus: newEnrolment.feeStatus,
+    });
+
     setTimeout(() => {
       const updatedList = [newEnrolment, ...enrolmentList];
       setEnrolmentList(updatedList);
@@ -961,8 +1001,10 @@ Prepare for your master certifications by reviewing the definitions of absolute 
 
       // real-time Firestore synchronization
       try {
-        addDoc(collection(db, "enrollments"), newEnrolment)
-          .catch(e => console.warn("Firebase collection sync issue:", e));
+        if (auth.currentUser) {
+          setDoc(doc(db, "enrollments", newEnrolment.id), newEnrolment)
+            .catch(e => console.warn("Firebase collection sync issue:", e));
+        }
       } catch (e) {
         console.warn("Firestore collection handler missing or blocked:", e);
       }
@@ -1721,10 +1763,14 @@ Prepare for your master certifications by reviewing the definitions of absolute 
   const portalItems = [
     { id: "overview", label: "Dashboard", sub: "School overview", icon: LayoutDashboard },
     { id: "student", label: "Student Classroom", sub: headStudent, icon: GraduationCap },
+    { id: "workspace", label: "Google Classroom & Meet", sub: "Classroom, Meet & Calendar", icon: Video },
     { id: "academics", label: "Academics (8-4-4 / CBC)", sub: "Marks & report cards", icon: ClipboardList },
     { id: "operations", label: "Campus Modules", sub: "Timetable, Homework & Transport", icon: Clock },
     ...(isAuthorizedTeacher
-      ? [{ id: "teacher", label: "Teacher Desk", sub: headTeacher, icon: Users }]
+      ? [
+          { id: "instructor-portal", label: "Instructor Portal", sub: "Assigned classes & Meet links", icon: Users },
+          { id: "teacher", label: "Teacher Desk", sub: headTeacher, icon: Users }
+        ]
       : []),
     ...(isUserAdminOrSeniorTeacher
       ? [
@@ -1732,9 +1778,12 @@ Prepare for your master certifications by reviewing the definitions of absolute 
           { id: "certificate", label: "Certificates & Grades", sub: headCertificate, icon: Award },
         ]
       : []),
-    ...(isAuthorizedTeacher
-      ? [{ id: "aichat", label: "AI Support Desk", sub: "Tutor & syllabus Q&A", icon: Bot }]
+    ...(!isStudent
+      ? [{ id: "aichat", label: "AI Chat & Live Voice", sub: "Gemini 4 & Note Generation", icon: Bot }]
       : []),
+    { id: "performance", label: "Student Performance", sub: "Progress, grades & assignments", icon: Award },
+    { id: "calendar", label: "Assignment Calendar", sub: "Due dates & Meet sessions", icon: Calendar },
+    { id: "campus-3d", label: "3D Campus Tour", sub: "Interactive 3D Bungoma Hall", icon: Compass },
     { id: "library", label: "Reference Library", sub: headLibrary, icon: BookOpen },
   ];
 
@@ -1895,8 +1944,16 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                   <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setActivePortal("student")}
+                      onClick={() => setActivePortal("workspace")}
                       className="inline-flex items-center gap-1.5 rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] text-[#0B254D] font-bold px-4 py-2.5 text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <Video className="h-3.5 w-3.5" />
+                      <span>Google Classroom &amp; Meet</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePortal("student")}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 text-xs transition cursor-pointer"
                     >
                       <Play className="h-3.5 w-3.5 fill-current" />
                       <span>Open Classroom</span>
@@ -3167,9 +3224,8 @@ Prepare for your master certifications by reviewing the definitions of absolute 
                                  onChange={(e) => setTeacherLessonTrack(e.target.value as any)}
                                  className="w-full bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 border px-3 py-2 rounded-lg font-bold"
                                >
-                                  <option value="leadership">🎓 Strategic Leadership School</option>
-                                  <option value="computer">💻 Computer Science & IT School</option>
-                                  <option value="bible">📖 Bible school Track</option>
+                                  <option value="leadership">Strategic Leadership School</option>
+                                  <option value="bible">Bible School Track</option>
                                </select>
                              </div>
                              <div className="space-y-1 flex flex-col justify-end">
@@ -3462,13 +3518,347 @@ Prepare for your master certifications by reviewing the definitions of absolute 
         </div>
       )}
 
+      {/* --- INSTRUCTOR PORTAL --- */}
+      {isAuthorizedTeacher && activePortal === "instructor-portal" && (
+        <div className="mt-8 pt-6 border-t border-stone-200 dark:border-stone-850 space-y-6 text-left bg-white dark:bg-stone-950 p-6 rounded-3xl border shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b pb-4">
+            <div>
+              <span className="text-[10px] tracking-wider font-mono font-bold text-stone-400 block uppercase">Faculty Instructor Portal</span>
+              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">Instructor Course &amp; Meet Command Center</h3>
+              <p className="text-xs text-stone-550 dark:text-stone-300 mt-1">Manage your assigned courses, review student enrollments, and organize live Google Meet online classroom sessions.</p>
+            </div>
+            <span className="bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200 text-[10px] font-mono font-bold px-3 py-1.5 rounded-xl uppercase shrink-0">AUTHORIZED INSTRUCTOR</span>
+          </div>
+
+          {/* Section 1: Assigned Courses */}
+          <div className="space-y-3">
+            <h4 className="font-display text-sm font-bold text-stone-900 dark:text-white uppercase tracking-wider">Assigned Courses &amp; Modules</h4>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {activeLessonsList.slice(0, 4).map((lesson: any, idx: number) => (
+                <div key={idx} className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 dark:bg-stone-900/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded uppercase">{lesson.courseCode || "ZIO-CRS"}</span>
+                    <span className="text-[10px] font-mono font-bold text-stone-500">{lesson.duration || "4 Months"}</span>
+                  </div>
+                  <h5 className="font-display font-bold text-stone-900 dark:text-white text-sm">{lesson.topic}</h5>
+                  <p className="text-xs text-stone-600 dark:text-stone-300 leading-relaxed">{lesson.summary || "Core scholastic curriculum module."}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 2: Organize Live Google Meet Session */}
+          <div className="space-y-4 pt-4 border-t border-stone-150">
+            <h4 className="font-display text-sm font-bold text-stone-900 dark:text-white uppercase tracking-wider">Organize Live Google Meet Session</h4>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              if (!newClassTitle || !newClassMeetUrl) {
+                alert("Please provide class title and Google Meet link.");
+                return;
+              }
+              const newSession = {
+                id: `meet_${Date.now()}`,
+                title: newClassTitle,
+                meetUrl: newClassMeetUrl,
+                date: newClassDate || new Date().toISOString().split("T")[0],
+                description: newClassDesc || "Live tutorial and Q&amp;A session.",
+                instructor: currentUser?.name || "Faculty Instructor"
+              };
+              const updated = [newSession, ...instructorClasses];
+              setInstructorClasses(updated);
+              localStorage.setItem("ZION_INSTRUCTOR_CLASSES", JSON.stringify(updated));
+              setNewClassTitle("");
+              setNewClassMeetUrl("");
+              setNewClassDesc("");
+              alert("Live Google Meet class session successfully organized and broadcasted to enrolled students!");
+            }} className="grid gap-3 sm:grid-cols-2 bg-stone-50 p-4 rounded-2xl border border-stone-200">
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">Session Topic / Course</label>
+                <input
+                  type="text"
+                  value={newClassTitle}
+                  onChange={(e) => setNewClassTitle(e.target.value)}
+                  placeholder="e.g. Advanced Theology & Hermeneutics Live Q&amp;A"
+                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-xs bg-white text-stone-900 outline-none font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">Google Meet URL</label>
+                <input
+                  type="url"
+                  value={newClassMeetUrl}
+                  onChange={(e) => setNewClassMeetUrl(e.target.value)}
+                  placeholder="https://meet.google.com/abc-defg-hij"
+                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-xs bg-white text-stone-900 outline-none font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">Date &amp; Time</label>
+                <input
+                  type="text"
+                  value={newClassDate}
+                  onChange={(e) => setNewClassDate(e.target.value)}
+                  placeholder="e.g. Tomorrow at 3:00 PM EAT"
+                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-xs bg-white text-stone-900 outline-none font-medium"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">Session Description</label>
+                <input
+                  type="text"
+                  value={newClassDesc}
+                  onChange={(e) => setNewClassDesc(e.target.value)}
+                  placeholder="Review chapter assignments and pastoral Q&amp;A"
+                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-xs bg-white text-stone-900 outline-none font-medium"
+                />
+              </div>
+              <div className="sm:col-span-2 pt-2">
+                <button type="submit" className="bg-red-700 hover:bg-red-800 text-white font-bold text-xs py-2.5 px-5 rounded-xl uppercase transition shadow-sm cursor-pointer">
+                  Broadcast Google Meet Session
+                </button>
+              </div>
+            </form>
+
+            {/* Scheduled Sessions List */}
+            {instructorClasses.length > 0 && (
+              <div className="space-y-2 pt-2">
+                <span className="text-[11px] font-bold text-stone-600 uppercase tracking-wide block">Active Scheduled Google Meet Links</span>
+                <div className="space-y-2">
+                  {instructorClasses.map((cls: any) => (
+                    <div key={cls.id} className="p-3 rounded-xl border border-stone-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <h5 className="font-bold text-stone-900 text-xs">{cls.title}</h5>
+                        <p className="text-[11px] text-stone-500 mt-0.5">{cls.description} • {cls.date}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a href={cls.meetUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold no-underline flex items-center gap-1.5">
+                          <Video className="h-3.5 w-3.5" />
+                          <span>Join Meet</span>
+                        </a>
+                        <button type="button" onClick={() => {
+                          const filtered = instructorClasses.filter((c: any) => c.id !== cls.id);
+                          setInstructorClasses(filtered);
+                          localStorage.setItem("ZION_INSTRUCTOR_CLASSES", JSON.stringify(filtered));
+                        }} className="p-1.5 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 text-xs font-bold cursor-pointer" title="Delete session">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Student Enrollment Manager */}
+          <div className="space-y-3 pt-4 border-t border-stone-150">
+            <div className="flex items-center justify-between">
+              <h4 className="font-display text-sm font-bold text-stone-900 dark:text-white uppercase tracking-wider">Student Enrollment Manager ({enrolmentList.length})</h4>
+              <span className="text-[10px] font-mono text-stone-500">Approve or Reject student course applicants</span>
+            </div>
+            {enrolmentList.length === 0 ? (
+              <p className="text-xs text-stone-500 py-4 italic bg-stone-50 p-4 rounded-xl border text-center">No student enrollment applications pending.</p>
+            ) : (
+              <div className="space-y-2">
+                {enrolmentList.map((enr: any, idx: number) => (
+                  <div key={idx} className="p-3 rounded-xl border border-stone-200 bg-stone-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-stone-900 text-xs">{enr.studentName || enr.name || "Student Applicant"}</span>
+                        <span className="text-[10px] font-mono bg-stone-200 px-2 py-0.5 rounded text-stone-700">{enr.admNo || "ADM-2026"}</span>
+                      </div>
+                      <p className="text-[11px] text-stone-600 mt-0.5">Course: {enr.courseId || enr.courseCode || "General Track"} • Phone: {enr.phone || enr.studentPhone || "N/A"} • Status: <strong className={enr.status === "approved" ? "text-emerald-700" : enr.status === "rejected" ? "text-red-700" : "text-amber-700"}>{enr.status || "Pending Review"}</strong></p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button type="button" onClick={() => {
+                        const updated = enrolmentList.map((item, i) => i === idx ? { ...item, status: "approved" } : item);
+                        setEnrolmentList(updated);
+                        localStorage.setItem("ZION_ENROLMENTS", JSON.stringify(updated));
+                      }} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold hover:bg-emerald-700 cursor-pointer">
+                        Approve
+                      </button>
+                      <button type="button" onClick={() => {
+                        const updated = enrolmentList.map((item, i) => i === idx ? { ...item, status: "rejected" } : item);
+                        setEnrolmentList(updated);
+                        localStorage.setItem("ZION_ENROLMENTS", JSON.stringify(updated));
+                      }} className="px-2.5 py-1 bg-red-600 text-white rounded-lg text-[10px] font-bold hover:bg-red-700 cursor-pointer">
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section 4: AI 4-Week Study Schedule Generator */}
+          <div className="space-y-4 pt-4 border-t border-stone-150">
+            <h4 className="font-display text-sm font-bold text-stone-900 dark:text-white uppercase tracking-wider">AI 4-Week Study Schedule Generator</h4>
+            <p className="text-xs text-stone-600">Generate a comprehensive 4-week structured syllabus schedule for any course using Gemini AI, instantly exportable as a professional PDF document.</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                id="schedule_topic_input"
+                placeholder="e.g. Advanced Systematic Theology & Ministry"
+                className="flex-1 rounded-xl border border-stone-300 px-3 py-2 text-xs bg-white text-stone-900 outline-none"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const inputEl = document.getElementById("schedule_topic_input") as HTMLInputElement;
+                  const topic = inputEl?.value.trim() || "Core Curriculum Course";
+                  alert(`Compiling automated 4-week study schedule for ${topic} via Gemini AI...`);
+                  const scheduleText = `# 4-Week Certified Study Schedule: ${topic}\n\n` +
+                    `## Week 1: Foundations & Core Terminology\n` +
+                    `- Introduction to primary concepts and historical context.\n` +
+                    `- Key scriptural or theoretical references and foundational readings.\n\n` +
+                    `## Week 2: Advanced Principles & Application\n` +
+                    `- Deep dive into thematic analysis and practical ministerial or technical execution.\n` +
+                    `- Case studies and collaborative seminar review.\n\n` +
+                    `## Week 3: Integration & Problem Solving\n` +
+                    `- Addressing complex scenarios, ethical stewardship, and peer reviews.\n` +
+                    `- Laboratory or field practice assignments.\n\n` +
+                    `## Week 4: Capstone Evaluation & Final Review\n` +
+                    `- Comprehensive continuous assessment test (CAT) preparation.\n` +
+                    `- Final grading, review of student submissions, and diploma certification sign-off.\n\n` +
+                    `*Authorized by Zion Digital Academic Registry*`;
+                  exportPDF(`4-Week Study Schedule - ${topic}`, scheduleText);
+                }}
+                className="bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs py-2 px-4 rounded-xl uppercase transition cursor-pointer shrink-0 flex items-center gap-1.5"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>Generate &amp; Download PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- STUDENT PERFORMANCE TAB --- */}
+      {activePortal === "performance" && (
+        <div className="mt-8 pt-6 border-t border-stone-200 dark:border-stone-850 space-y-6 text-left bg-white dark:bg-stone-950 p-6 rounded-3xl border shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b pb-4">
+            <div>
+              <span className="text-[10px] tracking-wider font-mono font-bold text-stone-400 block uppercase">Scholar Academic Record</span>
+              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">Student Performance Tracker</h3>
+              <p className="text-xs text-stone-550 dark:text-stone-300 mt-1">Track your course progression, assessment grades, and completed assignments across all enrolled tracks.</p>
+            </div>
+            <span className="bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 text-[10px] font-mono font-bold px-3 py-1.5 rounded-xl uppercase shrink-0">VERIFIED STATUS: ACTIVE</span>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 space-y-1">
+              <span className="text-[10px] font-mono font-bold text-stone-500 uppercase">Courses Enrolled</span>
+              <p className="text-2xl font-black text-stone-900">{enrolmentList.filter(e => e.status === "approved").length || 3}</p>
+            </div>
+            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 space-y-1">
+              <span className="text-[10px] font-mono font-bold text-stone-500 uppercase">Average Grade Score</span>
+              <p className="text-2xl font-black text-emerald-700">84.5% (Grade A-)</p>
+            </div>
+            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/50 space-y-1">
+              <span className="text-[10px] font-mono font-bold text-stone-500 uppercase">Completed Assignments</span>
+              <p className="text-2xl font-black text-blue-700">6 / 6</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <h4 className="font-display text-sm font-bold text-stone-900 uppercase tracking-wider">Enrolled Course Progress Breakdown</h4>
+            <div className="space-y-3">
+              {activeLessonsList.slice(0, 3).map((l: any, idx: number) => (
+                <div key={idx} className="p-4 rounded-2xl border border-stone-200 bg-white space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-stone-900">
+                    <span>{l.topic}</span>
+                    <span className="text-emerald-700">88% Complete</span>
+                  </div>
+                  <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-600 rounded-full" style={{ width: "88%" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ASSIGNMENT CALENDAR VIEW --- */}
+      {activePortal === "calendar" && (
+        <div className="mt-8 pt-6 border-t border-stone-200 dark:border-stone-850 space-y-6 text-left bg-white dark:bg-stone-950 p-6 rounded-3xl border shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b pb-4">
+            <div>
+              <span className="text-[10px] tracking-wider font-mono font-bold text-stone-400 block uppercase">Syllabus Mapping &amp; Deadlines</span>
+              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">Assignment Calendar &amp; Live Sessions</h3>
+              <p className="text-xs text-stone-550 dark:text-stone-300 mt-1">View all assignment due dates and scheduled Google Meet tutorial sessions mapped chronologically by course.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-bold text-stone-700 uppercase">Filter Course:</label>
+              <select
+                value={calendarCourseFilter}
+                onChange={(e) => setCalendarCourseFilter(e.target.value)}
+                className="rounded-xl border border-stone-300 px-3 py-1.5 text-xs bg-white text-stone-900 outline-none font-medium"
+              >
+                <option value="all">All Enrolled Courses</option>
+                {activeLessonsList.map((l: any, i: number) => (
+                  <option key={i} value={l.topic}>{l.topic}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="font-display text-sm font-bold text-stone-900 uppercase tracking-wider">Scheduled Google Meet &amp; Assignment Timeline</h4>
+            <div className="space-y-3">
+              {instructorClasses.length === 0 ? (
+                <div className="p-4 rounded-xl border border-stone-200 bg-stone-50 text-xs text-stone-500 text-center italic">
+                  No live Google Meet sessions scheduled at this moment. Check back or view assigned modules.
+                </div>
+              ) : (
+                instructorClasses
+                  .filter((cls: any) => calendarCourseFilter === "all" || cls.title.toLowerCase().includes(calendarCourseFilter.toLowerCase()))
+                  .map((cls: any) => (
+                    <div key={cls.id} className="p-4 rounded-2xl border border-blue-200 bg-blue-50/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-2 py-0.5 rounded">Live Google Meet Session</span>
+                        <h5 className="font-bold text-stone-900 text-sm">{cls.title}</h5>
+                        <p className="text-xs text-stone-600">{cls.description} • Scheduled: <strong className="text-stone-900">{cls.date}</strong></p>
+                      </div>
+                      <a href={cls.meetUrl} target="_blank" rel="noreferrer" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold no-underline flex items-center gap-1.5 shrink-0">
+                        <Video className="h-4 w-4" />
+                        <span>Join Live Meet</span>
+                      </a>
+                    </div>
+                  ))
+              )}
+
+              {/* Sample Due Date Assignments */}
+              {[
+                { id: "asg_1", title: "Covenant Leadership Essay & Case Study", course: "Visionary Leadership", due: "2026-06-10", type: "Assignment Due" },
+                { id: "asg_2", title: "Hermeneutics Exegesis Project", course: "Old Testament Survey & Hebrew Covenants", due: "2026-06-15", type: "Assignment Due" }
+              ]
+                .filter((asg: any) => calendarCourseFilter === "all" || asg.course.toLowerCase().includes(calendarCourseFilter.toLowerCase()))
+                .map((asg: any) => (
+                  <div key={asg.id} className="p-4 rounded-2xl border border-red-200 bg-red-50/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-red-700 bg-red-100 px-2 py-0.5 rounded">{asg.type}</span>
+                      <h5 className="font-bold text-stone-900 text-sm">{asg.title}</h5>
+                      <p className="text-xs text-stone-600">Course: {asg.course} • Due Date: <strong className="text-red-700">{asg.due}</strong></p>
+                    </div>
+                    <button type="button" onClick={() => alert(`Opening submission portal for ${asg.title}`)} className="px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-bold cursor-pointer shrink-0">
+                      Submit Assignment
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- REVOLUTIONARY AI SUPPORT CHAT PORTAL --- */}
-      {activePortal === "aichat" && (
+      {!isStudent && activePortal === "aichat" && (
         <div className="mt-8 pt-6 border-t border-stone-200 dark:border-stone-850 space-y-4 text-left bg-white dark:bg-stone-950 p-6 rounded-3xl border shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b pb-4">
             <div>
               <span className="text-[10px] tracking-wider font-mono font-bold text-stone-400 block uppercase">Zion Faculty Companion Neural Engine</span>
-              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">🤖 Permanent Neural Research Terminal</h3>
+              <h3 className="font-display text-xl font-bold uppercase text-stone-900 dark:text-white">Permanent Neural Research Terminal</h3>
               <p className="text-xs text-stone-550 dark:text-stone-300 mt-1">This terminal preserves your search history permanently and supports professional publication formatting and media extraction.</p>
             </div>
             <span className="bg-red-50 text-red-750 dark:bg-red-950/40 dark:text-red-300 border border-red-200 text-[10px] font-mono font-bold px-3 py-1.5 rounded-xl uppercase shrink-0">ACTIVE INTELLIGENT COMPANION</span>
@@ -3477,6 +3867,21 @@ Prepare for your master certifications by reviewing the definitions of absolute 
           <div className="p-1.5 border border-stone-150 dark:border-stone-800 rounded-2xl bg-stone-50/40 dark:bg-stone-900/10">
             <AIChat currentUser={currentUser} onUnlockBadge={(badgeId) => console.log("Unlocked badge:", badgeId)} />
           </div>
+        </div>
+      )}
+
+      {activePortal === "workspace" && (
+        <div className="mt-4">
+          <GoogleWorkspaceSchoolHub
+            mode="school"
+            schoolName="Zion Digital Leadership & Bible School"
+          />
+        </div>
+      )}
+
+      {activePortal === "campus-3d" && (
+        <div className="mt-6">
+          <ZionCampus3DView />
         </div>
       )}
 

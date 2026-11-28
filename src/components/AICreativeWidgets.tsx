@@ -23,13 +23,13 @@ export function VeoVideoEngine() {
     setIsRendering(true);
     setProgress(15);
     setVideoUrl(null);
-    setStatus("Deconstructing 3D vector volume fields in Veo 3.1...");
+    setStatus("Deconstructing 3D vector volume fields...");
 
     const steps = [
-      { p: 40, s: "Synthesizing cinematic 3D volumetric light grids..." },
+      { p: 40, s: "Synthesizing volumetric light grids..." },
       { p: 70, s: "Interpolating progressive fluid keyframes at 60fps..." },
-      { p: 90, s: "Running neural texture super-resolution upscaling (1080p)..." },
-      { p: 100, s: "Streaming finalized Veo 3.1 MP4 container output..." }
+      { p: 90, s: "Running texture upscaling (1080p)..." },
+      { p: 100, s: "Streaming finalized MP4 container output..." }
     ];
 
     steps.forEach((step, idx) => {
@@ -40,7 +40,7 @@ export function VeoVideoEngine() {
           setIsRendering(false);
           // Standard high fidelity 3D cosmic loop clip
           setVideoUrl("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4");
-          alert("🎥 Veo 3.1 has successfully finalized rendering your cinematic text prompt as a stunning 3D animation loop!");
+          alert("Scene loop animation rendered.");
         }
       }, (idx + 1) * 1200);
     });
@@ -49,19 +49,19 @@ export function VeoVideoEngine() {
   return (
     <div className="bg-stone-50 border border-stone-200 rounded-2xl p-5 space-y-4">
       <div className="text-left border-b border-stone-150 pb-3">
-        <span className="text-[10px] font-mono text-violet-700 font-extrabold uppercase tracking-wider">VEO 3.1 CINEMATIC PRO</span>
-        <h3 className="text-sm font-bold text-stone-900 mt-1">Text-to-Cinematic 3D Video</h3>
-        <p className="text-[11px] text-stone-400">Pioneer three-dimensional texture grids and hyper-realistic movement animations.</p>
+        <span className="text-[10px] font-mono text-violet-700 font-extrabold uppercase tracking-wider">ZION CANVAS STUDIO</span>
+        <h3 className="text-sm font-bold text-stone-900 mt-1">Text-to-3D Scene Loop</h3>
+        <p className="text-[11px] text-stone-400">Preview three-dimensional texture grids and movement animations.</p>
       </div>
 
       <form onSubmit={startVeoRender} className="space-y-3">
         <div className="space-y-1">
-          <label className="text-xs font-bold text-stone-700 block text-left">Describe the cinematic camera pan scene</label>
+          <label className="text-xs font-bold text-stone-700 block text-left">Describe the camera pan scene</label>
           <textarea
             required
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g. Cinematic slow crawl down a glowing neon cyberpunk canal, realistic rain reflections, photorealistic 3D rendering..."
+            placeholder="e.g. Slow pan across a serene sanctuary courtyard at sunrise..."
             rows={2}
             className="w-full text-xs font-medium bg-white rounded-xl border border-stone-250 p-2.5 outline-none focus:border-violet-650"
           />
@@ -80,7 +80,7 @@ export function VeoVideoEngine() {
           ) : (
             <>
               <Video className="h-4 w-4 text-violet-300" />
-              <span>Compile with Veo 3.1</span>
+              <span>Compile Scene Preview</span>
             </>
           )}
         </button>
@@ -99,12 +99,12 @@ export function VeoVideoEngine() {
         ) : videoUrl ? (
           <div className="h-full flex flex-col justify-between">
             <video src={videoUrl} controls className="h-[140px] w-full object-cover rounded-lg bg-black" autoPlay muted loop />
-            <span className="text-[9px] font-mono text-emerald-400 text-left mt-1.5 font-bold uppercase">✓ 3D VEO CONTAINER LIVE STREAM</span>
+            <span className="text-[9px] font-mono text-emerald-400 text-left mt-1.5 font-bold uppercase">SCENE STREAM ACTIVE</span>
           </div>
         ) : (
           <div className="space-y-1.5 font-sans">
-            <p className="text-xs font-bold text-stone-400">Veo Frame Buffer Empty</p>
-            <p className="text-[10px] text-stone-500 max-w-xs mx-auto">Input spatial criteria prompts above to formulate high frame rate video caches.</p>
+            <p className="text-xs font-bold text-stone-400">Frame Buffer Empty</p>
+            <p className="text-[10px] text-stone-500 max-w-xs mx-auto">Input spatial criteria prompts above to preview scene animations.</p>
           </div>
         )}
       </div>
@@ -275,7 +275,7 @@ export function PetAdventureEngine() {
       ) : isAdventuring ? (
         <div className="p-12 text-center bg-stone-100 border border-stone-200 rounded-xl space-y-2">
           <LoaderCircle className="h-6 w-6 text-rose-500 animate-spin mx-auto" />
-          <p className="text-[10px] text-stone-500 font-mono tracking-wide uppercase">Segmenting silhouette layers via Gemini 3.1 Flash Image...</p>
+          <p className="text-[10px] text-stone-500 font-mono tracking-wide uppercase">Preparing scene postcard locally...</p>
         </div>
       ) : null}
     </div>

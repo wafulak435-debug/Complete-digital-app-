@@ -9,8 +9,13 @@
         "name": { "type": "string", "description": "User full name" },
         "role": {
           "type": "string",
-          "enum": ["main_admin", "sub_admin", "admin", "manager", "tutor", "member"],
+          "enum": ["super_admin", "manager", "user", "main_admin", "sub_admin", "admin", "tutor", "member"],
           "description": "The authoritative user access level"
+        },
+        "assigned_sections": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Sections assigned to managers: school_1, school_2, bookstore, mission"
         },
         "avatarUrl": { "type": "string", "description": "Optional image avatar reference URL" },
         "readingStreak": { "type": "integer", "description": "Continuous streak of active reading" },
@@ -22,7 +27,7 @@
           "description": "Courses a tutor is authorized to examine"
         }
       },
-      "required": ["email", "name", "role", "readingStreak", "dailyGoalMinutes"]
+      "required": ["email", "name", "role"]
     },
     "SubAdminPermission": {
       "title": "SubAdminPermission",
@@ -383,6 +388,95 @@
         "details": { "type": "string" }
       },
       "required": ["id", "timestamp", "actorId", "category", "action"]
+    },
+    "UserHistory": {
+      "title": "UserHistory",
+      "description": "Personal AI generation and study history synced per authenticated user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 80 },
+        "prompt": { "type": "string", "maxLength": 8000 },
+        "response": { "type": "string", "maxLength": 40000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "category", "createdAt"]
+    },
+    "UserFile": {
+      "title": "UserFile",
+      "description": "Metadata index for private user-uploaded study documents and images",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "path": { "type": "string", "maxLength": 512 },
+        "name": { "type": "string", "maxLength": 256 },
+        "size": { "type": "integer" },
+        "mimeType": { "type": "string", "maxLength": 128 },
+        "folder": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "path", "name", "size", "mimeType"]
+    },
+    "UserActivity": {
+      "title": "UserActivity",
+      "description": "User login and reading activity logs for administrative monitoring",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "actionType": { "type": "string", "maxLength": 80 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "timestamp": { "type": "string" },
+        "formattedDate": { "type": "string" }
+      },
+      "required": ["id", "userEmail", "actionType", "timestamp"]
+    },
+    "ReadingProgress": {
+      "title": "ReadingProgress",
+      "description": "Per-user bookmark and percentage progress across digital books",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "bookId": { "type": "string", "maxLength": 128 },
+        "currentPage": { "type": "integer" },
+        "percentage": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "bookId", "currentPage", "percentage", "updatedAt"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Campus and ministry notices published by authorized staff",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "text": { "type": "string", "maxLength": 4000 },
+        "category": { "type": "string", "enum": ["general", "academic", "financial", "technical", "important"] },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "author": { "type": "string", "maxLength": 128 },
+        "isSticky": { "type": "boolean" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["title", "text", "category", "author", "timestamp"]
+    },
+    "CampusPhoto": {
+      "title": "CampusPhoto",
+      "description": "Official Bungoma campus and ministry showcase photos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "libraryCategory": { "type": "string", "maxLength": 128 },
+        "url": { "type": "string", "maxLength": 2048 },
+        "description": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "title", "libraryCategory", "url"]
     }
   },
   "firestore": {
@@ -409,6 +503,12 @@
     "/wifiPurchases/{purchaseId}": { "schema": "WifiPurchase", "description": "WiFi hotspot purchases" },
     "/searchHistories/{historyId}": { "schema": "SearchHistory", "description": "Private AI search histories" },
     "/sermonVideos/{videoId}": { "schema": "SermonVideo", "description": "Sermon and motivational videos" },
-    "/auditLogs/{logId}": { "schema": "AuditLog", "description": "Immutable security audit log" }
+    "/auditLogs/{logId}": { "schema": "AuditLog", "description": "Immutable security audit log" },
+    "/userHistory/{historyId}": { "schema": "UserHistory", "description": "Private per-user AI generation and study history" },
+    "/userFiles/{fileId}": { "schema": "UserFile", "description": "Private per-user file storage metadata index" },
+    "/user_activities/{logId}": { "schema": "UserActivity", "description": "Authenticated user activity audit entries" },
+    "/reading_progress/{progressId}": { "schema": "ReadingProgress", "description": "Per-user book reading progress" },
+    "/announcements/{announcementId}": { "schema": "Announcement", "description": "Official campus announcements" },
+    "/campusPhotos/{photoId}": { "schema": "CampusPhoto", "description": "Official campus gallery photos" }
   }
 }

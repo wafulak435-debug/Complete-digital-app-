@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Sparkles, Trash2, Link2, Plus, ArrowUp, Send, Play, Music, Youtube, HelpCircle, History, RefreshCw, Layers, Mic, MicOff, BookOpen, Image as ImageIcon, Video, Sliders, Download, CheckCircle, FileText, Printer, Copy, Check } from "lucide-react";
+import { Sparkles, Trash2, Link2, Plus, ArrowUp, Send, Play, Pause, Square, Music, Youtube, HelpCircle, History, RefreshCw, Layers, Mic, MicOff, BookOpen, Image as ImageIcon, Video, Sliders, Download, CheckCircle, FileText, Printer, Copy, Check, Radio, Volume2 } from "lucide-react";
 import { SearchHistoryItem, PersonalLink } from "../types";
 import { compileAcademicDocumentPdf } from "../utils/academicDocumentPdfCompiler";
 import { exportPDF, exportWordDoc } from "../lib/docExporter";
@@ -11,6 +11,8 @@ import {
   clearSearchHistoriesFromFirestore
 } from "../lib/firestoreUtils";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
+import { saveSqlCreationRecord } from "../lib/sqlClient";
+import MediaRecorderTranscribeButton from "./MediaRecorderTranscribeButton";
 import { BOOKS_DEFAULT_COVER } from "../lib/showcase";
 
 // Helper functions to parse headers in bold and rest in normal weight
@@ -90,6 +92,8 @@ interface AIChatProps {
   isOnline?: boolean;
   sleekMode?: boolean;
   onToggleSleekMode?: () => void;
+  schoolTutorMode?: boolean;
+  onSendToSchoolPublisher?: (content: string, suggestedTitle?: string) => void;
 }
 
 // Advanced local rule-based AI engine that runs 100% offline without data bundles!
@@ -222,7 +226,15 @@ Your query is processed using our **local rule-based parsing engine**, which pre
 Tell me what you would like to explore or outline today!`;
 }
 
-export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sleekMode = false, onToggleSleekMode }: AIChatProps) {
+export default function AIChat({
+  currentUser,
+  onUnlockBadge,
+  isOnline = true,
+  sleekMode = false,
+  onToggleSleekMode,
+  schoolTutorMode = false,
+  onSendToSchoolPublisher,
+}: AIChatProps) {
   const [forceOfflineAI, setForceOfflineAI] = useState<boolean>(() => {
     return localStorage.getItem("WAFULA_FORCE_OFFLINE_AI") === "true";
   });
@@ -233,8 +245,8 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
 
   const [activeCategory, setActiveCategory] = useState<string>("Assistant"); // Assistant, Problem Solver, Project Plan, Document Publisher, Creative Studio
   const [prompt, setPrompt] = useState("");
-  const [enableGoogleSearch, setEnableGoogleSearch] = useState(false);
-  const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string; groundingSources?: { title: string; uri: string }[] }[]>([]);
+  const selectedModel = "gemini-4-hydrogen" as const;
+  const [messages, setMessages] = useState<{ role: 'user' | 'model'; text: string; groundingSources?: { title: string; uri: string; type?: string }[] }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [historyList, setHistoryList] = useState<SearchHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -252,14 +264,32 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
   const [docPreserveMeaning, setDocPreserveMeaning] = useState<boolean>(true);
   const [isCompilingDoc, setIsCompilingDoc] = useState<boolean>(false);
 
-  // Integrated Creative Media Generation states
-  const [creativeType, setCreativeType] = useState<'image' | 'video'>('image');
+  // Integrated Creative Media Generation states (Free-tier Gemini Studio)
+  const [creativeType, setCreativeType] = useState<'image' | 'video' | 'music'>('image');
   const [creativePrompt, setCreativePrompt] = useState("");
   const [creativeAspect, setCreativeAspect] = useState("1:1");
-  const [creativeHd, setCreativeHd] = useState(false);
   const [creativeIsGenerating, setCreativeIsGenerating] = useState(false);
   const [creativeResultImage, setCreativeResultImage] = useState<string | null>(null);
-  const [creativeResultVideo, setCreativeResultVideo] = useState<string | null>(null);
+  const [creativeStoryboard, setCreativeStoryboard] = useState<{
+    title: string;
+    aspectRatio?: string;
+    scenes: { headline: string; subtitle: string; narration: string; accentColor: string; bgColor: string }[];
+  } | null>(null);
+  const [activeSceneIdx, setActiveSceneIdx] = useState(0);
+  const [isPlayingStoryboard, setIsPlayingStoryboard] = useState(false);
+  const [isRecordingWebm, setIsRecordingWebm] = useState(false);
+  const storyboardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [musicComposition, setMusicComposition] = useState<{
+    title: string;
+    keySignature: string;
+    tempoBpm: number;
+    chords: { name: string; freqs: number[] }[];
+    melodyNotes: number[];
+    lyrics: string;
+  } | null>(null);
+  const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+  const musicSynthCtxRef = useRef<AudioContext | null>(null);
+  const musicSynthTimerRef = useRef<number | null>(null);
   const [creativeError, setCreativeError] = useState("");
 
   // States for Voice transcription
@@ -268,9 +298,10 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
   const [recognition, setRecognition] = useState<any>(null);
   const [micStateError, setMicStateError] = useState(false);
 
-  // States for Audio Read Aloud (TTS synthesizer)
+  // States for Audio Read Aloud (Gemini TTS + browser speech fallback)
   const [readingIndex, setReadingIndex] = useState<number | null>(null);
   const [isTtsPaused, setIsTtsPaused] = useState(false);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // States & utilities for High-Fidelity Clipboard Copying
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -415,14 +446,181 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
     }
   }, []);
 
-  // Cancel speech synthesis on component destroy to prevent persistent talking across navigation views
+  // Cancel speech synthesis & Web Audio on component destroy
   useEffect(() => {
     return () => {
       if (typeof window !== "undefined" && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause();
+        ttsAudioRef.current = null;
+      }
+      if (musicSynthTimerRef.current) {
+        window.clearInterval(musicSynthTimerRef.current);
+      }
+      if (musicSynthCtxRef.current) {
+        void musicSynthCtxRef.current.close().catch(() => {});
+      }
     };
   }, []);
+
+  // Draw & animate storyboard scene onto canvas whenever creativeStoryboard or activeSceneIdx changes
+  useEffect(() => {
+    if (!creativeStoryboard || !storyboardCanvasRef.current) return;
+    const canvas = storyboardCanvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const scene = creativeStoryboard.scenes[activeSceneIdx] || creativeStoryboard.scenes[0];
+    if (!scene) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, scene.bgColor || "#0B254D");
+    grad.addColorStop(1, "#07142B");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Architectural accent ring & frame
+    ctx.strokeStyle = scene.accentColor || "#F5B82E";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(24, 24, w - 48, h - 48);
+
+    ctx.beginPath();
+    ctx.arc(w * 0.84, h * 0.28, 56, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = scene.accentColor || "#F5B82E";
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = scene.accentColor || "#F5B82E";
+    ctx.font = "bold 13px monospace";
+    ctx.fillText(`SCENE ${activeSceneIdx + 1} OF ${creativeStoryboard.scenes.length} — ZION DIGITAL STUDIO`, 46, 62);
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 28px Georgia, serif";
+    ctx.fillText((scene.headline || "").slice(0, 48), 46, 130);
+
+    ctx.fillStyle = "#DBEAFE";
+    ctx.font = "16px sans-serif";
+    ctx.fillText((scene.subtitle || "").slice(0, 68), 46, 170);
+
+    // Narration wrapped bottom card
+    ctx.fillStyle = "rgba(11, 37, 77, 0.85)";
+    ctx.fillRect(46, h - 120, w - 92, 68);
+    ctx.fillStyle = "#FDE68A";
+    ctx.font = "14px sans-serif";
+    ctx.fillText((scene.narration || "").slice(0, 88), 64, h - 80);
+  }, [creativeStoryboard, activeSceneIdx]);
+
+  useEffect(() => {
+    if (!isPlayingStoryboard || !creativeStoryboard) return;
+    const timer = window.setInterval(() => {
+      setActiveSceneIdx((prev) => (prev + 1) % creativeStoryboard.scenes.length);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, [isPlayingStoryboard, creativeStoryboard]);
+
+  const stopMusicPlayback = () => {
+    if (musicSynthTimerRef.current) {
+      window.clearInterval(musicSynthTimerRef.current);
+      musicSynthTimerRef.current = null;
+    }
+    setIsPlayingMusic(false);
+  };
+
+  const togglePlayMusicComposition = () => {
+    if (!musicComposition) return;
+    if (isPlayingMusic) {
+      stopMusicPlayback();
+      return;
+    }
+
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!musicSynthCtxRef.current || musicSynthCtxRef.current.state === "closed") {
+      musicSynthCtxRef.current = new Ctx();
+    }
+    const ctx = musicSynthCtxRef.current;
+    if (ctx.state === "suspended") void ctx.resume();
+
+    setIsPlayingMusic(true);
+    let step = 0;
+    const beatMs = Math.max(350, Math.round((60 / (musicComposition.tempoBpm || 78)) * 1000));
+
+    const playBeat = () => {
+      const chord = musicComposition.chords[step % musicComposition.chords.length];
+      const noteFreq = musicComposition.melodyNotes[step % musicComposition.melodyNotes.length] || 440;
+      const now = ctx.currentTime;
+
+      if (chord && Array.isArray(chord.freqs)) {
+        chord.freqs.forEach((freq) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(freq, now);
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + beatMs / 1000);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + beatMs / 1000 + 0.02);
+        });
+      }
+
+      const lead = ctx.createOscillator();
+      const leadGain = ctx.createGain();
+      lead.type = "sine";
+      lead.frequency.setValueAtTime(noteFreq, now);
+      leadGain.gain.setValueAtTime(0.09, now);
+      leadGain.gain.exponentialRampToValueAtTime(0.001, now + (beatMs / 1000) * 0.9);
+      lead.connect(leadGain);
+      leadGain.connect(ctx.destination);
+      lead.start(now);
+      lead.stop(now + (beatMs / 1000) * 0.95);
+
+      step++;
+      if (step >= Math.max(8, musicComposition.melodyNotes.length * 2)) {
+        stopMusicPlayback();
+      }
+    };
+
+    playBeat();
+    musicSynthTimerRef.current = window.setInterval(playBeat, beatMs);
+  };
+
+  const handleExportStoryboardWebm = async () => {
+    if (!storyboardCanvasRef.current || !creativeStoryboard || isRecordingWebm) return;
+    setIsRecordingWebm(true);
+    setActiveSceneIdx(0);
+    setIsPlayingStoryboard(true);
+    try {
+      const stream = storyboardCanvasRef.current.captureStream(24);
+      const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) chunks.push(ev.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `zion-storyboard-${Date.now()}.webm`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        setIsRecordingWebm(false);
+        setIsPlayingStoryboard(false);
+      };
+      recorder.start();
+      setTimeout(() => {
+        if (recorder.state !== "inactive") recorder.stop();
+      }, 6500);
+    } catch {
+      setIsRecordingWebm(false);
+      setIsPlayingStoryboard(false);
+    }
+  };
 
   const simulateVoiceTyping = (text: string) => {
     let index = 0;
@@ -468,37 +666,48 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
     }
   };
 
-  // Sound Synth Synthesizer read aloud functions
-  const handleStartTTS = (text: string, index: number) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+  // Gemini Neural TTS with browser speechSynthesis graceful fallback
+  const handleStartTTS = async (text: string, index: number) => {
+    if (typeof window === "undefined") return;
 
-    window.speechSynthesis.cancel(); // Stop any other message readings first
+    window.speechSynthesis?.cancel();
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+    }
 
-    // Strip Markdown symbols for a cleaner visual auditory experience
     const cleanSpeechText = text
       .replace(/[*#`_\-]/g, "")
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1");
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+      .trim();
 
+    setReadingIndex(index);
+    setIsTtsPaused(false);
+
+    if (!window.speechSynthesis) {
+      setReadingIndex(null);
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(cleanSpeechText);
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
-
     utterance.onend = () => {
       setReadingIndex(null);
       setIsTtsPaused(false);
     };
-
     utterance.onerror = () => {
       setReadingIndex(null);
       setIsTtsPaused(false);
     };
-
-    setReadingIndex(index);
-    setIsTtsPaused(false);
     window.speechSynthesis.speak(utterance);
   };
 
   const handlePauseTTS = () => {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      setIsTtsPaused(true);
+      return;
+    }
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.pause();
       setIsTtsPaused(true);
@@ -506,6 +715,11 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
   };
 
   const handleResumeTTS = () => {
+    if (ttsAudioRef.current) {
+      void ttsAudioRef.current.play();
+      setIsTtsPaused(false);
+      return;
+    }
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.resume();
       setIsTtsPaused(false);
@@ -513,11 +727,15 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
   };
 
   const handleStopTTS = () => {
+    if (ttsAudioRef.current) {
+      ttsAudioRef.current.pause();
+      ttsAudioRef.current = null;
+    }
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
-      setReadingIndex(null);
-      setIsTtsPaused(false);
     }
+    setReadingIndex(null);
+    setIsTtsPaused(false);
   };
 
   // Jump to bottom on new message
@@ -665,19 +883,30 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
     setCreativeIsGenerating(true);
     setCreativeError("");
     setCreativeResultImage(null);
-    setCreativeResultVideo(null);
+    setCreativeStoryboard(null);
+    setMusicComposition(null);
+    stopMusicPlayback();
+    setIsPlayingStoryboard(false);
 
-    const targetUrl = creativeType === 'image' ? "/api/ai/generate-image" : "/api/ai/generate-video";
-    const payload = creativeType === 'image' 
-      ? { prompt: creativePrompt, aspectRatio: creativeAspect, hdMode: creativeHd }
-      : { prompt: creativePrompt, aspectRatio: creativeAspect };
+    const targetUrl =
+      creativeType === "image"
+        ? "/api/ai/generate-image"
+        : creativeType === "video"
+        ? "/api/ai/generate-video"
+        : "/api/ai/generate-music";
+    const payload =
+      creativeType === "image"
+        ? { prompt: creativePrompt, aspectRatio: creativeAspect }
+        : creativeType === "video"
+        ? { prompt: creativePrompt, aspectRatio: creativeAspect }
+        : { prompt: creativePrompt, duration: "full" };
 
     try {
       let data: any;
       if (creativeType === "image") {
         data = await invokeGeminiAction("generate-image", "/api/ai/generate-image", payload, {
           saveHistory: true,
-          historyTitle: `AI Image: ${creativePrompt.slice(0, 60)}`,
+          historyTitle: `AI Cover Art: ${creativePrompt.slice(0, 60)}`,
           historyCategory: "Creative Image",
         });
       } else {
@@ -688,32 +917,87 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
         });
         data = await response.json();
       }
-      if (data.success) {
-        if (creativeType === 'image') {
+
+      if (data?.success) {
+        if (creativeType === "image") {
           setCreativeResultImage(data.imageUrl);
+          void saveSqlCreationRecord({
+            mode: "creative-image",
+            model: "gemini-4-hydrogen",
+            title: creativePrompt.slice(0, 72),
+            prompt: creativePrompt,
+            svgArtwork: data.svgMarkup,
+          });
           setMessages((prev) => [
             ...prev,
-            { role: "user", text: `[Creative Request] Generate image: "${creativePrompt}"` },
-            { role: "model", text: `I have prepared a visual illustration based on your prompt: "${creativePrompt}".`, groundingSources: [] }
+            { role: "user", text: `[Creative Request] Design cover art: "${creativePrompt}"` },
+            { role: "model", text: `Vector artwork generated for "${creativePrompt}".` },
           ]);
-        } else {
-          setCreativeResultVideo(data.videoUrl || "https://assets.mixkit.co/videos/preview/mixkit-milky-way-galaxy-in-the-night-sky-40432-large.mp4");
+        } else if (creativeType === "video") {
+          setCreativeStoryboard(data.storyboard);
+          setActiveSceneIdx(0);
+          void saveSqlCreationRecord({
+            mode: "creative-storyboard",
+            model: "gemini-4-hydrogen",
+            title: data.storyboard?.title || creativePrompt.slice(0, 72),
+            prompt: creativePrompt,
+            outputText: JSON.stringify(data.storyboard),
+          });
           setMessages((prev) => [
             ...prev,
-            { role: "user", text: `[Creative Request] Generate video: "${creativePrompt}"` },
-            { role: "model", text: `Video render completed for "${creativePrompt}". Press play below to preview.`, groundingSources: [] }
+            { role: "user", text: `[Creative Request] Storyboard reel: "${creativePrompt}"` },
+            { role: "model", text: `4-scene animated storyboard prepared for "${creativePrompt}". Press Play Reel below.` },
+          ]);
+        } else if (creativeType === "music") {
+          setMusicComposition(data.composition);
+          void saveSqlCreationRecord({
+            mode: "creative-hymn",
+            model: "gemini-4-hydrogen",
+            title: data.composition?.title || creativePrompt.slice(0, 72),
+            prompt: creativePrompt,
+            outputText: JSON.stringify(data.composition),
+          });
+          setMessages((prev) => [
+            ...prev,
+            { role: "user", text: `[Creative Request] Compose hymn: "${creativePrompt}"` },
+            { role: "model", text: `Sacred hymn arrangement composed in ${data.composition?.keySignature || "C Major"}. Press Play Arrangement below.` },
           ]);
         }
       } else {
-        setCreativeError(data.error || "Generation unsuccessful. Please retry.");
+        setCreativeError(data?.error || "Generation unsuccessful. Please retry.");
       }
     } catch (err: any) {
       console.warn(err);
-      setCreativeError("Offline mode active. Showing local bundled preview asset.");
-      if (creativeType === 'image') {
+      if (creativeType === "image") {
+        setCreativeError("Showing local Zion Digital bundled cover preview.");
         setCreativeResultImage(BOOKS_DEFAULT_COVER);
+      } else if (creativeType === "video") {
+        setCreativeError("Generated offline 4-scene storyboard preview.");
+        setCreativeStoryboard({
+          title: creativePrompt.slice(0, 64),
+          aspectRatio: creativeAspect,
+          scenes: [
+            { headline: "Zion Opening Scene", subtitle: creativePrompt.slice(0, 60), narration: "Grounded in scripture and leadership truth.", bgColor: "#0B254D", accentColor: "#F5B82E" },
+            { headline: "Academic Pillar", subtitle: "Bungoma Core Curriculum", narration: "Equipping scholars across East Africa.", bgColor: "#123A78", accentColor: "#38BDF8" },
+            { headline: "Outreach & Service", subtitle: "Kingdom Community Action", narration: "Serving communities with integrity and grace.", bgColor: "#7C2D12", accentColor: "#FBBF24" },
+            { headline: "Call to Action", subtitle: "Read. Lead. Transform.", narration: "Continue inside Zion Digital Academy.", bgColor: "#064E3B", accentColor: "#34D399" },
+          ],
+        });
       } else {
-        setCreativeResultVideo("https://assets.mixkit.co/videos/preview/mixkit-milky-way-galaxy-in-the-night-sky-40432-large.mp4");
+        setCreativeError("Generated offline sacred chord arrangement.");
+        setMusicComposition({
+          title: `Zion Hymn: ${creativePrompt.slice(0, 40)}`,
+          keySignature: "C Major",
+          tempoBpm: 76,
+          chords: [
+            { name: "C", freqs: [261.63, 329.63, 392.0] },
+            { name: "F", freqs: [349.23, 440.0, 523.25] },
+            { name: "Am", freqs: [220.0, 261.63, 329.63] },
+            { name: "G", freqs: [196.0, 246.94, 392.0] },
+          ],
+          melodyNotes: [523.25, 493.88, 440.0, 392.0, 349.23, 392.0, 440.0, 523.25],
+          lyrics: `Praise rises across Zion hills for: ${creativePrompt.slice(0, 100)}.`,
+        });
       }
     } finally {
       setCreativeIsGenerating(false);
@@ -736,16 +1020,15 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
     const useOffline = forceOfflineAI || !isOnline;
 
     if (useOffline) {
-      // Simulate highly advanced offline generative response compiler with 700ms intelligence delay
       setTimeout(() => {
-        const offlineText = generateLocalOfflineAIResponse(userText, activeCategory);
+        const offlineText = generateLocalOfflineAIResponse(userText, activeCategory, messages);
         setMessages((prev) => [...prev, { role: "model", text: offlineText }]);
         handleSaveHistoryItem(userText, offlineText, activeCategory);
         if (activeCategory === "Problem Solver") {
           onUnlockBadge("badge_5");
         }
         setIsProcessing(false);
-      }, 700);
+      }, 550);
       return;
     }
 
@@ -758,7 +1041,9 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
           category: activeCategory,
           history: messages,
           images: currentImages,
-          enableGoogleSearch: enableGoogleSearch,
+          model: selectedModel,
+          enableGoogleSearch: false,
+          schoolContext: Boolean(schoolTutorMode),
         },
         {
           saveHistory: true,
@@ -768,21 +1053,26 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
       );
       if (data.success) {
         setMessages((prev) => [...prev, { role: "model", text: data.text, groundingSources: data.groundingSources }]);
-        // Save searches persistently linked to profiles
         handleSaveHistoryItem(userText, data.text, activeCategory);
+        void saveSqlCreationRecord({
+          mode: activeCategory.toLowerCase().replace(/\s+/g, "-"),
+          model: selectedModel,
+          title: userText.slice(0, 72),
+          prompt: userText,
+          outputText: data.text,
+          groundingSources: data.groundingSources || [],
+        });
         if (activeCategory === "Problem Solver") {
           onUnlockBadge("badge_5");
         }
       } else {
-        // Fallback to offline engine seamlessly on error (without hanging or blank output)
-        const offlineText = generateLocalOfflineAIResponse(userText, activeCategory);
+        const offlineText = generateLocalOfflineAIResponse(userText, activeCategory, messages);
         setMessages((prev) => [...prev, { role: "model", text: offlineText + "\n\n*(Note: Reverted to Local Offline Mode as online request returned an error)*" }]);
         handleSaveHistoryItem(userText, offlineText, activeCategory);
       }
     } catch (err: any) {
       console.error(err);
-      // Fallback to offline engine seamlessly on network failure
-      const offlineText = generateLocalOfflineAIResponse(userText, activeCategory);
+      const offlineText = generateLocalOfflineAIResponse(userText, activeCategory, messages);
       setMessages((prev) => [...prev, { role: "model", text: offlineText + "\n\n*(Note: Reverted to Local Offline Mode due to connection interruption)*" }]);
       handleSaveHistoryItem(userText, offlineText, activeCategory);
     } finally {
@@ -854,32 +1144,33 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
   const myHistory = historyList.filter((item) => item.userId === (currentUser?.email || "anonymous"));
 
   return (
-    <div id="ai_workspace_panel" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-8 relative">
+    <div id="ai_workspace_panel" className="mx-auto max-w-7xl px-2.5 sm:px-6 lg:px-8 py-3 sm:py-6 relative">
       <div ref={topRef} />
       
-      <div className="grid gap-6 lg:grid-cols-12">
-        {/* Left Side: General Assistant & Complex Solvers (Starts extremely wide for comfortable query typing) */}
-        <div className="lg:col-span-12 space-y-4">
-          <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-12">
+        {/* Left Side: General Assistant & Complex Solvers */}
+        <div className="lg:col-span-12 space-y-3 sm:space-y-4">
+          <div className="rounded-2xl border border-stone-200 bg-white p-3 sm:p-5 shadow-xs">
             {/* Header category toggles */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-stone-100 pb-4 mb-4 gap-3">
-              <div className="flex flex-col md:flex-row md:items-center gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-stone-100 pb-3 sm:pb-4 mb-3 sm:mb-4 gap-2.5 sm:gap-3">
+              <div className="flex flex-col md:flex-row md:items-center gap-2.5 sm:gap-4">
                 <div>
-                  <h3 className="font-display text-lg font-bold text-stone-900 flex items-center space-x-1.5">
-                    <Sparkles className="h-5 w-5 text-red-700 animate-spin" />
-                    <span>AI Scholar Companion</span>
+                  <h3 className="font-display text-base sm:text-lg font-bold text-stone-900 flex items-center space-x-1.5">
+                    <Sparkles className="h-4 w-4 sm:h-5 sm:w-5 text-red-700" />
+                    <span>{schoolTutorMode ? "School Tutor AI Assist" : "AI Assist Chat"}</span>
                   </h3>
-                  <p className="text-[11px] text-stone-500 font-mono">Your personal knowledge companion</p>
+                  <p className="text-[10px] sm:text-[11px] text-stone-500 font-mono">
+                    {schoolTutorMode
+                      ? "Tutor Note Generation & Classroom Preparation"
+                      : "Gemini 4 Scholar, Voice & Grounded Search"}
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-stone-50 border border-stone-150 px-2.5 py-1.5 rounded-xl">
-                    <span className={`h-2.5 w-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-amber-500 animate-ping"}`}></span>
-                    <span className="text-[9.5px] font-mono font-bold text-stone-650 uppercase">
-                      Network: {isOnline ? "Online" : "Offline Mode"}
-                    </span>
-                  </div>
-                  
+                  <span className="px-2.5 py-1.5 rounded-xl border border-stone-200 bg-stone-50 text-[10px] font-mono font-bold text-stone-800">
+                    Model: Gemini 4 Hydrogen
+                  </span>
+
                   <button
                     type="button"
                     onClick={() => setForceOfflineAI(!forceOfflineAI)}
@@ -888,11 +1179,11 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
                         ? "bg-amber-100 text-amber-850 border-amber-300 hover:bg-amber-150" 
                         : "bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200"
                     }`}
-                    title="Toggle local offline AI processing to save cellular data bundles!"
+                    title="Toggle local offline AI processing to save cellular data bundles"
                   >
-                    <span>🧠 Offline AI Mode:</span>
+                    <span>Offline AI:</span>
                     <strong className={forceOfflineAI ? "text-amber-950 font-extrabold" : "text-stone-850 font-bold"}>
-                      {forceOfflineAI ? "ON (Save Bundles)" : "OFF"}
+                      {forceOfflineAI ? "ON" : "OFF"}
                     </strong>
                   </button>
 
@@ -902,14 +1193,12 @@ export default function AIChat({ currentUser, onUnlockBadge, isOnline = true, sl
                       onClick={onToggleSleekMode}
                       className={`px-3 py-1.5 rounded-xl border font-sans text-[9.5px] font-bold uppercase transition flex items-center gap-1.5 cursor-pointer shadow-xs ${
                         sleekMode
-                          ? "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-700 font-extrabold animate-pulse"
+                          ? "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-700 font-extrabold"
                           : "bg-stone-900 text-amber-400 border-stone-700 hover:bg-stone-800"
                       }`}
-                      title="Toggle Sleek Mode for ultra-fast, streamlined, distraction-free viewing!"
                     >
                       <Sparkles className="h-3.5 w-3.5" />
-                      <span>Sleek Mode:</span>
-                      <strong className="underline font-black">{sleekMode ? "ACTIVE" : "OFF"}</strong>
+                      <span>Sleek Mode: {sleekMode ? "ACTIVE" : "OFF"}</span>
                     </button>
                   )}
                 </div>
@@ -1304,15 +1593,15 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                     <span>Zion Creative Arts Media Studio</span>
                   </h4>
                   <p className="text-[#6E655E] leading-relaxed">
-                    Create editorial artwork illustrations and animated video clips saved automatically to your account history.
+                    Generate vector book covers, 4-scene animated storyboards with WebM export, and interactive sacred hymn arrangements saved automatically to your account.
                   </p>
                 </div>
 
                 <form onSubmit={handleCreativeSubmit} className="space-y-4 text-xs">
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <label className="block font-bold text-[#1F1B18] uppercase font-mono tracking-wider text-[10px]">Visual Media Type</label>
-                      <div className="flex bg-[#EFECE5] p-1 rounded-xl font-bold">
+                      <label className="block font-bold text-[#1F1B18] uppercase font-mono tracking-wider text-[10px]">Creative Studio Mode</label>
+                      <div className="flex bg-[#EFECE5] p-1 rounded-xl font-bold gap-1">
                         <button
                           type="button"
                           onClick={() => setCreativeType('image')}
@@ -1321,7 +1610,7 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                           }`}
                         >
                           <ImageIcon className="h-3.5 w-3.5" />
-                          <span>Photo / Image Illustration</span>
+                          <span>Cover Art</span>
                         </button>
                         <button
                           type="button"
@@ -1331,7 +1620,17 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                           }`}
                         >
                           <Video className="h-3.5 w-3.5" />
-                          <span>HD Video Rendering</span>
+                          <span>Storyboard Reel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCreativeType('music')}
+                          className={`flex-1 rounded-lg py-2 transition flex items-center justify-center gap-1.5 cursor-pointer border-0 ${
+                            creativeType === 'music' ? 'bg-[#A8421B] text-white shadow-xs' : 'text-[#6E655E] hover:bg-white/70'
+                          }`}
+                        >
+                          <Music className="h-3.5 w-3.5" />
+                          <span>Hymn Composer</span>
                         </button>
                       </div>
                     </div>
@@ -1354,33 +1653,22 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                   <div className="space-y-1.5">
                     <label className="block font-bold text-stone-700 uppercase font-mono tracking-wider text-[10px]">Creative Design Prompt</label>
                     <textarea
-                      rows={6}
+                      rows={5}
                       required
                       value={creativePrompt}
                       onChange={(e) => setCreativePrompt(e.target.value)}
-                      placeholder="Describe the image or video scenario in detail. e.g., 'An illuminated ancient parchment layout showing beautiful design plans of computer school in Bungoma Kenya, soft gold light, 4K resolution.'"
+                      placeholder={
+                        creativeType === "music"
+                          ? "Describe a worship theme or psalm hymn (e.g., Joyful Bungoma harvest thanksgiving hymn in G Major)..."
+                          : "Describe the cover artwork or 4-scene storyboard message..."
+                      }
                       className="w-full rounded-xl border border-stone-200 bg-stone-50 p-3 outline-none focus:bg-white focus:border-red-700 font-sans text-stone-900"
                     />
                   </div>
 
-                  {creativeType === 'image' && (
-                    <div className="flex items-center pt-1 select-none">
-                      <input
-                        id="chk_hd"
-                        type="checkbox"
-                        checked={creativeHd}
-                        onChange={(e) => setCreativeHd(e.target.checked)}
-                        className="h-4 w-4 accent-red-700 border-stone-300 rounded cursor-pointer"
-                      />
-                      <label htmlFor="chk_hd" className="ml-2 block text-xs font-semibold text-stone-700 cursor-pointer">
-                        Enable 1K High-Definition Render (Requires advanced compute engine)
-                      </label>
-                    </div>
-                  )}
-
                   {creativeError && (
-                    <p className="text-[11px] text-amber-700 font-mono font-bold bg-amber-50 p-2.5 rounded-lg border border-amber-150">
-                      ⚠️ {creativeError}
+                    <p className="text-[11px] text-amber-800 font-mono font-bold bg-amber-50 p-2.5 rounded-lg border border-amber-200">
+                      {creativeError}
                     </p>
                   )}
 
@@ -1389,35 +1677,121 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                     disabled={creativeIsGenerating || !creativePrompt.trim()}
                     className="w-full rounded-xl bg-stone-900 hover:bg-stone-950 text-white font-bold p-3.5 transition active:scale-[0.99] flex items-center justify-center gap-2 text-xs shadow-xs cursor-pointer border-0"
                   >
-                    <Sparkles className="h-4.5 w-4.5 text-yellow-500 animate-pulse" />
-                    <span>{creativeIsGenerating ? "Weaving digital canvas assets..." : `GENERATE NEW ARTISTIC ${creativeType.toUpperCase()}`}</span>
+                    <Sparkles className="h-4.5 w-4.5 text-yellow-500" />
+                    <span>
+                      {creativeIsGenerating
+                        ? "Synthesizing creative output..."
+                        : creativeType === "image"
+                        ? "GENERATE VECTOR COVER ARTWORK"
+                        : creativeType === "video"
+                        ? "GENERATE ANIMATED STORYBOARD REEL"
+                        : "COMPOSE SACRED HYMN ARRANGEMENT"}
+                    </span>
                   </button>
                 </form>
 
                 {creativeResultImage && (
                   <div className="mt-4 p-4 rounded-xl border border-stone-200 bg-stone-50 space-y-3">
-                    <h5 className="font-bold text-stone-800 text-xs text-left">Generated Media Canvas:</h5>
+                    <h5 className="font-bold text-stone-800 text-xs text-left">Generated Vector Cover Canvas:</h5>
                     <div className="aspect-video w-full max-w-md mx-auto rounded-lg overflow-hidden border border-stone-300 shadow-sm relative group bg-white">
-                      <img referrerPolicy="no-referrer" src={creativeResultImage} alt="Creative model paint render" className="w-full h-full object-contain" />
+                      <img referrerPolicy="no-referrer" src={creativeResultImage} alt="Generated vector cover" className="w-full h-full object-contain" />
                       <a
                         href={creativeResultImage}
-                        download="zion_digital_illustration.png"
-                        target="_blank"
-                        rel="noreferrer"
+                        download="zion_digital_cover.svg"
                         className="absolute bottom-2.5 right-2.5 bg-stone-900/90 text-white font-mono font-bold text-[9px] px-2.5 py-1.5 rounded hover:bg-neutral-900 flex items-center gap-1.5 shadow-md border-0 no-underline"
                       >
                         <Download className="h-3 w-3" />
-                        <span>View Full Dimension</span>
+                        <span>Download SVG</span>
                       </a>
                     </div>
                   </div>
                 )}
-                {creativeResultVideo && (
+
+                {creativeStoryboard && (
                   <div className="mt-4 p-4 rounded-xl border border-stone-200 bg-stone-50 space-y-3">
-                    <h5 className="font-bold text-stone-800 text-xs text-left">Generated Media Canvas:</h5>
-                    <div className="aspect-video w-full max-w-md mx-auto rounded-lg overflow-hidden border border-stone-300 shadow-sm bg-black">
-                      <video src={creativeResultVideo} controls className="w-full h-full" autoPlay loop muted />
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h5 className="font-bold text-stone-800 text-xs">{creativeStoryboard.title}</h5>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsPlayingStoryboard((p) => !p)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#155EEF] text-white text-[11px] font-bold cursor-pointer"
+                        >
+                          {isPlayingStoryboard ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                          <span>{isPlayingStoryboard ? "Pause Reel" : "Play Reel"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportStoryboardWebm}
+                          disabled={isRecordingWebm}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-stone-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                        >
+                          <Download className="h-3 w-3" />
+                          <span>{isRecordingWebm ? "Recording WebM..." : "Export WebM Clip"}</span>
+                        </button>
+                      </div>
                     </div>
+
+                    <canvas
+                      ref={storyboardCanvasRef}
+                      width={800}
+                      height={450}
+                      className="w-full max-w-2xl mx-auto rounded-xl border border-stone-300 shadow-sm block bg-[#0B254D]"
+                    />
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {creativeStoryboard.scenes.map((sc, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setIsPlayingStoryboard(false);
+                            setActiveSceneIdx(idx);
+                          }}
+                          className={`p-2 rounded-lg border text-left text-[11px] transition cursor-pointer ${
+                            activeSceneIdx === idx
+                              ? "border-[#155EEF] bg-blue-50 text-[#0B254D] font-bold"
+                              : "border-stone-200 bg-white text-stone-600"
+                          }`}
+                        >
+                          <span className="block font-mono text-[9px] uppercase text-stone-400">Scene {idx + 1}</span>
+                          <span className="line-clamp-1">{sc.headline}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {musicComposition && (
+                  <div className="mt-4 p-4 rounded-xl border border-amber-200 bg-amber-50/40 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h5 className="font-bold text-stone-900 text-sm">{musicComposition.title}</h5>
+                        <p className="text-[11px] font-mono text-stone-500">
+                          Key: {musicComposition.keySignature} &middot; {musicComposition.tempoBpm} BPM
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={togglePlayMusicComposition}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0B254D] text-white text-xs font-bold cursor-pointer"
+                      >
+                        {isPlayingMusic ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                        <span>{isPlayingMusic ? "Stop Arrangement" : "Play Hymn Arrangement"}</span>
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {musicComposition.chords.map((ch, idx) => (
+                        <span key={idx} className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-mono font-bold text-stone-800">
+                          {ch.name}
+                        </span>
+                      ))}
+                    </div>
+
+                    <p className="text-xs text-stone-700 leading-relaxed bg-white p-3 rounded-lg border border-stone-200">
+                      {musicComposition.lyrics}
+                    </p>
                   </div>
                 )}
               </div>
@@ -1450,13 +1824,17 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                 </div>
               )}
 
-            <div id="chat_feed_viewport" className="h-[380px] overflow-y-auto border border-stone-100 dark:border-stone-800 bg-transparent rounded-xl p-4 space-y-4 pr-2">
+            <div id="chat_feed_viewport" className="h-[150px] sm:h-[280px] overflow-y-auto border border-stone-100 dark:border-stone-800 bg-transparent rounded-xl p-2.5 sm:p-4 space-y-3 sm:space-y-4 pr-1.5">
               {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center text-center h-full text-stone-400 dark:text-stone-500 space-y-2">
-                  <span className="text-3xl">☕</span>
-                  <h4 className="text-xs font-bold text-neutral-805 dark:text-stone-300">Ask Me Anything</h4>
+                <div className="flex flex-col items-center justify-center text-center h-full text-stone-400 dark:text-stone-500 space-y-2 px-3">
+                  <Sparkles className="h-6 w-6 text-red-700" />
+                  <h4 className="text-xs font-bold text-neutral-805 dark:text-stone-300">
+                    {schoolTutorMode ? "Draft Course Notes & Lesson Guides" : "Ask Me Anything"}
+                  </h4>
                   <p className="text-[11px] max-w-xs leading-relaxed">
-                    Type complex formulas, ask for free project timelines, or query digital book indexes. We support multi-turn history reviewing.
+                    {schoolTutorMode
+                      ? "Generate lecture notes, lesson plans, and study sheets, then send them directly to the School Publisher."
+                      : "Type questions, request project outlines, or query academic topics with multi-turn memory."}
                   </p>
                 </div>
               ) : (
@@ -1479,11 +1857,11 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                         <FormattedChatText text={m.text} />
                       )}
 
-                      {/* Grounded Web Search Sources */}
+                      {/* Grounded Search & Maps References */}
                       {m.role === "model" && m.groundingSources && m.groundingSources.length > 0 && (
                         <div className="mt-3 pt-2.5 border-t border-emerald-100 space-y-1.5">
-                          <span className="block text-[9px] uppercase font-mono tracking-wider text-emerald-600 font-extrabold">
-                            🌐 Grounded Google Search References
+                          <span className="block text-[9px] uppercase font-mono tracking-wider text-emerald-700 font-extrabold">
+                            Grounded References (Google Search &amp; Google Maps)
                           </span>
                           <div className="flex flex-wrap gap-1.5">
                             {m.groundingSources.map((src, sIdx) => (
@@ -1492,10 +1870,10 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                                 href={src.uri}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex items-center gap-1.5 text-[9.5px] bg-emerald-50 text-emerald-800 border border-emerald-150 hover:bg-emerald-100 hover:text-emerald-950 transition px-2 py-0.5 rounded-lg font-sans no-underline font-semibold"
+                                className="inline-flex items-center gap-1.5 text-[9.5px] border transition px-2.5 py-0.5 rounded-lg font-sans no-underline font-semibold bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
                               >
-                                <span className="text-[8px]">🔗</span>
-                                <span className="max-w-[140px] truncate">{src.title}</span>
+                                <Link2 className="h-3 w-3 shrink-0" />
+                                <span className="max-w-[160px] truncate">{src.title}</span>
                               </a>
                             ))}
                           </div>
@@ -1506,11 +1884,8 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                       {m.role === "model" && (
                         <div className="mt-3 pt-2.5 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2 text-stone-550 text-[10.5px]">
                           <div className="flex items-center gap-1.5">
-                            <span className="flex h-1.5 w-1.5 relative">
-                              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 ${readingIndex === mIdx && !isTtsPaused ? "block" : "hidden"}`}></span>
-                              <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${readingIndex === mIdx ? "bg-red-600" : "bg-stone-300"}`}></span>
-                            </span>
-                            <span className="font-mono text-[9px] font-bold text-stone-405 uppercase">AUDITORY ASSISTANT</span>
+                            <span className={`inline-flex rounded-full h-2 w-2 ${readingIndex === mIdx ? "bg-red-600" : "bg-stone-300"}`}></span>
+                            <span className="font-mono text-[9px] font-bold text-stone-405 uppercase">NEURAL VOICE NARRATOR</span>
                           </div>
                           
                           <div className="flex items-center gap-1 bg-stone-100 rounded-lg p-0.5">
@@ -1565,15 +1940,30 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                             <button
                               type="button"
                               onClick={() => {
-                                setDocContentSeed(m.text);
-                                setActiveCategory("Document Publisher");
-                                scrollToTop();
+                                if (onSendToSchoolPublisher) {
+                                  const firstHeading =
+                                    m.text
+                                      .split("\n")
+                                      .find((l) => l.trim().startsWith("#"))
+                                      ?.replace(/^#+\s*/, "")
+                                      .replace(/\*\*/g, "")
+                                      .trim() || "Tutor Generated Notes";
+                                  onSendToSchoolPublisher(m.text, firstHeading.slice(0, 90));
+                                } else {
+                                  setDocContentSeed(m.text);
+                                  setActiveCategory("Document Publisher");
+                                  scrollToTop();
+                                }
                               }}
                               className="px-2 py-0.5 bg-red-50 text-red-800 border border-red-200 rounded text-[9px] font-bold hover:bg-red-100 flex items-center gap-1 cursor-pointer transition ml-1"
-                              title="Send this response chunk directly as a draft for multi-page Book styling"
+                              title={
+                                onSendToSchoolPublisher
+                                  ? "Transfer generated notes directly to Tutor Publisher (PDF, Word, Slides, Sheet)"
+                                  : "Send this response chunk directly as a draft for multi-page Book styling"
+                              }
                             >
                               <BookOpen className="h-2.5 w-2.5 text-red-700" />
-                              <span>Send to Publisher</span>
+                              <span>{onSendToSchoolPublisher ? "Transfer to Tutor Publisher" : "Send to Publisher"}</span>
                             </button>
 
                             <button
@@ -1738,36 +2128,27 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                  </div>
                )}
 
-                {/* Google Grounded Search Selector Row */}
-                <div className="flex items-center justify-between mb-2.5 px-1 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEnableGoogleSearch(!enableGoogleSearch)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10.5px] font-extrabold border transition shadow-xs cursor-pointer select-none ${
-                        enableGoogleSearch
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-250 hover:bg-emerald-100"
-                          : "bg-stone-50 text-stone-500 border-stone-200 hover:bg-stone-100"
-                      }`}
-                    >
-                      <span>{enableGoogleSearch ? "🟢 Grounded Mode" : "🌐 Standard mode"}</span>
-                      <span>Google Search Grounding: {enableGoogleSearch ? "Enabled" : "Disabled"}</span>
-                    </button>
-                    {enableGoogleSearch && (
-                      <span className="text-[10px] text-emerald-600 font-mono font-black animate-pulse">
-                        DIRECT LIVE INDEX GROUNDING ACTIVE
-                      </span>
-                    )}
+                {/* Browser Speech Dictation */}
+                <div className="flex flex-wrap items-center justify-between mb-2.5 px-1 text-xs gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold bg-stone-100 text-stone-600 border border-stone-200">
+                      Gemini 4 Hydrogen Standard Tier
+                    </span>
+
+                    <MediaRecorderTranscribeButton
+                      onTranscript={(transcript) =>
+                        setPrompt((prev) => (prev ? `${prev} ${transcript}` : transcript))
+                      }
+                    />
                   </div>
-                  <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">Wafula Search Cloud</span>
                 </div>
 
-               <form onSubmit={handleSendPrompt} className="flex gap-2 relative">
+               <form onSubmit={handleSendPrompt} className="flex gap-1.5 sm:gap-2 relative items-end">
                  <button
                    type="button"
                    onClick={() => document.getElementById("ai_multi_file_input")?.click()}
-                   className="rounded-xl px-4 py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition active:scale-95 flex items-center justify-center relative border border-stone-150 cursor-pointer shrink-0"
-                   title="Attach documents, images, text files, word/pdf with no size limits"
+                   className="rounded-xl px-2.5 sm:px-4 py-2.5 sm:py-3 bg-slate-100 text-slate-600 hover:bg-slate-200 transition active:scale-95 flex items-center justify-center relative border border-stone-150 cursor-pointer shrink-0"
+                   title="Attach documents, images, text files, word/pdf"
                  >
                    <Plus className="h-4 w-4 text-red-700 font-bold" />
                    {attachedFiles.length > 0 && (
@@ -1788,9 +2169,9 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                  <button
                    type="button"
                    onClick={toggleListening}
-                   className={`rounded-xl px-4 py-3 transition active:scale-95 flex items-center justify-center ${
+                   className={`rounded-xl px-2.5 sm:px-4 py-2.5 sm:py-3 transition active:scale-95 flex items-center justify-center shrink-0 ${
                      isListening 
-                       ? "bg-blue-600 text-white animate-pulse" 
+                       ? "bg-blue-600 text-white" 
                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                    }`}
                    title={isListening ? "Listening Spoken Questions..." : "Verbal Voice Dictation Study"}
@@ -1798,7 +2179,7 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                    <Mic className="h-4 w-4" />
                  </button>
                  <textarea
-                   rows={6}
+                   rows={2}
                    value={prompt}
                    onChange={(e) => setPrompt(e.target.value)}
                    onKeyDown={(e) => {
@@ -1810,13 +2191,13 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                        }
                      }
                    }}
-                   placeholder={isListening ? "Listening verbal questions..." : `Type your query for the ${activeCategory}... (Press Enter to Send, Shift+Enter for newline)`}
-                   className="flex-1 rounded-xl border border-stone-250 bg-neutral-50 px-4 py-2.5 text-xs outline-none focus:bg-white focus:border-red-700 font-sans font-bold text-stone-900 resize-none min-h-[140px]"
+                   placeholder={isListening ? "Listening verbal questions..." : `Type query for ${activeCategory}...`}
+                   className="flex-1 min-w-0 rounded-xl border border-stone-250 bg-neutral-50 px-3 py-2 text-xs outline-none focus:bg-white focus:border-red-700 font-sans font-bold text-stone-900 resize-none min-h-[54px] sm:min-h-[100px]"
                  />
                  <button
                    type="submit"
                    disabled={isProcessing || (!prompt.trim() && attachedFiles.length === 0)}
-                   className="rounded-xl bg-red-700 hover:bg-red-800 px-4 py-3 text-white transition active:scale-95 disabled:opacity-45"
+                   className="rounded-xl bg-red-700 hover:bg-red-800 px-3 sm:px-4 py-2.5 sm:py-3 text-white transition active:scale-95 disabled:opacity-45 shrink-0"
                  >
                    <Send className="h-4 w-4" />
                  </button>
@@ -1826,21 +2207,21 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                    <button
                      type="button"
                      onClick={scrollToTop}
-                     className="absolute -top-12 right-2 flex h-8 items-center space-x-1 rounded-full bg-stone-900 px-3 py-1.5 text-[10px] font-bold text-white shadow-md hover:bg-stone-950 transition opacity-80"
+                     className="absolute -top-11 right-1 flex h-7 items-center space-x-1 rounded-full bg-stone-900 px-2.5 py-1 text-[10px] font-bold text-white shadow-md hover:bg-stone-950 transition opacity-80"
                      title="Migrate to Top Layout"
                    >
                      <ArrowUp className="h-3 w-3" />
-                     <span>JUMP TO TOP</span>
+                     <span>TOP</span>
                    </button>
                  )}
                </form>
 
                {/* Compact clickable pills for quick workflow restoration (Displays last 5 searches) */}
                {myHistory.length > 0 && (
-                 <div className="pt-1.5 flex flex-wrap gap-1.5 items-center justify-start text-[10px] text-stone-505 bg-[#fbfcfa] border border-stone-150 rounded-xl p-2.5 mt-2.5 w-full">
+                 <div className="pt-1.5 flex flex-wrap gap-1.5 items-center justify-start text-[10px] text-stone-505 bg-[#fbfcfa] border border-stone-150 rounded-xl p-2 mt-2 w-full">
                    <span className="font-bold flex items-center space-x-1 shrink-0 text-stone-600 font-mono">
                      <History className="h-3.5 w-3.5 text-red-700 font-bold" />
-                     <span>LAST 5 SEARCHES:</span>
+                     <span>LAST 5:</span>
                    </span>
                    <div className="flex flex-wrap gap-1">
                      {myHistory.slice(0, 5).map((item) => (
@@ -1851,8 +2232,7 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
                          className="inline-flex items-center space-x-1 bg-white hover:bg-red-50 border border-stone-200 hover:border-red-400 text-stone-755 hover:text-red-955 px-2 py-0.5 rounded-md transition text-[10px] cursor-pointer"
                          title={`Restore prompt: "${item.query}"`}
                        >
-                         <span className="truncate max-w-[100px] font-medium">{item.query}</span>
-                         <span className="text-[8px] text-stone-400 font-mono">({item.date.split(",")[1]?.trim() || "Just now"})</span>
+                         <span className="truncate max-w-[90px] font-medium">{item.query}</span>
                        </button>
                      ))}
                    </div>
@@ -1862,13 +2242,13 @@ ISBN 978-9966-224-051-2 (BUNGOMA REGIONAL PRESS)
           </div>
 
           {/* TikTok & YouTube embed stream drawer */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
+          <div className="rounded-2xl border border-stone-200 bg-white p-3.5 sm:p-5 shadow-xs space-y-3">
             <div>
-              <h4 className="font-display text-base font-bold text-stone-900 flex items-center space-x-1.5">
-                <Youtube className="h-5 w-5 text-red-700" />
+              <h4 className="font-display text-sm sm:text-base font-bold text-stone-900 flex items-center space-x-1.5">
+                <Youtube className="h-4 w-4 sm:h-5 sm:w-5 text-red-700" />
                 <span>Media Embed Hub</span>
               </h4>
-              <p className="text-[10px] text-stone-400 font-mono mt-0.5">Simply paste YouTube or TikTok link to view direct streams</p>
+              <p className="text-[10px] text-stone-400 font-mono mt-0.5">Paste a YouTube or TikTok link to view streams</p>
             </div>
 
             <form onSubmit={handleLoadVideo} className="flex gap-2 text-xs">

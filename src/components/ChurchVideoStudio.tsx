@@ -344,7 +344,7 @@ Exported natively from Zion Digital AI Media Suite.
   const handleCompileVideo = () => {
     setIsCompiling(true);
     setCompileProgress(10);
-    setCompileStatus("Initializing Veo 3.5 Video Framebuffer...");
+    setCompileStatus("Initializing Local Canvas Video Framebuffer...");
     setCompileLogs(["Starting timeline assembly...", "Ingesting selected high-fidelity photos."]);
 
     setTimeout(() => {
@@ -919,7 +919,7 @@ Exported natively from Zion Digital AI Media Suite.
               {isCompiling ? (
                 <>
                   <RefreshCw className="h-4 w-4 animate-spin text-white" />
-                  <span>Veo 3.5 compiling... {compileProgress}%</span>
+                  <span>Compiling slideshow... {compileProgress}%</span>
                 </>
               ) : (
                 <>

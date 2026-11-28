@@ -335,107 +335,13 @@ function createDefaultAcademicState(): AcademicStoreState {
     assessments: {},
     scores: {},
     attendance: {},
-    timetables: {
-      tt_seed_1: {
-        id: "tt_seed_1",
-        institutionId: instId,
-        classId: clsForm2E,
-        day: "Monday",
-        timeSlot: "08:00 - 09:00",
-        subjectName: "Mathematics",
-        teacherName: "Mr. Kelvin Wafula",
-        room: "Room 2A",
-      },
-      tt_seed_2: {
-        id: "tt_seed_2",
-        institutionId: instId,
-        classId: clsForm2E,
-        day: "Monday",
-        timeSlot: "09:15 - 10:15",
-        subjectName: "Christian Religious Education",
-        teacherName: "Ms. Grace Achieng",
-        room: "Chapel Hall",
-      },
-      tt_seed_3: {
-        id: "tt_seed_3",
-        institutionId: instId,
-        classId: clsGrade6,
-        day: "Tuesday",
-        timeSlot: "10:30 - 11:30",
-        subjectName: "Computer Studies",
-        teacherName: "Mr. David Ochieng",
-        room: "ICT Lab 1",
-      },
-    },
-    lessonPlans: {
-      lp_seed_1: {
-        id: "lp_seed_1",
-        institutionId: instId,
-        classId: clsForm2E,
-        subjectName: "Mathematics",
-        topic: "Linear Equations & Practical Word Problems",
-        objectives: "Solve two-step linear equations and model real Kenyan financial word problems.",
-        teacherEmail: "wafulak435@gmail.com",
-        date: "2026-06-08",
-      },
-    },
+    timetables: {},
+    lessonPlans: {},
     disciplineRecords: {},
-    assignments: {
-      asg_seed_1: {
-        id: "asg_seed_1",
-        institutionId: instId,
-        classId: clsForm2E,
-        subjectName: "Christian Religious Education",
-        title: "Servant Leadership Essay (500 words)",
-        instructions: "Explain three principles of servant leadership modeled in Nehemiah and modern civic leadership.",
-        dueDate: "2026-06-25",
-        createdBy: "wafulak435@gmail.com",
-        submissions: [],
-      },
-    },
+    assignments: {},
     parentMessages: {},
-    transportRoutes: {
-      tr_seed_1: {
-        id: "tr_seed_1",
-        institutionId: instId,
-        routeName: "Bungoma Town – Kanduyi Route",
-        vehicleReg: "KDK 412Z",
-        driverName: "Samuel Wekesa",
-        departureTime: "06:30 AM",
-        stops: "Kanduyi, Bungoma CBD, Kibabii",
-        assignedCount: 38,
-      },
-      tr_seed_2: {
-        id: "tr_seed_2",
-        institutionId: instId,
-        routeName: "Webuye – Kimilili Express",
-        vehicleReg: "KDM 809M",
-        driverName: "Peter Simiyu",
-        departureTime: "06:15 AM",
-        stops: "Webuye, Bokoli, Kimilili",
-        assignedCount: 42,
-      },
-    },
-    inventoryItems: {
-      inv_seed_1: {
-        id: "inv_seed_1",
-        institutionId: instId,
-        name: "Student Chromebooks & Lab PCs",
-        category: "ICT Equipment",
-        quantity: 45,
-        condition: "Good",
-        location: "Computer Lab A",
-      },
-      inv_seed_2: {
-        id: "inv_seed_2",
-        institutionId: instId,
-        name: "KNEC & CBC Mathematics Textbooks",
-        category: "Library Stock",
-        quantity: 180,
-        condition: "Good",
-        location: "Main Library",
-      },
-    },
+    transportRoutes: {},
+    inventoryItems: {},
     calendarEvents: {
       cal_1: {
         id: "cal_1",
@@ -482,6 +388,14 @@ const ACADEMICS_BACKUP_FILE = `${ACADEMICS_STATE_FILE}.bak`;
 
 function hydrateAcademicState(parsed: Partial<AcademicStoreState>): AcademicStoreState {
   const fallback = createDefaultAcademicState();
+  const cleanMap = <T extends Record<string, any>>(obj: T | undefined, seedPrefixes: string[]): T => {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (seedPrefixes.some((p) => k.startsWith(p))) continue;
+      out[k] = v;
+    }
+    return out as T;
+  };
   return {
     institutions: parsed.institutions && Object.keys(parsed.institutions).length > 0 ? parsed.institutions : fallback.institutions,
     years: parsed.years || fallback.years,
@@ -492,13 +406,13 @@ function hydrateAcademicState(parsed: Partial<AcademicStoreState>): AcademicStor
     assessments: parsed.assessments || {},
     scores: parsed.scores || {},
     attendance: parsed.attendance || {},
-    timetables: parsed.timetables || fallback.timetables,
-    lessonPlans: parsed.lessonPlans || fallback.lessonPlans,
+    timetables: cleanMap(parsed.timetables, ["tt_seed_"]),
+    lessonPlans: cleanMap(parsed.lessonPlans, ["lp_seed_"]),
     disciplineRecords: parsed.disciplineRecords || {},
-    assignments: parsed.assignments || fallback.assignments,
+    assignments: cleanMap(parsed.assignments, ["asg_seed_"]),
     parentMessages: parsed.parentMessages || {},
-    transportRoutes: parsed.transportRoutes || fallback.transportRoutes,
-    inventoryItems: parsed.inventoryItems || fallback.inventoryItems,
+    transportRoutes: cleanMap(parsed.transportRoutes, ["tr_seed_"]),
+    inventoryItems: cleanMap(parsed.inventoryItems, ["inv_seed_"]),
     calendarEvents: parsed.calendarEvents || fallback.calendarEvents,
   };
 }

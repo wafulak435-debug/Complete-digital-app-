@@ -1307,7 +1307,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
         {
           prompt: promptToSend,
           category: "Problem Solver",
-          enableGoogleSearch: enableGrounding,
+          enableGoogleSearch: false,
           images: imagesPayload.length > 0 ? imagesPayload : undefined
         },
         {
@@ -1376,7 +1376,7 @@ export default function DocStudio({ currentUser, onAddNewDocument, savedDocument
         {
           prompt: promptToSend,
           category: "Problem Solver",
-          enableGoogleSearch: voiceQueryGrounding
+          enableGoogleSearch: false
         },
         {
           saveHistory: true,

@@ -102,10 +102,10 @@ export default function MusicSandbox() {
     setCurrentSong(null);
     setIsPlaying(false);
 
-    // Staggered simulation of Lyria Neural Music engine
+    // Staggered local Web Audio synthesizer build
     const intervals = [
-      { p: 25, m: "Deconstruct prompt keyword syntax..." },
-      { p: 50, m: "Synthesizing chord layers & baseline frequencies in Lyria 3.1..." },
+      { p: 25, m: "Deconstructing prompt keyword syntax..." },
+      { p: 50, m: "Synthesizing chord layers & bassline frequencies locally..." },
       { p: 75, m: "Compiling karaoke sync files & metric alignments..." },
       { p: 100, m: "Ready to preview!" }
     ];
@@ -117,9 +117,9 @@ export default function MusicSandbox() {
           setIsSynthesizing(false);
           // Assemble a custom procedural Song based on prompt
           const customSong: SongTemplate = {
-            title: prompt.substring(0, 24) + " (AI Song)",
+            title: prompt.substring(0, 24) + " (Studio Track)",
             genre: selectedGenre,
-            emoji: "✨",
+            emoji: "",
             bpm: bpm,
             lyrics: [
               `Singing clear for standard: ${prompt.toLowerCase()}`,
@@ -130,7 +130,7 @@ export default function MusicSandbox() {
             notes: [[261.63, 1], [329.63, 1], [392, 1.5], [440, 0.5], [523.25, 2]]
           };
           setCurrentSong(customSong);
-          alert("🎶 Prompt transformed successfully into a synchronized complete track via Lyria AI!");
+          alert("Prompt transformed into a synchronized Web Audio track.");
         }
       }, (idx + 1) * 800);
     });
@@ -314,7 +314,7 @@ export default function MusicSandbox() {
 
     const steps = [
       { p: 40, s: "Extracting acoustic signature and motion vector anchors..." },
-      { p: 70, s: "Applying Lyria generative weights targeting " + lyriaVibe + " tone..." },
+      { p: 70, s: "Applying local acoustic synthesis targeting " + lyriaVibe + " tone..." },
       { p: 90, s: "Synthesizing frequency waveforms onto container layers..." },
       { p: 100, s: "Rendering finalized stream video container..." }
     ];
@@ -328,7 +328,7 @@ export default function MusicSandbox() {
           setIsGeneratingVideoBed(false);
           // Set a stock high-fidelity background music combined video
           setMergedVideoUrl("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
-          alert("🎥 Lyria AI has successfully merged custom background orchestration with your uploaded video clip!");
+          alert("Custom background orchestration merged with your uploaded video clip.");
         }
       }, (idx + 1) * 1100);
     });
@@ -364,10 +364,10 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
         <div>
           <h2 className="font-display text-2xl font-black text-stone-900 tracking-tight flex items-center gap-2">
             <Music className="h-6 w-6 text-red-700 animate-pulse" />
-            <span>Zion Lyria Music AI Playground</span>
+            <span>Zion Worship Music Studio</span>
           </h2>
           <p className="text-sm text-stone-500 mt-1">
-            Build procedural songs with Lyria generative audio nodes, overlay movie audio beds, and export high-quality karaoke video.
+            Build procedural songs with local Web Audio synthesis nodes, overlay video audio beds, and export karaoke clips.
           </p>
         </div>
 
@@ -389,7 +389,7 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
             }`}
           >
             <Video className="h-3.5 w-3.5" />
-            <span>Lyria Video Bed</span>
+            <span>Video Audio Bed</span>
           </button>
         </div>
       </div>
@@ -398,7 +398,7 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
         <div className="grid gap-6 md:grid-cols-12">
           {/* Prompt composer */}
           <form onSubmit={handleGenerateFromPrompt} className="md:col-span-5 bg-stone-50 border border-stone-200 p-5 rounded-2xl space-y-4">
-            <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-rose-700 block">LYRIA CREATOR SHELL</span>
+            <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-rose-700 block">WEB AUDIO SYNTHESIZER</span>
             
             <div className="space-y-1">
               <label className="text-xs font-bold text-stone-700 block">Describe the musical theme / lyric style</label>
@@ -596,7 +596,7 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
                 <div className="h-14 w-14 bg-stone-900 rounded-full flex items-center justify-center border border-stone-800">
                   <Music className="h-6 w-6 text-stone-500 animate-bounce" />
                 </div>
-                <h4 className="font-display font-bold text-sm text-stone-300">Lyria Stage Inactive</h4>
+                <h4 className="font-display font-bold text-sm text-stone-300">Synthesizer Stage Inactive</h4>
                 <p className="text-xs text-stone-500 max-w-xs leading-relaxed">
                   Compose a custom description prompt or click one of our canonical Highlands seed presets to synthesize audio tracks natively!
                 </p>
@@ -605,13 +605,13 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
           </div>
         </div>
       ) : (
-        /* Lyria custom video bed maker */
+        /* Custom video audio bed maker */
         <div className="bg-stone-50 border border-stone-200 rounded-2xl p-6 space-y-6">
           <div className="max-w-xl text-left space-y-1.5">
             <span className="text-[10px] font-mono font-bold tracking-widest text-emerald-700 uppercase">Acoustic Sound Mapping Node</span>
-            <h3 className="font-display font-bold text-lg text-stone-900">Upload Video & Generate Custom Lyria Master track</h3>
+            <h3 className="font-display font-bold text-lg text-stone-900">Upload Video &amp; Generate Custom Audio Bed Track</h3>
             <p className="text-xs text-stone-500 leading-relaxed">
-              Upload any video from your phone or device, describe the visual backdrop, and let Lyria analyze motion pixels to compose a perfectly matching customized orchestration bed clip.
+              Upload any video from your phone or device, describe the visual backdrop, and compose a matching background orchestration bed clip locally.
             </p>
           </div>
 
@@ -685,7 +685,7 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4 text-emerald-300" />
-                    <span>Compose and Merge Lyria Bed</span>
+                    <span>Compose and Merge Audio Bed</span>
                   </>
                 )}
               </button>
@@ -706,18 +706,18 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
                   <div className="relative rounded-lg overflow-hidden border border-stone-800 bg-black flex items-center justify-center h-[260px]">
                     <video src={mergedVideoUrl} controls className="w-full h-full object-contain" autoPlay muted />
                     <span className="absolute top-2 left-2 px-2 py-0.5 bg-emerald-600 text-[8px] font-bold uppercase tracking-wider rounded-md font-mono">
-                      ✓ AUDIO BED INJECTED BY LYRIA
+                      AUDIO BED MERGED
                     </span>
                   </div>
                   
                   <div className="flex items-center justify-between pt-3">
                     <div>
                       <span className="text-[10px] text-stone-400 font-mono block">FILE COMPILED OK</span>
-                      <strong className="text-xs text-white block">custom_lyria_master_output.mp4</strong>
+                      <strong className="text-xs text-white block">custom_zion_audio_master.mp4</strong>
                     </div>
                     <a
                       href={mergedVideoUrl}
-                      download="lyria_master_compilation.mp4"
+                      download="zion_audio_master_compilation.mp4"
                       className="px-3 py-1.5 bg-white text-stone-950 hover:bg-neutral-100 rounded-lg text-xs font-bold flex items-center gap-1 shadow hover:scale-103 active:scale-97 transition"
                     >
                       <Download className="h-3.5 w-3.5 text-stone-850" />
@@ -730,11 +730,11 @@ ${song.lyrics.map((l, i) => `[00:0${i * 3}.00] ${l}`).join("\n")}
                   <div className="relative rounded-lg overflow-hidden border border-stone-800 bg-black flex items-center justify-center h-[260px]">
                     <video src={uploadedVideoUrl} controls className="w-full h-full object-contain" />
                     <span className="absolute top-2 left-2 px-2 py-0.5 bg-amber-600 text-[8px] font-bold uppercase tracking-wider rounded-md font-mono">
-                      ⏳ UNPROCESSED SOURCE VIDEO (SILENT)
+                      UNPROCESSED SOURCE VIDEO (SILENT)
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-400 text-center italic">
-                    Press the green "Compose and Merge Lyria Bed" button to start neural synchronization!
+                    Press "Compose and Merge Audio Bed" to synchronize your soundtrack.
                   </p>
                 </div>
               ) : (

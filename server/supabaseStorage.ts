@@ -1,7 +1,13 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import fs from "fs";
+import path from "path";
 import type { AuthenticatedRequest } from "./security";
 
 export const SUPABASE_UPLOADS_BUCKET = "user-uploads";
+
+const VAULT_DIR = path.join(process.cwd(), "data", "vault");
+if (!fs.existsSync(VAULT_DIR)) {
+  fs.mkdirSync(VAULT_DIR, { recursive: true });
+}
 
 const ALLOWED_BUCKET_MIMES = new Set([
   "image/png",
@@ -13,48 +19,12 @@ const ALLOWED_BUCKET_MIMES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
-let cachedAdminClient: SupabaseClient | null = null;
-let cachedConfigKey = "";
-let bucketReady = false;
-let bucketPromise: Promise<boolean> | null = null;
-
-function readSupabaseServerCredentials() {
-  const url = (
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    ""
-  ).trim();
-  const secretKey = (
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    ""
-  ).trim();
-  return { url, secretKey };
-}
-
 export function isSupabaseAdminStorageEnabled(): boolean {
-  if (process.env.ZION_TEST_MODE === "1") return false;
-  const { url, secretKey } = readSupabaseServerCredentials();
-  return Boolean(url && secretKey && (url.startsWith("https://") || url.startsWith("http://")));
+  return false;
 }
 
-export function getSupabaseStorageAdminClient(): SupabaseClient | null {
-  if (!isSupabaseAdminStorageEnabled()) return null;
-  const { url, secretKey } = readSupabaseServerCredentials();
-  const configKey = `${url}|${secretKey.slice(0, 12)}`;
-  if (!cachedAdminClient || cachedConfigKey !== configKey) {
-    cachedAdminClient = createClient(url, secretKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-    cachedConfigKey = configKey;
-    bucketReady = false;
-    bucketPromise = null;
-  }
-  return cachedAdminClient;
+export function getSupabaseStorageAdminClient(): any {
+  return null;
 }
 
 export async function ensureSupabaseUploadsBucket(): Promise<{
@@ -62,48 +32,7 @@ export async function ensureSupabaseUploadsBucket(): Promise<{
   bucket: string;
   error?: string;
 }> {
-  const client = getSupabaseStorageAdminClient();
-  if (!client) {
-    return { ready: false, bucket: SUPABASE_UPLOADS_BUCKET, error: "Supabase admin credentials not active." };
-  }
-  if (bucketReady) {
-    return { ready: true, bucket: SUPABASE_UPLOADS_BUCKET };
-  }
-  if (bucketPromise) {
-    const ok = await bucketPromise;
-    return { ready: ok, bucket: SUPABASE_UPLOADS_BUCKET };
-  }
-
-  bucketPromise = (async () => {
-    try {
-      const { data, error } = await client.storage.getBucket(SUPABASE_UPLOADS_BUCKET);
-      if (!error && data) {
-        bucketReady = true;
-        return true;
-      }
-
-      const { error: createErr } = await client.storage.createBucket(SUPABASE_UPLOADS_BUCKET, {
-        public: false,
-        fileSizeLimit: 52428800,
-        allowedMimeTypes: Array.from(ALLOWED_BUCKET_MIMES),
-      });
-
-      if (!createErr || createErr.message?.toLowerCase().includes("already exists")) {
-        bucketReady = true;
-        return true;
-      }
-      console.warn("Supabase bucket create warning:", createErr.message);
-      return false;
-    } catch (err: any) {
-      console.warn("Supabase ensureBucket warning:", err?.message || err);
-      return false;
-    } finally {
-      bucketPromise = null;
-    }
-  })();
-
-  const ok = await bucketPromise;
-  return { ready: ok, bucket: SUPABASE_UPLOADS_BUCKET };
+  return { ready: true, bucket: SUPABASE_UPLOADS_BUCKET };
 }
 
 export function getSafeUserStorageFolder(identity: NonNullable<AuthenticatedRequest["identity"]>): string {
@@ -115,6 +44,7 @@ export function getSafeUserStorageFolder(identity: NonNullable<AuthenticatedRequ
 export function sanitizeVaultObjectPath(rawPath: string): string | null {
   const cleaned = String(rawPath || "")
     .replace(/^supabase:\/\/user-uploads\//, "")
+    .replace(/^firestore:\/\/user-uploads\//, "")
     .replace(/\\/g, "/")
     .replace(/^\/+/, "");
   if (!cleaned || cleaned.includes("..") || cleaned.includes("\0")) return null;
@@ -131,43 +61,27 @@ export async function mirrorBookFileToSupabase(
   ext: ".pdf" | ".docx",
   buffer: Buffer
 ): Promise<boolean> {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return false;
-
-  const contentType =
-    ext === ".pdf"
-      ? "application/pdf"
-      : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-  const objectPath = `books/${bookId}${ext}`;
-  const { error } = await client.storage.from(SUPABASE_UPLOADS_BUCKET).upload(objectPath, buffer, {
-    contentType,
-    cacheControl: "3600",
-    upsert: true,
-  });
-
-  if (error) {
-    console.warn("Mirror book to Supabase warning:", error.message);
+  try {
+    const filePath = path.join(VAULT_DIR, "books", `${bookId}${ext}`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, buffer);
+    return true;
+  } catch {
     return false;
   }
-  return true;
 }
 
 export async function downloadBookFileFromSupabase(
   bookId: string,
   ext: ".pdf" | ".docx"
 ): Promise<Buffer | null> {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return null;
-
-  const objectPath = `books/${bookId}${ext}`;
-  const { data, error } = await client.storage.from(SUPABASE_UPLOADS_BUCKET).download(objectPath);
-  if (error || !data) return null;
-
-  const arrayBuf = await data.arrayBuffer();
-  return Buffer.from(arrayBuf);
+  try {
+    const filePath = path.join(VAULT_DIR, "books", `${bookId}${ext}`);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath);
+    }
+  } catch {}
+  return null;
 }
 
 export async function uploadVaultFileViaAdmin(params: {
@@ -177,10 +91,6 @@ export async function uploadVaultFileViaAdmin(params: {
   mimeType: string;
   buffer: Buffer;
 }): Promise<{ path: string; signedUrl: string | null } | null> {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return null;
-
   const mime = ALLOWED_BUCKET_MIMES.has(params.mimeType)
     ? params.mimeType
     : "application/octet-stream";
@@ -190,32 +100,21 @@ export async function uploadVaultFileViaAdmin(params: {
 
   const safeName = params.fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file.bin";
   const objectPath = `${params.ownerFolder}/${params.folder}/${Date.now()}_${safeName}`;
+  const diskPath = path.join(VAULT_DIR, objectPath);
 
-  const { error } = await client.storage.from(SUPABASE_UPLOADS_BUCKET).upload(objectPath, params.buffer, {
-    contentType: mime,
-    cacheControl: "3600",
-    upsert: false,
-  });
+  fs.mkdirSync(path.dirname(diskPath), { recursive: true });
+  fs.writeFileSync(diskPath, params.buffer);
 
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const { data: signedData } = await client.storage
-    .from(SUPABASE_UPLOADS_BUCKET)
-    .createSignedUrl(objectPath, 3600);
+  // Data URL for immediate preview
+  const dataUrl = `data:${mime};base64,${params.buffer.toString("base64")}`;
 
   return {
     path: objectPath,
-    signedUrl: signedData?.signedUrl || null,
+    signedUrl: dataUrl,
   };
 }
 
 export async function listVaultFilesViaAdmin(ownerFolder: string) {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return null;
-
   const folders: Array<"documents" | "images"> = ["documents", "images"];
   const collected: Array<{
     name: string;
@@ -227,53 +126,72 @@ export async function listVaultFilesViaAdmin(ownerFolder: string) {
   }> = [];
 
   for (const folder of folders) {
-    const { data, error } = await client.storage
-      .from(SUPABASE_UPLOADS_BUCKET)
-      .list(`${ownerFolder}/${folder}`, {
-        limit: 100,
-        sortBy: { column: "created_at", order: "desc" },
-      });
+    const dir = path.join(VAULT_DIR, ownerFolder, folder);
+    if (!fs.existsSync(dir)) continue;
 
-    if (!error && Array.isArray(data)) {
-      for (const obj of data) {
-        if (!obj.name || obj.name === ".emptyFolderPlaceholder") continue;
-        const fullPath = `${ownerFolder}/${folder}/${obj.name}`;
-        const { data: signed } = await client.storage
-          .from(SUPABASE_UPLOADS_BUCKET)
-          .createSignedUrl(fullPath, 3600);
-        collected.push({
-          name: obj.name,
-          path: fullPath,
-          size: Number((obj.metadata as any)?.size || 0),
-          mimeType: String((obj.metadata as any)?.mimetype || "application/octet-stream"),
-          createdAt: obj.created_at || new Date().toISOString(),
-          signedUrl: signed?.signedUrl || undefined,
-        });
-      }
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+      if (file.startsWith(".")) continue;
+      const fullDisk = path.join(dir, file);
+      const stat = fs.statSync(fullDisk);
+      const relPath = `${ownerFolder}/${folder}/${file}`;
+      const ext = path.extname(file).toLowerCase();
+      const mime =
+        ext === ".pdf"
+          ? "application/pdf"
+          : ext === ".png"
+          ? "image/png"
+          : ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : ext === ".webp"
+          ? "image/webp"
+          : "application/octet-stream";
+
+      collected.push({
+        name: file,
+        path: relPath,
+        size: stat.size,
+        mimeType: mime,
+        createdAt: stat.birthtime.toISOString(),
+      });
     }
   }
 
   return collected;
 }
 
-export async function getVaultSignedUrlViaAdmin(objectPath: string, expiresInSeconds = 3600): Promise<string | null> {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return null;
+export async function getVaultSignedUrlViaAdmin(objectPath: string, _expiresInSeconds = 3600): Promise<string | null> {
+  const diskPath = path.join(VAULT_DIR, objectPath);
+  if (!fs.existsSync(diskPath)) return null;
 
-  const { data, error } = await client.storage
-    .from(SUPABASE_UPLOADS_BUCKET)
-    .createSignedUrl(objectPath, Math.min(86400, Math.max(60, expiresInSeconds)));
-
-  if (error || !data?.signedUrl) return null;
-  return data.signedUrl;
+  try {
+    const buf = fs.readFileSync(diskPath);
+    const ext = path.extname(objectPath).toLowerCase();
+    const mime =
+      ext === ".pdf"
+        ? "application/pdf"
+        : ext === ".png"
+        ? "image/png"
+        : ext === ".jpg" || ext === ".jpeg"
+        ? "image/jpeg"
+        : ext === ".webp"
+        ? "image/webp"
+        : "application/octet-stream";
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 export async function deleteVaultFileViaAdmin(objectPath: string): Promise<boolean> {
-  const { ready } = await ensureSupabaseUploadsBucket();
-  const client = getSupabaseStorageAdminClient();
-  if (!ready || !client) return false;
-
-  const { error } = await client.storage.from(SUPABASE_UPLOADS_BUCKET).remove([objectPath]);
-  return !error;
+  const diskPath = path.join(VAULT_DIR, objectPath);
+  if (fs.existsSync(diskPath)) {
+    try {
+      fs.unlinkSync(diskPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }

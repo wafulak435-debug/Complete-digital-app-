@@ -1,11 +1,23 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { createClient as createSsrBrowserClient, getSupabaseBrowserEnv } from "../utils/supabase/client";
 import type { User, UserProfile, UserHistoryRecord, StorageFileItem } from "../types";
+import { db, auth } from "./firebase";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+} from "firebase/firestore";
 
-const { configured: browserSupabaseConfigured } = getSupabaseBrowserEnv();
 const rawPaystackPublicKey = (import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || "").trim();
 
-export const isSupabaseConfigured = browserSupabaseConfigured;
+// Supabase has been permanently removed in favor of pure Firebase Firestore & Auth
+export const isSupabaseConfigured = false;
+export const supabase: any = null;
 
 export const isPaystackConfigured = Boolean(
   rawPaystackPublicKey &&
@@ -13,10 +25,6 @@ export const isPaystackConfigured = Boolean(
 );
 
 export const paystackPublicKey = rawPaystackPublicKey;
-
-export const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? (createSsrBrowserClient() as unknown as SupabaseClient)
-  : null;
 
 export const USER_UPLOADS_BUCKET = "user-uploads";
 const LOCAL_HISTORY_KEY = "WAFULA_DEMO_USER_HISTORY";
@@ -50,28 +58,37 @@ export function mapProfileToAppUser(
 }
 
 // ============================================================================
-// PROFILES HELPERS
+// PROFILES HELPERS (Using Cloud Firestore)
 // ============================================================================
 
 export async function fetchUserProfile(userId: string): Promise<UserProfile | null> {
-  if (!supabase || !userId) return null;
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (error) {
-    console.warn("Supabase fetchUserProfile warning:", error.message);
-    return null;
+  if (!userId) return null;
+  try {
+    const userRef = doc(db, "users", userId);
+    const snap = await getDoc(userRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        id: snap.id,
+        email: data.email || "",
+        full_name: data.name || data.full_name || "",
+        phone_number: data.phone || data.phone_number || null,
+        role: data.role || "member",
+        subscription_status: data.subscription_status || "free",
+        plan_name: data.plan_name || "Free",
+        credits: typeof data.credits === "number" ? data.credits : 20,
+      } as UserProfile;
+    }
+  } catch (err: any) {
+    console.warn("Firestore fetchUserProfile notice:", err?.message || err);
   }
-  return data as UserProfile | null;
+  return null;
 }
 
 export async function ensureUserProfile(
   authUser: { id: string; email?: string; user_metadata?: Record<string, any> }
 ): Promise<UserProfile | null> {
-  if (!supabase || !authUser?.id) return null;
+  if (!authUser?.id) return null;
 
   const existing = await fetchUserProfile(authUser.id);
   if (existing) return existing;
@@ -83,52 +100,65 @@ export async function ensureUserProfile(
     email.split("@")[0] ||
     "Scholar";
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .upsert(
+  const newProfile: UserProfile = {
+    id: authUser.id,
+    email,
+    full_name: fullName,
+    phone_number: authUser.user_metadata?.phone_number || null,
+    role: "member",
+    subscription_status: "free",
+    plan_name: "Free",
+    credits: 20,
+  };
+
+  try {
+    const userRef = doc(db, "users", authUser.id);
+    await setDoc(
+      userRef,
       {
         id: authUser.id,
         email,
-        full_name: fullName,
-        phone_number: authUser.user_metadata?.phone_number || null,
+        name: fullName,
         role: "member",
         subscription_status: "free",
         plan_name: "Free",
         credits: 20,
+        createdAt: new Date().toISOString(),
       },
-      { onConflict: "id" }
-    )
-    .select()
-    .single();
-
-  if (error) {
-    console.warn("Supabase ensureUserProfile warning:", error.message);
-    return null;
+      { merge: true }
+    );
+  } catch (err: any) {
+    console.warn("Firestore ensureUserProfile notice:", err?.message || err);
   }
-  return data as UserProfile;
+
+  return newProfile;
 }
 
 export async function updateUserProfile(
   userId: string,
   updates: Partial<Pick<UserProfile, "full_name" | "phone_number" | "subscription_status" | "plan_name" | "credits">>
 ): Promise<UserProfile | null> {
-  if (!supabase || !userId) return null;
-  const { data, error } = await supabase
-    .from("profiles")
-    .update(updates)
-    .eq("id", userId)
-    .select()
-    .single();
+  if (!userId) return null;
+  try {
+    const userRef = doc(db, "users", userId);
+    const firestoreUpdates: Record<string, any> = {};
+    if (updates.full_name !== undefined) firestoreUpdates.name = updates.full_name;
+    if (updates.phone_number !== undefined) firestoreUpdates.phone = updates.phone_number;
+    if (updates.subscription_status !== undefined) firestoreUpdates.subscription_status = updates.subscription_status;
+    if (updates.plan_name !== undefined) firestoreUpdates.plan_name = updates.plan_name;
+    if (updates.credits !== undefined) firestoreUpdates.credits = updates.credits;
+    firestoreUpdates.updatedAt = new Date().toISOString();
 
-  if (error) {
-    console.warn("Supabase updateUserProfile error:", error.message);
+    await updateDoc(userRef, firestoreUpdates);
+    return await fetchUserProfile(userId);
+  } catch (err: any) {
+    console.warn("Firestore updateUserProfile notice:", err?.message || err);
     return null;
   }
-  return data as UserProfile;
 }
 
 // ============================================================================
-// USER_HISTORY HELPERS (AI Generations & Projects)
+// USER_HISTORY HELPERS (AI Generations in Firestore & LocalStorage)
 // ============================================================================
 
 export async function saveUserHistory(entry: {
@@ -139,84 +169,98 @@ export async function saveUserHistory(entry: {
   response: string;
   metadata?: Record<string, any>;
 }): Promise<UserHistoryRecord | null> {
-  if (supabase && entry.userId) {
-    const { data, error } = await supabase
-      .from("user_history")
-      .insert({
-        user_id: entry.userId,
-        title: entry.title.slice(0, 160),
-        category: entry.category,
-        prompt: entry.prompt,
-        response: entry.response,
-        metadata: entry.metadata || {},
-      })
-      .select()
-      .single();
+  const recordId = "hist_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+  const now = new Date().toISOString();
 
-    if (!error && data) {
-      return data as UserHistoryRecord;
+  const record: UserHistoryRecord = {
+    id: recordId,
+    user_id: entry.userId || "demo_user",
+    title: entry.title.slice(0, 160),
+    category: entry.category,
+    prompt: entry.prompt,
+    response: entry.response,
+    metadata: entry.metadata || {},
+    created_at: now,
+  };
+
+  // 1. Save to Cloud Firestore
+  try {
+    const uid = auth.currentUser?.uid || entry.userId;
+    if (auth.currentUser && uid) {
+      const histRef = doc(db, "userHistory", recordId);
+      await setDoc(histRef, {
+        id: recordId,
+        userId: uid,
+        title: record.title,
+        category: record.category,
+        prompt: record.prompt,
+        response: record.response,
+        metadata: record.metadata,
+        createdAt: now,
+      });
     }
-    if (error) {
-      console.warn("Supabase saveUserHistory error:", error.message);
-    }
+  } catch (err: any) {
+    console.warn("Firestore saveUserHistory notice:", err?.message || err);
   }
 
-  // Demo / Offline local fallback
+  // 2. Save locally for zero-latency offline access
   try {
     const existing: UserHistoryRecord[] = JSON.parse(
       localStorage.getItem(LOCAL_HISTORY_KEY) || "[]"
     );
-    const localRecord: UserHistoryRecord = {
-      id: "hist_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-      user_id: entry.userId || "demo_user",
-      title: entry.title.slice(0, 160),
-      category: entry.category,
-      prompt: entry.prompt,
-      response: entry.response,
-      metadata: entry.metadata || {},
-      created_at: new Date().toISOString(),
-    };
-    const next = [localRecord, ...existing].slice(0, 60);
+    const next = [record, ...existing].slice(0, 60);
     localStorage.setItem(LOCAL_HISTORY_KEY, JSON.stringify(next));
-    return localRecord;
-  } catch {
-    return null;
-  }
+  } catch {}
+
+  return record;
 }
 
 export async function fetchUserHistory(userId?: string): Promise<UserHistoryRecord[]> {
-  if (supabase && userId) {
-    const { data, error } = await supabase
-      .from("user_history")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+  const localList: UserHistoryRecord[] = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  })();
 
-    if (!error && Array.isArray(data)) {
-      return data as UserHistoryRecord[];
-    }
-    if (error) {
-      console.warn("Supabase fetchUserHistory error:", error.message);
-    }
-  }
+  if (!userId || !auth.currentUser) return localList;
 
   try {
-    return JSON.parse(localStorage.getItem(LOCAL_HISTORY_KEY) || "[]");
-  } catch {
-    return [];
+    const histCol = collection(db, "userHistory");
+    const q = query(histCol, where("userId", "==", auth.currentUser.uid), limit(50));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const remoteItems: UserHistoryRecord[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          user_id: data.userId || userId,
+          title: data.title || "Study Session",
+          category: data.category || "General",
+          prompt: data.prompt || "",
+          response: data.response || "",
+          metadata: data.metadata || {},
+          created_at: data.createdAt || new Date().toISOString(),
+        };
+      });
+      return remoteItems;
+    }
+  } catch (err: any) {
+    console.warn("Firestore fetchUserHistory notice:", err?.message || err);
   }
+
+  return localList;
 }
 
-export async function deleteUserHistory(id: string, userId?: string): Promise<boolean> {
-  if (supabase && userId) {
-    const { error } = await supabase
-      .from("user_history")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", userId);
-
-    if (!error) return true;
+export async function deleteUserHistory(id: string, _userId?: string): Promise<boolean> {
+  try {
+    if (auth.currentUser) {
+      const histRef = doc(db, "userHistory", id);
+      await deleteDoc(histRef);
+    }
+  } catch (err: any) {
+    console.warn("Firestore deleteUserHistory notice:", err?.message || err);
   }
 
   try {
@@ -232,11 +276,11 @@ export async function deleteUserHistory(id: string, userId?: string): Promise<bo
 }
 
 // ============================================================================
-// PRIVATE STORAGE BUCKET (user-uploads) HELPERS WITH INDEXEDDB ANTI-DATA-LOSS
+// PRIVATE VAULT STORAGE HELPERS WITH INDEXEDDB & FIRESTORE
 // ============================================================================
 
 const SUPA_VAULT_PREFIX = "supa_vault_";
-const ALLOWED_SUPABASE_BUCKET_MIMES = new Set([
+const ALLOWED_BUCKET_MIMES = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
@@ -257,19 +301,15 @@ function readLocalVaultMetadata(): StorageFileItem[] {
 
 function writeLocalVaultMetadata(items: StorageFileItem[]): void {
   try {
-    // Store metadata only (strip heavy inline Data URLs so localStorage never overflows)
     const compact = items.slice(0, 200).map((it) => ({
       ...it,
       signedUrl: it.signedUrl && it.signedUrl.startsWith("data:") ? undefined : it.signedUrl,
     }));
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(compact));
   } catch {
-    // Fallback keep newest 50 items if browser quota is tight
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items.slice(0, 50)));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 }
 
@@ -289,9 +329,7 @@ async function readFileUrlFromVaultDb(filePath: string): Promise<string | null> 
     if (blob) {
       return URL.createObjectURL(blob);
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return null;
 }
 
@@ -299,9 +337,7 @@ async function deleteFileFromVaultDb(filePath: string): Promise<void> {
   try {
     const { deletePdfFromOfflineDb } = await import("../utils/pdfDb");
     await deletePdfFromOfflineDb(`${SUPA_VAULT_PREFIX}${filePath}`);
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {
@@ -324,7 +360,7 @@ export async function uploadUserFile(
   const filePath = `${userId}/${folder}/${Date.now()}_${safeName}`;
   const mime = file.type || "application/octet-stream";
 
-  // Always retain a durable local IndexedDB copy first so the file is never lost
+  // Retain durable local IndexedDB copy first
   await cacheFileInVaultDb(filePath, file);
 
   const existing = readLocalVaultMetadata().filter((f) => f.path !== filePath);
@@ -336,28 +372,28 @@ export async function uploadUserFile(
     createdAt: new Date().toISOString(),
   };
 
-  if (supabase && isSupabaseConfigured && ALLOWED_SUPABASE_BUCKET_MIMES.has(mime)) {
-    const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
-    if (sessionData?.session) {
-      const { error } = await supabase.storage
-        .from(USER_UPLOADS_BUCKET)
-        .upload(filePath, file, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: mime,
-        });
-
-      if (!error) {
-        const signedUrl = await getUserFileSignedUrl(filePath, 3600);
-        writeLocalVaultMetadata([{ ...localItem, signedUrl: signedUrl || undefined }, ...existing]);
-        return { path: filePath, signedUrl, storageBackend: "supabase" };
-      }
-      console.warn("Supabase storage upload fallback to server bridge:", error.message);
+  // Register in Firestore userFiles collection with hardened alphanumeric ID
+  try {
+    if (auth.currentUser) {
+      const docId = filePath.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128);
+      const fileDocRef = doc(db, "userFiles", docId);
+      await setDoc(fileDocRef, {
+        id: docId,
+        userId: auth.currentUser.uid,
+        path: filePath,
+        name: file.name,
+        size: file.size,
+        mimeType: mime,
+        folder,
+        createdAt: new Date().toISOString(),
+      });
     }
+  } catch (err: any) {
+    console.warn("Firestore file index notice:", err?.message || err);
   }
 
-  // Fallback to authenticated Express -> Supabase Storage bridge (supports Firebase & Zion Auth)
-  if (ALLOWED_SUPABASE_BUCKET_MIMES.has(mime) && file.size <= 35 * 1024 * 1024) {
+  // Backup to server vault bridge if available
+  if (ALLOWED_BUCKET_MIMES.has(mime) && file.size <= 35 * 1024 * 1024) {
     try {
       const { secureApiFetch } = await import("./aiClient");
       const fileBase64 = await blobToBase64(file);
@@ -375,23 +411,21 @@ export async function uploadUserFile(
         const payload = await res.json().catch(() => ({}));
         if (payload?.success && payload?.path) {
           await cacheFileInVaultDb(payload.path, file);
+          const previewUrl = await readFileUrlFromVaultDb(payload.path);
           writeLocalVaultMetadata([
-            { ...localItem, path: payload.path, signedUrl: payload.signedUrl || undefined },
+            { ...localItem, path: payload.path, signedUrl: previewUrl || undefined },
             ...existing,
           ]);
           return {
             path: payload.path,
-            signedUrl: payload.signedUrl || (await readFileUrlFromVaultDb(payload.path)),
-            storageBackend: "supabase",
+            signedUrl: previewUrl,
+            storageBackend: "indexeddb",
           };
         }
       }
-    } catch {
-      // Fall through cleanly to durable IndexedDB cache
-    }
+    } catch {}
   }
 
-  // Offline or pre-auth mode: durable IndexedDB blob + lightweight metadata in localStorage
   writeLocalVaultMetadata([localItem, ...existing]);
   const objectUrl = await readFileUrlFromVaultDb(filePath);
   return { path: filePath, signedUrl: objectUrl, storageBackend: "indexeddb" };
@@ -399,19 +433,13 @@ export async function uploadUserFile(
 
 export async function getUserFileSignedUrl(
   filePath: string,
-  expiresInSeconds = 3600
+  _expiresInSeconds = 3600
 ): Promise<string | null> {
-  const cleanPath = filePath.replace(/^supabase:\/\/user-uploads\//, "");
+  const cleanPath = filePath.replace(/^(supabase:\/\/user-uploads\/|firestore:\/\/user-uploads\/)/, "");
 
-  if (supabase && isSupabaseConfigured) {
-    const { data, error } = await supabase.storage
-      .from(USER_UPLOADS_BUCKET)
-      .createSignedUrl(cleanPath, expiresInSeconds);
-
-    if (!error && data?.signedUrl) {
-      return data.signedUrl;
-    }
-  }
+  // Read from durable IndexedDB blob
+  const dbUrl = await readFileUrlFromVaultDb(cleanPath);
+  if (dbUrl) return dbUrl;
 
   try {
     const { secureApiFetch } = await import("./aiClient");
@@ -420,13 +448,7 @@ export async function getUserFileSignedUrl(
       const payload = await res.json().catch(() => ({}));
       if (payload?.signedUrl) return String(payload.signedUrl);
     }
-  } catch {
-    // ignore offline errors
-  }
-
-  // Fallback to durable IndexedDB blob URL first, then legacy Data URL if present
-  const dbUrl = await readFileUrlFromVaultDb(cleanPath);
-  if (dbUrl) return dbUrl;
+  } catch {}
 
   const existing = readLocalVaultMetadata();
   return existing.find((f) => f.path === cleanPath)?.signedUrl || null;
@@ -434,142 +456,91 @@ export async function getUserFileSignedUrl(
 
 export async function listUserFiles(userId: string): Promise<StorageFileItem[]> {
   const localFiles = readLocalVaultMetadata();
-
-  if (supabase && isSupabaseConfigured && userId) {
-    const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
-    if (sessionData?.session) {
-      const folders = ["documents", "images"];
-      const collected: StorageFileItem[] = [];
-
-      for (const folder of folders) {
-        const { data, error } = await supabase.storage
-          .from(USER_UPLOADS_BUCKET)
-          .list(`${userId}/${folder}`, {
-            limit: 100,
-            sortBy: { column: "created_at", order: "desc" },
-          });
-
-        if (!error && Array.isArray(data)) {
-          for (const obj of data) {
-            if (!obj.name || obj.name === ".emptyFolderPlaceholder") continue;
-            const fullPath = `${userId}/${folder}/${obj.name}`;
-            const signedUrl = await getUserFileSignedUrl(fullPath, 3600);
-            collected.push({
-              name: obj.name,
-              path: fullPath,
-              size: Number((obj.metadata as any)?.size || 0),
-              mimeType: String((obj.metadata as any)?.mimetype || "application/octet-stream"),
-              createdAt: obj.created_at || new Date().toISOString(),
-              signedUrl: signedUrl || undefined,
-            });
-          }
-        }
-      }
-
-      const remotePaths = new Set(collected.map((c) => c.path));
-      const localUnsynced = localFiles.filter((lf) => !remotePaths.has(lf.path));
-      return [...collected, ...localUnsynced];
-    }
-  }
+  if (!userId || !auth.currentUser) return localFiles;
 
   try {
-    const { secureApiFetch } = await import("./aiClient");
-    const res = await secureApiFetch("/api/storage/vault/list");
-    if (res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      if (Array.isArray(payload?.files)) {
-        const remoteFiles = payload.files as StorageFileItem[];
-        const remotePaths = new Set(remoteFiles.map((c) => c.path));
-        const localUnsynced = localFiles.filter((lf) => !remotePaths.has(lf.path));
-        return [...remoteFiles, ...localUnsynced];
+    const filesCol = collection(db, "userFiles");
+    const q = query(filesCol, where("userId", "==", auth.currentUser.uid), limit(100));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const remoteList: StorageFileItem[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        const fullPath = data.path || d.id;
+        const signedUrl = await getUserFileSignedUrl(fullPath, 3600);
+        remoteList.push({
+          name: data.name || "File",
+          path: fullPath,
+          size: Number(data.size || 0),
+          mimeType: data.mimeType || "application/octet-stream",
+          createdAt: data.createdAt || new Date().toISOString(),
+          signedUrl: signedUrl || undefined,
+        });
       }
+      const remotePaths = new Set(remoteList.map((r) => r.path));
+      const localUnsynced = localFiles.filter((lf) => !remotePaths.has(lf.path));
+      return [...remoteList, ...localUnsynced];
     }
-  } catch {
-    // ignore offline errors
+  } catch (err: any) {
+    console.warn("Firestore listUserFiles notice:", err?.message || err);
   }
 
   return localFiles;
 }
 
 export async function syncLocalVaultFilesToSupabase(userId: string): Promise<number> {
-  if (!userId) return 0;
+  if (!userId || !auth.currentUser) return 0;
   const localFiles = readLocalVaultMetadata();
   if (localFiles.length === 0) return 0;
 
-  const { getPdfFromOfflineDb } = await import("../utils/pdfDb");
-  const sessionResult =
-    supabase && isSupabaseConfigured
-      ? await supabase.auth.getSession().catch(() => ({ data: { session: null } }))
-      : { data: { session: null } };
-  const hasSupaSession = Boolean(sessionResult.data?.session);
-
   let syncedCount = 0;
-
   for (const item of localFiles) {
-    if (!ALLOWED_SUPABASE_BUCKET_MIMES.has(item.mimeType)) continue;
-    const blob = await getPdfFromOfflineDb(`${SUPA_VAULT_PREFIX}${item.path}`);
-    if (!blob) continue;
-
-    if (hasSupaSession && supabase) {
-      const { error } = await supabase.storage
-        .from(USER_UPLOADS_BUCKET)
-        .upload(item.path, blob, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: item.mimeType || "application/octet-stream",
-        });
-
-      if (!error || error.message?.toLowerCase().includes("already exists")) {
-        syncedCount++;
-        continue;
-      }
-    }
-
     try {
-      const { secureApiFetch } = await import("./aiClient");
-      const fileBase64 = await blobToBase64(blob);
-      const res = await secureApiFetch("/api/storage/vault/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: item.name,
+      const docId = item.path.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128);
+      const fileDocRef = doc(db, "userFiles", docId);
+      await setDoc(
+        fileDocRef,
+        {
+          id: docId,
+          userId: auth.currentUser.uid,
+          path: item.path,
+          name: item.name,
+          size: item.size,
           mimeType: item.mimeType,
-          folder: item.path.includes("/images/") ? "images" : "documents",
-          fileBase64,
-        }),
-      });
-      if (res.ok) syncedCount++;
-    } catch {
-      // keep in IndexedDB for next retry
-    }
+          syncedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      syncedCount++;
+    } catch {}
   }
   return syncedCount;
 }
 
 export async function deleteUserFile(filePath: string): Promise<boolean> {
-  await deleteFileFromVaultDb(filePath);
+  const cleanPath = filePath.replace(/^(supabase:\/\/user-uploads\/|firestore:\/\/user-uploads\/)/, "");
+  await deleteFileFromVaultDb(cleanPath);
 
-  if (supabase && isSupabaseConfigured) {
-    await supabase.storage
-      .from(USER_UPLOADS_BUCKET)
-      .remove([filePath])
-      .catch(() => {});
-  }
+  try {
+    if (auth.currentUser) {
+      const docId = cleanPath.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 128);
+      const fileDocRef = doc(db, "userFiles", docId);
+      await deleteDoc(fileDocRef);
+    }
+  } catch {}
 
   try {
     const { secureApiFetch } = await import("./aiClient");
     await secureApiFetch("/api/storage/vault", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: filePath }),
+      body: JSON.stringify({ path: cleanPath }),
     });
-  } catch {
-    // ignore offline errors
-  }
+  } catch {}
 
   try {
     const existing = readLocalVaultMetadata();
-    writeLocalVaultMetadata(existing.filter((f) => f.path !== filePath));
+    writeLocalVaultMetadata(existing.filter((f) => f.path !== cleanPath));
     return true;
   } catch {
     return false;

@@ -3,10 +3,11 @@ import {
   Bot, Sparkles, BookOpen, Send, Download, Save, Volume2, VolumeX,
   Video, CheckCircle2, ChevronRight, HelpCircle, Layers, FileText,
   Clock, ArrowRight, Lightbulb, RefreshCw, Bookmark, Share2, History,
-  GraduationCap, Calculator, Code, Atom, Cpu, Award
+  GraduationCap, Calculator, Code, Atom, Cpu, Award, Radio
 } from "lucide-react";
 import { User, SavedDocument } from "../types";
 import { secureApiFetch } from "../lib/aiClient";
+import { saveSqlCreationRecord } from "../lib/sqlClient";
 import { sanitizeSvgMarkup } from "../lib/sanitizeSvg";
 
 interface AITutorStudioProps {
@@ -41,7 +42,12 @@ export default function AITutorStudio({
 }: AITutorStudioProps) {
   const [topic, setTopic] = useState(initialTopic);
   const [subject, setSubject] = useState(initialSubject);
-  const [level, setLevel] = useState<"Beginner / CBC" | "Secondary / 8-4-4" | "Diploma / College" | "Advanced Theological / Leadership">("Secondary / 8-4-4");
+  const [level, setLevel] = useState<
+    | "Certificate in Christian Leadership"
+    | "Diploma in Bible & Theology"
+    | "College Computing & Digital Systems"
+    | "Secondary / CBC Review"
+  >("Certificate in Christian Leadership");
   const [learningGoal, setLearningGoal] = useState("Master core theory, study diagrams, and complete practice exercises");
 
   const [isLoading, setIsLoading] = useState(false);
@@ -49,6 +55,7 @@ export default function AITutorStudio({
   const [revealedSolutions, setRevealedSolutions] = useState<Record<number, boolean>>({});
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState<string | null>(null);
+  const ttsAudioRef = React.useRef<HTMLAudioElement | null>(null);
 
   // Lesson History
   const [lessonHistory, setLessonHistory] = useState<GeneratedLesson[]>(() => {
@@ -110,6 +117,8 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no code blocks) match
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: promptText,
+          model: "gemini-4-hydrogen",
+          enableGoogleSearch: false,
           systemInstruction: "You are the Zion Digital AI Master Tutor. You provide complete, pedagogical, beautiful, and deeply structured educational lessons.",
         }),
       });
@@ -206,6 +215,13 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no code blocks) match
       const updatedHistory = [newLesson, ...lessonHistory.filter((l) => l.topic !== newLesson.topic)].slice(0, 15);
       setLessonHistory(updatedHistory);
       localStorage.setItem("ZION_AI_TUTOR_LESSONS", JSON.stringify(updatedHistory));
+      void saveSqlCreationRecord({
+        mode: "ai-tutor-lesson",
+        model: "gemini-4-hydrogen",
+        title: newLesson.topic,
+        prompt: `${newLesson.subject} (${newLesson.level})`,
+        outputText: newLesson.revisionSummary,
+      });
     } catch (err) {
       console.error("AI Tutor lesson generation error:", err);
     } finally {
@@ -213,12 +229,24 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no code blocks) match
     }
   };
 
-  // Text-to-Speech audio readout
-  const handleToggleSpeech = () => {
-    if (!window.speechSynthesis) return;
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel();
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause();
+        ttsAudioRef.current = null;
+      }
+    };
+  }, []);
 
+  // Gemini Neural TTS with graceful browser SpeechSynthesis fallback
+  const handleToggleSpeech = async () => {
     if (isSpeaking) {
-      window.speechSynthesis.cancel();
+      window.speechSynthesis?.cancel();
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause();
+        ttsAudioRef.current = null;
+      }
       setIsSpeaking(false);
       return;
     }
@@ -226,12 +254,17 @@ Respond ONLY with valid, raw JSON (no markdown formatting, no code blocks) match
     if (!activeLesson) return;
 
     const speechText = `Lesson Topic: ${activeLesson.topic}. Objectives: ${activeLesson.objectives.join(". ")}. Key Concepts: ${activeLesson.concepts.map((c) => `${c.title}. ${c.explanation}`).join(". ")}. Summary: ${activeLesson.revisionSummary}`;
+    setIsSpeaking(true);
+
+    if (!window.speechSynthesis) {
+      setIsSpeaking(false);
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(speechText);
     utterance.rate = 1.0;
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
     window.speechSynthesis.speak(utterance);
-    setIsSpeaking(true);
   };
 
   // Save lesson to student's documents vault
@@ -295,6 +328,8 @@ ${activeLesson.revisionSummary}
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: `In the context of the lesson "${activeLesson.topic}" in ${activeLesson.subject}: ${currentQ}`,
+          model: "gemini-4-hydrogen",
+          enableGoogleSearch: false,
           systemInstruction: "You are the Zion Digital AI Master Tutor. Provide concise, clear, encouraging, and accurate answers.",
         }),
       });
@@ -329,8 +364,8 @@ ${activeLesson.revisionSummary}
             Enter any subject or curriculum topic across Computer Science, Biblical Theology, Leadership, CBC, or Mathematics. The AI Tutor generates comprehensive lecture notes, architectural diagrams, real-world examples, and step-by-step examination questions.
           </p>
 
-          {/* Quick Subject Pill Selector */}
-          <div className="flex flex-wrap gap-2 pt-2">
+          {/* Quick Subject Pill Selector + Live Voice Tutor */}
+          <div className="flex flex-wrap items-center gap-2 pt-2">
             {SUBJECT_PRESETS.map((p) => {
               const Icon = p.icon;
               return (
@@ -348,6 +383,7 @@ ${activeLesson.revisionSummary}
                 </button>
               );
             })}
+
           </div>
         </div>
       </section>
@@ -398,10 +434,10 @@ ${activeLesson.revisionSummary}
                 onChange={(e: any) => setLevel(e.target.value)}
                 className="w-full rounded-xl border border-stone-200 dark:border-slate-700 bg-stone-50 dark:bg-slate-800 px-3.5 py-2.5 text-xs text-slate-800 dark:text-white outline-none focus:border-[#155EEF] cursor-pointer"
               >
-                <option value="Beginner / CBC">Beginner / CBC Competency Framework</option>
-                <option value="Secondary / 8-4-4">Secondary / 8-4-4 KCSE Examination</option>
-                <option value="Diploma / College">Diploma / College Technical Track</option>
-                <option value="Advanced Theological / Leadership">Advanced Theological / Christian Leadership</option>
+                <option value="Certificate in Christian Leadership">Certificate in Christian Leadership</option>
+                <option value="Diploma in Bible & Theology">Diploma in Bible &amp; Theology</option>
+                <option value="College Computing & Digital Systems">College Computing &amp; Digital Systems</option>
+                <option value="Secondary / CBC Review">Secondary / CBC Review</option>
               </select>
             </div>
 

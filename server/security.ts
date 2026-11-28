@@ -2,14 +2,6 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import type { Request, Response, NextFunction } from "express";
-import { fromSupabaseUrl } from "@supabase/server";
-import {
-  verifyCredentials,
-  createContextClient,
-  createAdminClient,
-  resolveEnv,
-} from "@supabase/server/core";
-import type { RequestWithSsrUser } from "./supabaseSsr";
 import { BUILTIN_EXAM_ANSWER_KEYS } from "./examBank";
 
 export type AppRole = "main_admin" | "sub_admin" | "manager" | "tutor" | "member";
@@ -21,8 +13,12 @@ export interface SubAdminCapabilityMap {
   allowManageBooks: boolean;
   allowConfirmPayments: boolean;
   allowManageEnrollments: boolean;
+  allowManageStudents: boolean;
   allowManageExams: boolean;
   allowIssueCertificates: boolean;
+  allowManageLeadership: boolean;
+  allowManageComputer: boolean;
+  allowManageBible: boolean;
   allowModeration: boolean;
   allowSuspendUsers: boolean;
 }
@@ -36,8 +32,12 @@ export const EMPTY_CAPABILITIES: SubAdminCapabilityMap = {
   allowManageBooks: false,
   allowConfirmPayments: false,
   allowManageEnrollments: false,
+  allowManageStudents: false,
   allowManageExams: false,
   allowIssueCertificates: false,
+  allowManageLeadership: false,
+  allowManageComputer: false,
+  allowManageBible: false,
   allowModeration: false,
   allowSuspendUsers: false,
 };
@@ -216,6 +216,11 @@ export interface ExamDefinitionRecord {
   id: string;
   lessonId: string;
   courseTrack: string;
+  courseCode?: string;
+  school?: "leadership" | "bible";
+  assessmentType?: "cat" | "exam";
+  allowMicrophone?: boolean;
+  writtenQuestions?: { prompt: string; maxMarks: number }[];
   title: string;
   questions: { question: string; options: string[] }[];
   durationMinutes: number;
@@ -234,6 +239,7 @@ export interface ExamAnswerKeyStore {
 export interface ExamAttemptRecord {
   id: string;
   examId: string;
+  assessmentType?: "cat" | "exam";
   userId: string;
   userEmail: string;
   userName: string;
@@ -242,6 +248,9 @@ export interface ExamAttemptRecord {
   expiresAt: string;
   submittedAt?: string;
   answers: Record<string, number>;
+  writtenAnswers?: Record<string, string>;
+  audioResponses?: Record<string, { mimeType: string; dataUrl: string; durationSec?: number }>;
+  autoSubmitReason?: "completed" | "timer_expired" | "tab_or_exit";
   score: number | null;
   correctCount: number | null;
   totalQuestions: number;
@@ -249,6 +258,117 @@ export interface ExamAttemptRecord {
   status: "in_progress" | "submitted" | "expired";
   gradedBy?: string;
   updatedAt: string;
+}
+
+export interface TutorCampaignRecord {
+  id: string;
+  title: string;
+  school: "leadership" | "bible" | "both";
+  subjectArea: string;
+  qualificationsRequired: string;
+  description: string;
+  status: "open" | "closed";
+  openedBy: string;
+  openedAt: string;
+  closedAt?: string;
+}
+
+export interface TutorUploadedDoc {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
+export interface TutorApplicationRecord {
+  id: string;
+  campaignId: string;
+  applicantEmail: string;
+  applicantName: string;
+  phone: string;
+  educationLevel: string;
+  yearsExperience: number;
+  qualificationSummary: string;
+  schoolPreference: "leadership" | "bible" | "both";
+  cvDoc: TutorUploadedDoc;
+  nationalIdDoc: TutorUploadedDoc;
+  kcseCertDoc: TutorUploadedDoc;
+  collegeCertDoc: TutorUploadedDoc;
+  status: "pending" | "approved" | "denied";
+  assignedCourses: string[];
+  reviewNote?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+}
+
+export interface SchoolCourseNoteRecord {
+  id: string;
+  courseId: string;
+  courseCode: string;
+  courseTitle: string;
+  school: "leadership" | "bible";
+  title: string;
+  content: string;
+  publishFormat: "pdf" | "docx" | "slides" | "sheet";
+  tutorEmail: string;
+  tutorName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SchoolCourseClassRecord {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  school: "leadership" | "bible";
+  title: string;
+  scheduledFor: string;
+  durationMinutes: number;
+  meetUrl: string;
+  classroomUrl?: string;
+  notes?: string;
+  tutorEmail: string;
+  tutorName: string;
+  createdAt: string;
+}
+
+export interface SchoolDiscussionRecord {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  authorEmail: string;
+  authorName: string;
+  authorRole: string;
+  message: string;
+  parentId?: string;
+  createdAt: string;
+}
+
+export interface SchoolAssignmentSubmissionRecord {
+  studentEmail: string;
+  studentName: string;
+  answerText: string;
+  attachmentName?: string;
+  attachmentDataUrl?: string;
+  submittedAt: string;
+  marks?: number;
+  feedback?: string;
+  gradedBy?: string;
+}
+
+export interface SchoolAssignmentRecord {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  school: "leadership" | "bible";
+  title: string;
+  instructions: string;
+  dueDate: string;
+  maxMarks: number;
+  tutorEmail: string;
+  tutorName: string;
+  submissions: Record<string, SchoolAssignmentSubmissionRecord>;
+  createdAt: string;
 }
 
 export interface ChatMessageServerRecord {
@@ -526,6 +646,12 @@ interface SecurityDatabaseState {
     status: "draft" | "scheduled" | "published";
     createdAt: string;
   }>;
+  tutorCampaigns: Record<string, TutorCampaignRecord>;
+  tutorApplications: Record<string, TutorApplicationRecord>;
+  schoolCourseNotes: Record<string, SchoolCourseNoteRecord>;
+  schoolCourseClasses: Record<string, SchoolCourseClassRecord>;
+  schoolCourseDiscussions: Record<string, SchoolDiscussionRecord>;
+  schoolCourseAssignments: Record<string, SchoolAssignmentRecord>;
 }
 
 function buildInitialState(): SecurityDatabaseState {
@@ -568,29 +694,7 @@ function buildInitialState(): SecurityDatabaseState {
   return {
     accounts: {},
     suspendedUsers: {},
-    subAdminPermissions: {
-      "local.mod@wafula.com": {
-        id: "ma-1",
-        name: "Bungoma Local Moderator",
-        email: "local.mod@wafula.com",
-        permissions: {
-          ...EMPTY_CAPABILITIES,
-          allowBroadcast: true,
-          allowApproval: true,
-          allowModeration: true,
-        },
-        createdBy: "system",
-        updatedAt: new Date().toISOString(),
-      },
-      "mod.clerk@wafula.com": {
-        id: "ma-2",
-        name: "Minor Clerk",
-        email: "mod.clerk@wafula.com",
-        permissions: { ...EMPTY_CAPABILITIES },
-        createdBy: "system",
-        updatedAt: new Date().toISOString(),
-      },
-    },
+    subAdminPermissions: {},
     tutorCourses: {},
     books: {},
     orders: {},
@@ -624,38 +728,7 @@ function buildInitialState(): SecurityDatabaseState {
     privateConversations: {},
     privateMessages: {},
     callSignals: {},
-    reels: {
-      reel_seed_1: {
-        id: "reel_seed_1",
-        title: "Morning Devotional: Walking in Kingdom Purpose",
-        authorName: "Pastor Kelvin Wafula",
-        authorEmail: "wafulak435@gmail.com",
-        description: "Short daily charge from Bungoma Fellowship Hub on faithfulness in study and leadership.",
-        hashtags: ["#MorningDevotion", "#FaithInAction", "#ZionConnect"],
-        videoUrl: "",
-        thumbnailUrl: "",
-        duration: "0:48",
-        views: 1240,
-        likes: [],
-        comments: [],
-        createdAt: "2026-05-01T07:00:00.000Z",
-      },
-      reel_seed_2: {
-        id: "reel_seed_2",
-        title: "CBC & 8-4-4 Study Discipline Tips",
-        authorName: "Grace Achieng",
-        authorEmail: "grace.achieng@ziondigital.co.ke",
-        description: "Practical daily revision structure for scholars preparing for term assessments.",
-        hashtags: ["#StudyTips", "#ZionSchool", "#Excellence"],
-        videoUrl: "",
-        thumbnailUrl: "",
-        duration: "1:05",
-        views: 890,
-        likes: [],
-        comments: [],
-        createdAt: "2026-05-02T09:30:00.000Z",
-      },
-    },
+    reels: {},
     reelPlaylists: {},
     communityGroups: {
       grp_bible_study: {
@@ -667,27 +740,11 @@ function buildInitialState(): SecurityDatabaseState {
         coverUrl: "",
         creatorEmail: "wafulak435@gmail.com",
         admins: ["wafulak435@gmail.com"],
-        moderators: ["grace.achieng@ziondigital.co.ke"],
-        members: ["wafulak435@gmail.com", "grace.achieng@ziondigital.co.ke"],
+        moderators: [],
+        members: ["wafulak435@gmail.com"],
         invitedEmails: [],
-        events: [
-          {
-            id: "gevt_1",
-            title: "Romans Chapter 8 Deep Dive",
-            date: "2026-06-20 18:00",
-            location: "Zion Fellowship Hall & Live Audio",
-            rsvps: ["wafulak435@gmail.com"],
-          },
-        ],
-        discussions: [
-          {
-            id: "gdisc_1",
-            userName: "Pastor Kelvin Wafula",
-            userEmail: "wafulak435@gmail.com",
-            text: "Welcome to this week's Bible study thread. Share your key takeaway from Romans 8.",
-            createdAt: "2026-05-03T10:00:00.000Z",
-          },
-        ],
+        events: [],
+        discussions: [],
         createdAt: "2026-05-01T08:00:00.000Z",
       },
       grp_youth_christ: {
@@ -715,7 +772,7 @@ function buildInitialState(): SecurityDatabaseState {
         summary: "Author, Christian educator, and digital systems architect equipping leaders across East Africa.",
         location: "Bungoma, Kenya",
         skills: [
-          { name: "Leadership", endorsedBy: ["grace.achieng@ziondigital.co.ke"] },
+          { name: "Leadership", endorsedBy: [] },
           { name: "Curriculum Design", endorsedBy: [] },
           { name: "Theology & Ethics", endorsedBy: [] },
         ],
@@ -788,18 +845,41 @@ function buildInitialState(): SecurityDatabaseState {
       },
     },
     scheduledPosts: {},
+    tutorCampaigns: {},
+    tutorApplications: {},
+    schoolCourseNotes: {},
+    schoolCourseClasses: {},
+    schoolCourseDiscussions: {},
+    schoolCourseAssignments: {},
   };
 }
 
 const STATE_BACKUP_FILE = `${STATE_FILE}.bak`;
 
 function hydrateSecurityState(base: SecurityDatabaseState, raw: any): SecurityDatabaseState {
+  const mergedSubAdmins = { ...base.subAdminPermissions, ...(raw.subAdminPermissions || {}) };
+  delete mergedSubAdmins["local.mod@wafula.com"];
+  delete mergedSubAdmins["mod.clerk@wafula.com"];
+
+  const mergedReels = { ...base.reels, ...(raw.reels || {}) };
+  delete mergedReels["reel_seed_1"];
+  delete mergedReels["reel_seed_2"];
+
+  const mergedGroups = { ...base.communityGroups, ...(raw.communityGroups || {}) };
+  if (mergedGroups.grp_bible_study) {
+    mergedGroups.grp_bible_study = {
+      ...mergedGroups.grp_bible_study,
+      moderators: (mergedGroups.grp_bible_study.moderators || []).filter((e: string) => e !== "grace.achieng@ziondigital.co.ke"),
+      members: (mergedGroups.grp_bible_study.members || []).filter((e: string) => e !== "grace.achieng@ziondigital.co.ke"),
+    };
+  }
+
   return {
     ...base,
     ...raw,
     exams: { ...base.exams, ...(raw.exams || {}) },
     examAnswerKeys: { ...base.examAnswerKeys, ...(raw.examAnswerKeys || {}) },
-    subAdminPermissions: { ...base.subAdminPermissions, ...(raw.subAdminPermissions || {}) },
+    subAdminPermissions: mergedSubAdmins,
     restrictedChannels: { ...base.restrictedChannels, ...(raw.restrictedChannels || {}) },
     mpesaTransactions: { ...(base.mpesaTransactions || {}), ...(raw.mpesaTransactions || {}) },
     processedReceipts: { ...(base.processedReceipts || {}), ...(raw.processedReceipts || {}) },
@@ -811,14 +891,20 @@ function hydrateSecurityState(base: SecurityDatabaseState, raw: any): SecurityDa
     privateConversations: { ...base.privateConversations, ...(raw.privateConversations || {}) },
     privateMessages: { ...base.privateMessages, ...(raw.privateMessages || {}) },
     callSignals: { ...base.callSignals, ...(raw.callSignals || {}) },
-    reels: { ...base.reels, ...(raw.reels || {}) },
+    reels: mergedReels,
     reelPlaylists: { ...base.reelPlaylists, ...(raw.reelPlaylists || {}) },
-    communityGroups: { ...base.communityGroups, ...(raw.communityGroups || {}) },
+    communityGroups: mergedGroups,
     professionalProfiles: { ...base.professionalProfiles, ...(raw.professionalProfiles || {}) },
     professionalJobs: { ...base.professionalJobs, ...(raw.professionalJobs || {}) },
     professionalOrgs: { ...base.professionalOrgs, ...(raw.professionalOrgs || {}) },
     professionalArticles: { ...base.professionalArticles, ...(raw.professionalArticles || {}) },
     scheduledPosts: { ...base.scheduledPosts, ...(raw.scheduledPosts || {}) },
+    tutorCampaigns: { ...(base.tutorCampaigns || {}), ...(raw.tutorCampaigns || {}) },
+    tutorApplications: { ...(base.tutorApplications || {}), ...(raw.tutorApplications || {}) },
+    schoolCourseNotes: { ...(base.schoolCourseNotes || {}), ...(raw.schoolCourseNotes || {}) },
+    schoolCourseClasses: { ...(base.schoolCourseClasses || {}), ...(raw.schoolCourseClasses || {}) },
+    schoolCourseDiscussions: { ...(base.schoolCourseDiscussions || {}), ...(raw.schoolCourseDiscussions || {}) },
+    schoolCourseAssignments: { ...(base.schoolCourseAssignments || {}), ...(raw.schoolCourseAssignments || {}) },
   };
 }
 
@@ -1119,8 +1205,12 @@ export function resolveAuthoritativeRoleAndPermissions(email: string, uid?: stri
         allowManageBooks: true,
         allowConfirmPayments: true,
         allowManageEnrollments: true,
+        allowManageStudents: true,
         allowManageExams: true,
         allowIssueCertificates: true,
+        allowManageLeadership: true,
+        allowManageComputer: true,
+        allowManageBible: true,
         allowModeration: true,
         allowSuspendUsers: true,
       },
@@ -1170,43 +1260,6 @@ export function resolveAuthoritativeRoleAndPermissions(email: string, uid?: stri
   };
 }
 
-// Short cache for verified remote Supabase tokens to avoid excessive latency per request
-const remoteTokenCache = new Map<string, { uid: string; email: string; name: string; exp: number }>();
-
-function buildSupabaseEnvOverrides() {
-  const url = (
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    ""
-  ).trim();
-  const publishableKey = (
-    process.env.SUPABASE_PUBLISHABLE_KEY ||
-    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    ""
-  ).trim();
-  const secretKey = (process.env.SUPABASE_SECRET_KEY || "").trim();
-  const jwksUrlRaw = (process.env.SUPABASE_JWKS_URL || "").trim();
-
-  let jwksUrl: URL | undefined;
-  if (jwksUrlRaw && jwksUrlRaw.startsWith("https://")) {
-    try {
-      jwksUrl = new URL(jwksUrlRaw);
-    } catch {
-      jwksUrl = undefined;
-    }
-  }
-
-  return {
-    url: url || undefined,
-    publishableKeys: publishableKey ? { default: publishableKey } : undefined,
-    secretKeys: secretKey ? { default: secretKey } : undefined,
-    jwks: jwksUrl,
-  };
-}
-
 export function getSupabaseServerStatus(): {
   configured: boolean;
   hasUrl: boolean;
@@ -1215,122 +1268,27 @@ export function getSupabaseServerStatus(): {
   jwksConfigured: boolean;
   missingEnvVars: string[];
 } {
-  const overrides = buildSupabaseEnvOverrides();
-  const { data: env } = resolveEnv(overrides);
-  const hasUrl = Boolean(env?.url);
-  const hasPublishableKey = Boolean(env && Object.keys(env.publishableKeys || {}).length > 0);
-  const hasSecretKey = Boolean(env && Object.keys(env.secretKeys || {}).length > 0);
-  const jwksConfigured = Boolean(env?.jwks);
-
-  const missingEnvVars: string[] = [];
-  if (!hasUrl) missingEnvVars.push("SUPABASE_URL (or VITE_SUPABASE_URL)");
-  if (!hasPublishableKey) missingEnvVars.push("SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY)");
-  if (!hasSecretKey) missingEnvVars.push("SUPABASE_SECRET_KEY");
-
   return {
-    configured: hasUrl && hasPublishableKey,
-    hasUrl,
-    hasPublishableKey,
-    hasSecretKey,
-    jwksConfigured,
-    missingEnvVars,
+    configured: false,
+    hasUrl: false,
+    hasPublishableKey: false,
+    hasSecretKey: false,
+    jwksConfigured: false,
+    missingEnvVars: [],
   };
 }
 
-export function createSupabaseServerUserClient(accessToken: string) {
-  try {
-    const overrides = buildSupabaseEnvOverrides();
-    if (!overrides.url || !overrides.publishableKeys) return null;
-    return createContextClient({
-      auth: { token: accessToken },
-      env: overrides,
-    });
-  } catch {
-    return null;
-  }
+export function createSupabaseServerUserClient(_accessToken: string) {
+  return null;
 }
 
 export function createSupabaseServerAdminClient() {
-  try {
-    const overrides = buildSupabaseEnvOverrides();
-    if (!overrides.url || !overrides.secretKeys) return null;
-    return createAdminClient({
-      env: overrides,
-    });
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 export async function verifySupabaseTokenWithServerSdk(
-  token: string
+  _token: string
 ): Promise<{ uid: string; email: string; name: string; source: "supabase" } | null> {
-  if (!token) return null;
-  const cached = remoteTokenCache.get(token);
-  if (cached && cached.exp > Date.now()) {
-    return { uid: cached.uid, email: cached.email, name: cached.name, source: "supabase" };
-  }
-
-  const overrides = buildSupabaseEnvOverrides();
-  if (!overrides.url) return null;
-
-  // 1. Primary verification via @supabase/server JWKS asymmetric signature verification
-  try {
-    const { data: auth, error } = await verifyCredentials(
-      { token, apikey: null },
-      {
-        auth: "user",
-        issuer: fromSupabaseUrl(overrides.url),
-        env: overrides,
-      }
-    );
-    if (!error && auth?.userClaims?.id && auth.userClaims.email) {
-      const claims = (auth.jwtClaims || {}) as Record<string, any>;
-      const userMeta = (claims.user_metadata || {}) as Record<string, any>;
-      const emailVerified = claims.email_verified !== false && userMeta.email_verified !== false;
-      const resolvedEmail = emailVerified ? String(auth.userClaims.email) : `unverified:${auth.userClaims.id}`;
-      const name = String(userMeta.full_name || userMeta.name || auth.userClaims.email.split("@")[0]);
-      remoteTokenCache.set(token, {
-        uid: String(auth.userClaims.id),
-        email: resolvedEmail,
-        name,
-        exp: Date.now() + 60_000,
-      });
-      return { uid: String(auth.userClaims.id), email: resolvedEmail, name, source: "supabase" };
-    }
-  } catch {
-    // Fallback below if project uses non-JWKS signing or endpoint lookup is needed
-  }
-
-  // 2. Fallback verification via Supabase Auth user endpoint using publishable/anon key
-  const apiKey = overrides.publishableKeys?.default || "";
-  if (apiKey) {
-    try {
-      const resp = await fetch(`${overrides.url}/auth/v1/user`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: apiKey,
-        },
-      });
-      if (resp.ok) {
-        const user = (await resp.json()) as any;
-        if (user?.id && user?.email) {
-          const emailVerified = Boolean(user.email_confirmed_at || user.confirmed_at || user.user_metadata?.email_verified);
-          const resolvedEmail = emailVerified ? String(user.email) : `unverified:${user.id}`;
-          const name = String(user.user_metadata?.full_name || user.email.split("@")[0]);
-          remoteTokenCache.set(token, {
-            uid: String(user.id),
-            email: resolvedEmail,
-            name,
-            exp: Date.now() + 60_000,
-          });
-          return { uid: String(user.id), email: resolvedEmail, name, source: "supabase" };
-        }
-      }
-    } catch {
-      // ignore network error
-    }
-  }
   return null;
 }
 
@@ -1345,11 +1303,6 @@ export async function resolveRequestIdentity(req: Request): Promise<RequestIdent
     const localVerified = verifySessionToken(bearerToken);
     if (localVerified) {
       base = { uid: localVerified.uid, email: localVerified.email, name: localVerified.name, source: "zion_session" };
-    } else {
-      const supa = await verifySupabaseTokenWithServerSdk(bearerToken);
-      if (supa) {
-        base = supa;
-      }
     }
   }
 
@@ -1358,10 +1311,6 @@ export async function resolveRequestIdentity(req: Request): Promise<RequestIdent
     if (cookieVerified) {
       base = { uid: cookieVerified.uid, email: cookieVerified.email, name: cookieVerified.name, source: "zion_session" };
     }
-  }
-
-  if (!base && (req as RequestWithSsrUser).ssrSupabaseUser) {
-    base = (req as RequestWithSsrUser).ssrSupabaseUser!;
   }
 
   if (!base) return null;
@@ -1467,15 +1416,21 @@ export function requireManagerAccess(req: AuthenticatedRequest, res: Response, n
   if (req.identity.isSuspended) {
     return res.status(403).json({ success: false, error: "Account is suspended." });
   }
+  const caps = req.identity.capabilities;
   const allowed =
     req.identity.isMainAdmin ||
     req.identity.role === "manager" ||
     (req.identity.role === "sub_admin" &&
-      (req.identity.capabilities.allowManageEnrollments ||
-        req.identity.capabilities.allowConfirmPayments ||
-        req.identity.capabilities.allowManageExams ||
-        req.identity.capabilities.allowIssueCertificates ||
-        req.identity.capabilities.allowApproval));
+      (caps.allowManageEnrollments ||
+        caps.allowManageStudents ||
+        caps.allowConfirmPayments ||
+        caps.allowManageBooks ||
+        caps.allowManageExams ||
+        caps.allowIssueCertificates ||
+        caps.allowManageLeadership ||
+        caps.allowManageComputer ||
+        caps.allowManageBible ||
+        caps.allowApproval));
 
   if (!allowed) {
     recordAuditLog({
@@ -1494,9 +1449,17 @@ export function requireManagerAccess(req: AuthenticatedRequest, res: Response, n
 
 export function canTutorAccessCourse(identity: RequestIdentity, courseOrLessonId: string): boolean {
   if (identity.isMainAdmin || identity.role === "manager") return true;
-  if (identity.role === "sub_admin" && identity.capabilities.allowManageExams) return true;
+  if (identity.role === "sub_admin") {
+    if (identity.capabilities.allowManageExams) return true;
+    const track = String(courseOrLessonId || "").toLowerCase();
+    if ((track.includes("leadership") || track.includes("vision") || track.includes("strategic")) && identity.capabilities.allowManageLeadership) return true;
+    if ((track.includes("computer") || track.includes("comp") || track.includes("tech") || track.includes("ict")) && identity.capabilities.allowManageComputer) return true;
+    if ((track.includes("bible") || track.includes("theo") || track.includes("div") || track.includes("scripture")) && identity.capabilities.allowManageBible) return true;
+  }
   if (identity.role !== "tutor") return false;
-  return identity.authorizedCourses.includes("*") || identity.authorizedCourses.includes(courseOrLessonId);
+  const target = String(courseOrLessonId || "").trim().toLowerCase();
+  if (identity.authorizedCourses.includes("*")) return true;
+  return identity.authorizedCourses.some((c) => String(c || "").trim().toLowerCase() === target);
 }
 
 // Per-user AI request rate limiting & usage tracking

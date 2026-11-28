@@ -469,187 +469,7 @@ export function NeonSnakeGame({ onCompleted }: { onCompleted: (pts: number) => v
 
 
 // ==========================================
-// 2. GEMINI STREET-VIEW HIDE & SEEK
-// ==========================================
-export function GeminiMapsHideSeek() {
-  const [gameState, setGameState] = useState<"intro" | "seeking" | "guess_submitted">("intro");
-  const [hint, setHint] = useState("");
-  const [userGuess, setUserGuess] = useState("");
-  const [solvedDistance, setSolvedDistance] = useState<number | null>(null);
-  const [activeLocation, setActiveLocation] = useState<any>(null);
-  const [streak, setStreak] = useState(0);
-
-  const locations = [
-    {
-      constituency: "Webuye West",
-      scenicText: "🌾 Golden maize farms rolling alongside dynamic red clay paths, looking South to Webuye highway smoke.",
-      coords: { lat: 0.612, lng: 34.771 },
-      hintText: "I'm cooling off by the waterfalls. You can hear the massive roar of Webuye falls just a short walk to the East."
-    },
-    {
-      constituency: "Mt Elgon",
-      scenicText: "🌲 Massive towering cedar forests, chilly dynamic misty clouds, looking Northwest toward high peaks.",
-      coords: { lat: 1.123, lng: 34.612 },
-      hintText: "The air is extremely crisp here! I am hiding high up in the dense montane forests, very close to the mountain peak gate."
-    },
-    {
-      constituency: "Chwele Market",
-      scenicText: "🧅 Extremely active fruit stalls, stacks of onion sacks, several green boda boda cycles lining the grid.",
-      coords: { lat: 0.723, lng: 34.542 },
-      hintText: "It is agricultural market day here in Kenya's second largest market! Listen closely to the local hagglers trading onions and beans."
-    },
-    {
-      constituency: "Bungoma Central",
-      scenicText: "🏢 Smart town streets, rows of business boards, modern educational institutes styled with grey stones.",
-      coords: { lat: 0.565, lng: 34.562 },
-      hintText: "I am nestled securely near the Chancellor's primary academic archives center, right inside the town grid hub."
-    }
-  ];
-
-  const triggerNextRound = () => {
-    const loc = locations[Math.floor(Math.random() * locations.length)];
-    setActiveLocation(loc);
-    setHint(loc.hintText);
-    setGameState("seeking");
-    setUserGuess("");
-    setSolvedDistance(null);
-  };
-
-  const handleGuessSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeLocation) return;
-
-    const cleanGuess = userGuess.toLowerCase().trim();
-    const cleanActual = activeLocation.constituency.toLowerCase();
-
-    if (cleanGuess.includes(cleanActual) || cleanActual.includes(cleanGuess)) {
-      // Correct!
-      setSolvedDistance(0);
-      setStreak(s => s + 1);
-      alert("🎉 Perfect Guess! You found Gemini hiding in " + activeLocation.constituency + "!");
-    } else {
-      // Calculate a randomized distance mock representing deviation
-      const dist = Math.floor(Math.random() * 25) + 5;
-      setSolvedDistance(dist);
-      alert("❌ Almost! You were approximately " + dist + " km away from Gemini's coordinates.");
-    }
-    setGameState("guess_submitted");
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center bg-stone-50 border border-stone-200 p-3 rounded-xl text-left">
-        <div>
-          <span className="text-[10px] font-mono text-indigo-700 font-bold uppercase tracking-wider block">GMAPS SEEKER MODE</span>
-          <h3 className="text-sm font-bold text-stone-900 leading-snug">Gemini Hide & Seek Guesser</h3>
-        </div>
-        <div className="text-right">
-          <span className="text-[10px] font-mono text-stone-500 block">CURRENT STREAK</span>
-          <span className="text-xs font-black text-indigo-600">🔥 {streak} STREAK</span>
-        </div>
-      </div>
-
-      {gameState === "intro" ? (
-        <div className="p-6 bg-stone-55/10 rounded-2xl border border-stone-200 text-center space-y-4 max-w-md mx-auto">
-          <span className="text-4xl animate-pulse">🌍</span>
-          <h4 className="font-display font-extrabold text-sm text-stone-900">Where is Gemini hiding?</h4>
-          <p className="text-xs text-stone-500 leading-relaxed">
-            Gemini is hiding somewhere inside Webuye West, Chwele, Mount Elgon, or Bungoma Central. Use generated panoramic street view prompts and smart coordinates hints to guess the location!
-          </p>
-          <button
-            onClick={triggerNextRound}
-            className="w-full py-2 bg-indigo-650 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow cursor-pointer uppercase transition active:scale-95"
-          >
-            Start Seeking
-          </button>
-        </div>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          
-          {/* Panoramic street view mockup */}
-          <div className="bg-stone-900 rounded-2xl border border-stone-950 p-4 font-sans text-center text-white h-[280px] flex flex-col justify-between relative shadow-lg">
-            <span className="absolute top-3 left-3 bg-[#e0f2fe] text-[#0369a1] text-[8px] font-mono font-black uppercase tracking-wider py-0.5 px-2 rounded-full">
-              🎥 SIMULATION PANORAMA 360°
-            </span>
-
-            <div className="flex flex-col items-center justify-center h-full space-y-3 px-4">
-              <span className="text-3xl">🏞️</span>
-              <p className="text-xs text-stone-300 leading-relaxed italic">
-                "{activeLocation?.scenicText}"
-              </p>
-            </div>
-
-            <div className="bg-stone-950/80 p-2.5 rounded-lg border border-stone-850/80 text-left text-[11px] space-y-1">
-              <span className="text-[#a855f7] font-bold block uppercase tracking-widest font-mono text-[9px] mb-0.5">💬 GEMINI CO-PILOT CLUE:</span>
-              <p className="text-stone-300 leading-snug">"{hint}"</p>
-            </div>
-          </div>
-
-          {/* User Guess Panel */}
-          <div className="bg-stone-50 border border-stone-200 rounded-2xl p-5 flex flex-col justify-between">
-            <div className="text-left">
-              <h4 className="font-bold text-stone-855 text-xs uppercase mb-1">Make Your Guess</h4>
-              <p className="text-[11px] text-stone-500">Pick from constituencies: <strong>Webuye West, Chwele Market, Mt Elgon, Bungoma Central</strong>.</p>
-            </div>
-
-            <form onSubmit={handleGuessSubmit} className="space-y-4 my-4">
-              <input
-                type="text"
-                required
-                disabled={gameState === "guess_submitted"}
-                placeholder="Type your constituency guess..."
-                value={userGuess}
-                onChange={(e) => setUserGuess(e.target.value)}
-                className="w-full rounded-xl border border-stone-250 bg-white p-2.5 text-xs font-bold text-stone-850 outline-none focus:border-indigo-600 focus:ring-1"
-              />
-
-              {gameState === "guess_submitted" ? (
-                <div className="p-3 bg-white rounded-xl border border-stone-150 space-y-2">
-                  {solvedDistance === 0 ? (
-                    <p className="text-xs font-bold text-emerald-700 flex items-center gap-1">
-                      <Sparkles className="h-4 w-4 animate-spin" />
-                      <span>✓ PERFECT! Gemini successfully located. +1 Streak!</span>
-                    </p>
-                  ) : (
-                    <p className="text-xs font-bold text-red-600">
-                      ❌ Deviation: approx {solvedDistance} Km away of coordinates! Gemini was in {activeLocation?.constituency}.
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={triggerNextRound}
-                    className="w-full mt-2 py-1.5 bg-indigo-600 text-white hover:bg-indigo-750 font-bold rounded-lg text-xs"
-                  >
-                    Play Next Round
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="submit"
-                  className="w-full py-2 bg-indigo-650 hover:bg-indigo-700 text-white text-xs font-black rounded-xl uppercase transition active:scale-95"
-                >
-                  Submit Guess Coordinates
-                </button>
-              )}
-            </form>
-
-            <button
-              onClick={() => setGameState("intro")}
-              className="text-[10px] text-stone-400 font-bold hover:underline"
-            >
-              ← Back to game setup
-            </button>
-          </div>
-
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ==========================================
-// 3. WEBCAM BUBBLE SHOOTER WITH GEMINI CO-PILOT
+// 2. WEBCAM BUBBLE SHOOTER WITH GEMINI CO-PILOT
 // ==========================================
 export function WebcamBubbleShooter() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -870,12 +690,12 @@ export function WebcamBubbleShooter() {
             {/* Gemini analytical advice */}
             <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl text-left space-y-2">
               <span className="text-[9px] font-bold text-blue-700 font-mono block uppercase tracking-widest">
-                💡 GEMINI CO-PILOT ADVICE:
+                GEMINI CO-PILOT ADVICE:
               </span>
               <p className="text-xs text-neutral-800 font-semibold leading-relaxed">
                 "{copilotAdvice}"
               </p>
-              <p className="text-[10px] text-blue-500 font-medium">Gemini 3.5 Flash actively reading pixels and routing.</p>
+              <p className="text-[10px] text-blue-500 font-medium">Gemini 4 Hydrogen local guidance active.</p>
             </div>
 
             <button

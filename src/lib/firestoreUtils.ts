@@ -36,7 +36,7 @@ export interface FirestoreErrorInfo {
 /**
  * Normalizes Firebase Firestore errors into structured JSON while keeping offline queueing resilient.
  */
-function handleFirestoreError(
+export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
@@ -103,7 +103,12 @@ function sanitizeForFirestore(obj: any): any {
 /**
  * Synchronize User Session & setting defaults
  */
-export async function syncUserSession(userId: string, email: string, name: string): Promise<User> {
+export async function syncUserSession(
+  userId: string,
+  email: string,
+  name: string,
+  avatarUrl?: string
+): Promise<User> {
   try {
     const userDocRef = doc(db, "users", userId);
     const docSnap = await getDoc(userDocRef);
@@ -111,18 +116,33 @@ export async function syncUserSession(userId: string, email: string, name: strin
     if (docSnap.exists()) {
       const existing = docSnap.data() as User;
       try {
+        await updateDoc(userDocRef, {
+          lastLoginAt: new Date().toISOString(),
+          ...(avatarUrl && !existing.avatarUrl ? { avatarUrl } : {}),
+        });
+      } catch (_) {}
+      try {
         localStorage.setItem(`WAFULA_CACHED_USER_${userId}`, JSON.stringify(existing));
       } catch (_) {}
       return existing;
     } else {
       const newUser: User = {
+        id: userId,
         email,
-        name,
+        name: name || email.split("@")[0] || "Scholar",
         role: "member",
+        avatarUrl: avatarUrl || "",
         readingStreak: 1,
-        dailyGoalMinutes: 30
+        dailyGoalMinutes: 30,
+        credits: 20,
+        subscription_status: "free",
+        isSuspended: false,
       };
-      await setDoc(userDocRef, sanitizeForFirestore(newUser));
+      await setDoc(userDocRef, sanitizeForFirestore({
+        ...newUser,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      }));
       try {
         localStorage.setItem(`WAFULA_CACHED_USER_${userId}`, JSON.stringify(newUser));
       } catch (_) {}
@@ -240,6 +260,10 @@ export async function fetchCommunityMessagesFromFirestore(): Promise<CommunityMe
  * Add community chat message
  */
 export async function saveCommunityMessageToFirestore(msg: CommunityMessage): Promise<void> {
+  if (!auth.currentUser || msg.id.startsWith("msg_")) {
+    // Unauthenticated clients cannot write under security rules, and sample seeds stay local
+    return;
+  }
   try {
     await setDoc(doc(db, "communityMessages", msg.id), sanitizeForFirestore(msg));
   } catch (e) {
@@ -460,7 +484,7 @@ export async function fetchAppSettingsFromFirestore(): Promise<AppSettings | nul
       } catch (_) {}
     }
     return {
-      primaryColor: "#3B82F6",
+      primaryColor: "#A8421B",
       fontSizeMultiplier: 1.0,
       customLogoUrl: ""
     };
@@ -602,6 +626,7 @@ export async function logUserActivity(
     const logId = "act_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     await setDoc(doc(db, "user_activities", logId), {
       id: logId,
+      userId: auth.currentUser?.uid || "",
       userEmail,
       userName: userName || userEmail.split("@")[0] || "Anonymous Scholar",
       actionType,

@@ -1,19 +1,27 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut } from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User as FirebaseUser, signOut, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore, enableIndexedDbPersistence, doc, getDocFromServer } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase App safely (avoid duplicate initialization across HMR/module reloads)
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+
+// Enable persistent local authentication across sessions
+if (typeof window !== "undefined") {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn("Could not set browserLocalPersistence for Firebase Auth:", err);
+  });
+}
+const configuredDatabaseId = (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId;
+export const db = configuredDatabaseId
+  ? getFirestore(app, configuredDatabaseId)
   : getFirestore(app);
 
 export const firebaseConfigInfo = {
   projectId: firebaseConfig.projectId,
   authDomain: firebaseConfig.authDomain,
-  databaseId: firebaseConfig.firestoreDatabaseId || "(default)",
+  databaseId: configuredDatabaseId || "(default)",
 };
 
 export interface FirebaseConnectionResult {
@@ -71,42 +79,58 @@ if (typeof window !== "undefined") {
 export const firebaseGoogleProvider = new GoogleAuthProvider();
 firebaseGoogleProvider.setCustomParameters({ prompt: "select_account" });
 
-// Configure Google OAuth Provider for Gmail Workspace Integration
+// Configure Google OAuth Provider for Google Workspace School & Hub Integration
 export const provider = new GoogleAuthProvider();
+provider.setCustomParameters({ prompt: "select_account" });
 provider.addScope("https://www.googleapis.com/auth/gmail.send");
 provider.addScope("https://www.googleapis.com/auth/gmail.readonly");
 provider.addScope("https://www.googleapis.com/auth/gmail.modify");
 provider.addScope("https://www.googleapis.com/auth/chat.spaces.readonly");
 provider.addScope("https://www.googleapis.com/auth/documents.readonly");
 provider.addScope("https://www.googleapis.com/auth/drive.readonly");
+provider.addScope("https://www.googleapis.com/auth/drive.file");
 provider.addScope("https://www.googleapis.com/auth/contacts.readonly");
 provider.addScope("https://www.googleapis.com/auth/meetings.space.created");
+provider.addScope("https://www.googleapis.com/auth/meetings.space.readonly");
 provider.addScope("https://www.googleapis.com/auth/spreadsheets.readonly");
 provider.addScope("https://www.googleapis.com/auth/forms.body");
 provider.addScope("https://www.googleapis.com/auth/calendar");
+provider.addScope("https://www.googleapis.com/auth/classroom.courses");
+provider.addScope("https://www.googleapis.com/auth/classroom.announcements");
+provider.addScope("https://www.googleapis.com/auth/classroom.coursework.me");
+provider.addScope("https://www.googleapis.com/auth/classroom.coursework.students");
+provider.addScope("https://www.googleapis.com/auth/classroom.courseworkmaterials");
+provider.addScope("https://www.googleapis.com/auth/classroom.rosters.readonly");
 
-// In-memory access token cache
-let cachedAccessToken: string | null = null;
+// Strictly in-memory OAuth access token cache (never written to localStorage/sessionStorage)
+let cachedOAuthAccessToken: string | null = null;
 let isSigningIn = false;
 
 /**
- * Initializes authentication listener
+ * Initializes authentication listener with persistent Firebase session support
  */
 export const initAuth = (
   onAuthSuccess?: (user: FirebaseUser, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  try {
+    sessionStorage.removeItem("GMAIL_ACCESS_TOKEN");
+  } catch {}
+
   return onAuthStateChanged(auth, async (user: FirebaseUser | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        // Token might have cleared, reset to null
-        cachedAccessToken = null;
+      try {
+        const idToken = await user.getIdToken();
+        try {
+          localStorage.setItem("WAFULA_LOGIN_TIMESTAMP", String(Date.now()));
+          localStorage.setItem("WAFULA_LAST_ACTIVE_TIME", String(Date.now()));
+        } catch {}
+        if (onAuthSuccess) onAuthSuccess(user, idToken);
+      } catch {
         if (onAuthFailure) onAuthFailure();
       }
     } else {
-      cachedAccessToken = null;
+      cachedOAuthAccessToken = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -127,7 +151,7 @@ export const firebaseGoogleSignIn = async (): Promise<{ user: FirebaseUser; idTo
 };
 
 /**
- * Performs Google Pop-up authentication to fetch credentials and Gmail access token
+ * Performs Google Pop-up authentication to fetch credentials and Workspace OAuth access token
  */
 export const googleSignIn = async (): Promise<{ user: FirebaseUser; accessToken: string } | null> => {
   try {
@@ -135,19 +159,13 @@ export const googleSignIn = async (): Promise<{ user: FirebaseUser; accessToken:
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error("Failed to extract Google Gmail access token from Web credentials.");
+      throw new Error("Failed to extract Google Workspace access token from credentials.");
     }
 
-    cachedAccessToken = credential.accessToken;
-    // Store in session storage temporarily or coordinate memory
-    try {
-      sessionStorage.setItem("GMAIL_ACCESS_TOKEN", cachedAccessToken);
-    } catch (_) {
-      // Ignore sessionStorage block in third-party contexts
-    }
-    return { user: result.user, accessToken: cachedAccessToken };
+    cachedOAuthAccessToken = credential.accessToken;
+    return { user: result.user, accessToken: cachedOAuthAccessToken };
   } catch (error: any) {
-    console.error("Google sign in error code:", error);
+    console.error("Google sign in error:", error);
     throw error;
   } finally {
     isSigningIn = false;
@@ -155,25 +173,21 @@ export const googleSignIn = async (): Promise<{ user: FirebaseUser; accessToken:
 };
 
 /**
- * Retrieves the currently active Google Gmail access token
+ * Retrieves the currently active in-memory Google Workspace OAuth access token
  */
 export const getAccessToken = (): string | null => {
-  if (cachedAccessToken) return cachedAccessToken;
-  try {
-    return sessionStorage.getItem("GMAIL_ACCESS_TOKEN");
-  } catch (_) {
-    return null;
-  }
+  return cachedOAuthAccessToken;
 };
 
 /**
- * Perform manual logout and clear token
+ * Perform manual logout and clear in-memory token
  */
 export const googleLogout = async () => {
   await signOut(auth);
-  cachedAccessToken = null;
+  cachedOAuthAccessToken = null;
   try {
     sessionStorage.removeItem("GMAIL_ACCESS_TOKEN");
+    sessionStorage.removeItem("GMAIL_CONNECTED_USER");
   } catch (_) {}
 };
 

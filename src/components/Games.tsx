@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { GameScore } from "../types";
 import { Trophy, RefreshCw, Star, Play, HelpCircle, Flame, CheckCircle2, XCircle } from "lucide-react";
-import { NeonSnakeGame, GeminiMapsHideSeek, WebcamBubbleShooter, RetroSynthwaveRunner, ZionTerrainDriverGame, ZionPrecisionCarParkerGame, BungomaSoccerChallengeGame } from "./ZionAdventureGames";
+import { NeonSnakeGame, WebcamBubbleShooter, RetroSynthwaveRunner, ZionTerrainDriverGame, ZionPrecisionCarParkerGame, BungomaSoccerChallengeGame } from "./ZionAdventureGames";
 import EndlessTempleRunGame from "./EndlessTempleRun";
 
 interface GamesProps {
@@ -16,7 +16,8 @@ export default function Games({ onUnlockBadge }: GamesProps) {
   useEffect(() => {
     const savedScores = localStorage.getItem("WAFULA_GAME_SCORES");
     if (savedScores) {
-      setScores(JSON.parse(savedScores));
+      const parsed: GameScore[] = JSON.parse(savedScores);
+      setScores(parsed);
     } else {
       const initialScores: GameScore[] = [
         { gameId: "trivia", highScore: 0, streak: 0, playedCount: 0 },
@@ -88,7 +89,6 @@ export default function Games({ onUnlockBadge }: GamesProps) {
           {activeGame === "memory" && <MemoryMatchGame onCompleted={(points) => updateScore("memory", points)} />}
           {activeGame === "driving" && <BungomaHighwayDrivingGame onCompleted={(points) => updateScore("driving", points)} />}
           {activeGame === "neon-snake" && <NeonSnakeGame onCompleted={(points) => updateScore("neon-snake", points)} />}
-          {activeGame === "maps-seeker" && <GeminiMapsHideSeek />}
           {activeGame === "bubble-shooter" && <WebcamBubbleShooter />}
           {activeGame === "synthwave-runner" && <RetroSynthwaveRunner onCompleted={(points) => updateScore("synthwave-runner", points)} />}
           {activeGame === "terrain-driver" && <ZionTerrainDriverGame onCompleted={(points) => updateScore("terrain-driver", points)} />}
@@ -215,20 +215,7 @@ export default function Games({ onUnlockBadge }: GamesProps) {
             </div>
           </div>
 
-          {/* 10. Gemini Maps Hide & Seek */}
-          <div className="rounded-2xl border border-indigo-200 bg-indigo-50/5 p-5 flex flex-col justify-between">
-            <div>
-              <span className="text-3xl">🌍</span>
-              <h3 className="font-display text-lg font-bold text-stone-900 mt-2">Gemini Maps Hide & Seek</h3>
-              <p className="text-xs text-neutral-500 mt-1">Use panoramic street view prompt logs and smart direction headers to guess where Gemini is hiding.</p>
-            </div>
-            <div className="border-t border-indigo-200 pt-3 mt-4 flex items-center justify-between">
-              <span className="text-xs text-stone-500 font-mono">GPS live track coordinates</span>
-              <button onClick={() => setActiveGame("maps-seeker")} className="rounded-lg bg-indigo-650 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700">Play Seeker</button>
-            </div>
-          </div>
-
-          {/* 11. Webcam Bubble Shooter with Gemini Co-Pilot */}
+          {/* 10. Webcam Bubble Shooter with Gemini Co-Pilot */}
           <div className="rounded-2xl border border-sky-200 bg-sky-50/5 p-5 flex flex-col justify-between">
             <div>
               <span className="text-3xl">📸</span>

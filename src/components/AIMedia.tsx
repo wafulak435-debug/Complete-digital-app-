@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Sparkles, Image as ImageIcon, Video as VideoIcon, Download, Loader2, Play, Plus, RefreshCw, Eye, Save, Smile, Layers, Film, FileText, BookOpen, MessageSquare, Trash2, Shield, CornerDownRight } from "lucide-react";
 import { User, SavedDocument } from "../types";
-import { VeoVideoEngine, PetAdventureEngine, VectorArtMaker } from "./AICreativeWidgets";
+import { PetAdventureEngine, VectorArtMaker } from "./AICreativeWidgets";
 import ChurchVideoStudio from "./ChurchVideoStudio";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
 
@@ -13,7 +13,7 @@ interface AIMediaProps {
 }
 
 export default function AIMedia({ currentUser, onAddNewDocument, books = [], savedDocuments = [] }: AIMediaProps) {
-  const [activeTab, setActiveTab] = useState<"image" | "video" | "veo-video" | "pet-adventure" | "vector-art" | "church-video">("church-video");
+  const [activeTab, setActiveTab] = useState<"image" | "video" | "pet-adventure" | "vector-art" | "church-video">("church-video");
 
   // Media Comments States
   const [mediaComments, setMediaComments] = useState<any[]>([]);
@@ -147,7 +147,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
   const visualProgressMessages = [
     "Spinning quantum seeds...",
     "Injecting Bungoma design filters...",
-    "Assembling keyframes with Veo 3.5 AI...",
+    "Assembling keyframes with Zion Hydrogen Canvas...",
     "Running neural frame interpolation...",
     "Compressing high-definition video assets...",
     "Finalizing cinematic sound sync...",
@@ -344,7 +344,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
           }`}
         >
           <ImageIcon className="h-4.5 w-4.5" />
-          <span>Unlimited Image Architect</span>
+          <span>Cover Vector Architect</span>
         </button>
         <button
           onClick={() => setActiveTab("video")}
@@ -355,18 +355,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
           }`}
         >
           <VideoIcon className="h-4.5 w-4.5" />
-          <span>Unlimited Video (Veo 3.5)</span>
-        </button>
-        <button
-          onClick={() => setActiveTab("veo-video")}
-          className={`pb-3 text-sm font-bold flex items-center space-x-2 transition border-b-2 shrink-0 ${
-            activeTab === "veo-video"
-              ? "text-indigo-600 border-indigo-600"
-              : "text-stone-450 border-transparent hover:text-stone-800"
-          }`}
-        >
-          <Film className="h-4.5 w-4.5" />
-          <span>Veo 3.1 Text-to-Video Engine</span>
+          <span>Storyboard Canvas Studio</span>
         </button>
         <button
           onClick={() => setActiveTab("pet-adventure")}
@@ -393,7 +382,6 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
       </div>
 
       {activeTab === "church-video" && <div className="mt-6 animate-in fade-in duration-200"><ChurchVideoStudio /></div>}
-      {activeTab === "veo-video" && <div className="mt-6"><VeoVideoEngine /></div>}
       {activeTab === "pet-adventure" && <div className="mt-6"><PetAdventureEngine /></div>}
       {activeTab === "vector-art" && <div className="mt-6"><VectorArtMaker /></div>}
 
@@ -474,7 +462,7 @@ export default function AIMedia({ currentUser, onAddNewDocument, books = [], sav
             <form onSubmit={handleGenerateVideo} className="space-y-4">
               <h3 className="text-sm font-bold text-stone-900 border-b pb-2 flex items-center space-x-2">
                 <VideoIcon className="h-4 w-4 text-indigo-505 text-indigo-600" />
-                <span>Configure Veo 3.5 Timeline</span>
+                <span>Configure Storyboard Timeline (Gemini 4 Hydrogen)</span>
               </h3>
 
               {/* Source Material (Book or Document Selection) */}

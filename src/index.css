@@ -21,44 +21,53 @@
 
 :root {
   color-scheme: light;
-  --bg-app: #F4F7FC;
+  --bg-app: #FAF8F4;
   --bg-surface: #FFFFFF;
-  --bg-muted: #E9EFF8;
-  --bg-sand: #DDE5F1;
-  --text-primary: #0B254D;
-  --text-secondary: #475569;
-  --border-main: #DDE5F1;
+  --bg-muted: #F7F4EE;
+  --bg-sand: #EFEAE1;
+  --text-primary: #1F1B18;
+  --text-secondary: #6E655E;
+  --border-main: #E7E1D8;
   --accent-main: #155EEF;
   --accent-hover: #0F49C7;
   --accent-soft: #EFF6FF;
-  --accent-gold: #F5B82E;
+  --accent-gold: #D97706;
   --accent-ring: rgba(21, 94, 239, 0.22);
 }
 
 .dark {
   color-scheme: dark;
-  --bg-app: #07142B;
-  --bg-surface: #0D1F3C;
-  --bg-muted: #132A4F;
-  --bg-sand: #18345E;
-  --text-primary: #F8FAFC;
-  --text-secondary: #94A3B8;
-  --border-main: #1E3A63;
-  --accent-main: #3B82F6;
-  --accent-hover: #2563EB;
-  --accent-soft: rgba(59, 130, 246, 0.16);
-  --accent-gold: #F5B82E;
-  --accent-ring: rgba(59, 130, 246, 0.30);
+  --bg-app: #12100E;
+  --bg-surface: #1B1815;
+  --bg-muted: #24201C;
+  --bg-sand: #2D2824;
+  --text-primary: #FAF8F4;
+  --text-secondary: #B5ABA2;
+  --border-main: #332C26;
+  --accent-main: #C85222;
+  --accent-hover: #A8421B;
+  --accent-soft: rgba(200, 82, 34, 0.18);
+  --accent-gold: #F59E0B;
+  --accent-ring: rgba(200, 82, 34, 0.32);
 }
 
 @layer base {
-  html {
+  html, body, #root {
     background-color: var(--bg-app);
     color: var(--text-primary);
     font-family: var(--font-sans);
     scroll-behavior: smooth;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    box-sizing: border-box;
+    touch-action: manipulation;
+  }
+
+  button, a, input, select, textarea, [role="button"] {
+    min-height: 44px;
   }
 
   body {
@@ -66,8 +75,15 @@
     color: var(--text-primary);
     margin: 0;
     padding: 0;
+    width: 100%;
+    max-width: 100vw;
     overflow-x: hidden;
+    box-sizing: border-box;
     transition: background-color 200ms ease, color 200ms ease;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
   }
 
   h1, h2, h3, .font-editorial {

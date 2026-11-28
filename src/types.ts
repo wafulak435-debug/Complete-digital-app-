@@ -1,8 +1,12 @@
+export type SectionKey = 'school_1' | 'school_2' | 'bookstore' | 'mission';
+
 export type AppRole =
+  | 'super_admin'
+  | 'manager'
+  | 'user'
   | 'admin'
   | 'main_admin'
   | 'sub_admin'
-  | 'manager'
   | 'tutor'
   | 'member'
   | 'guest';
@@ -14,8 +18,12 @@ export interface SubAdminCapabilityMap {
   allowManageBooks: boolean;
   allowConfirmPayments: boolean;
   allowManageEnrollments: boolean;
+  allowManageStudents: boolean;
   allowManageExams: boolean;
   allowIssueCertificates: boolean;
+  allowManageLeadership: boolean;
+  allowManageComputer: boolean;
+  allowManageBible: boolean;
   allowModeration: boolean;
   allowSuspendUsers: boolean;
 }
@@ -34,6 +42,7 @@ export interface User {
   email: string;
   name: string;
   role: AppRole;
+  assigned_sections?: SectionKey[];
   isMainAdmin?: boolean;
   isSuspended?: boolean;
   permissions?: Partial<SubAdminCapabilityMap>;
@@ -46,6 +55,8 @@ export interface User {
   subscription_status?: 'free' | 'active' | 'past_due' | 'cancelled';
   plan_name?: string;
   credits?: number;
+  createdAt?: string;
+  lastLoginAt?: string;
 }
 
 export interface UserProfile {
@@ -54,6 +65,7 @@ export interface UserProfile {
   full_name: string | null;
   phone_number: string | null;
   role: AppRole;
+  assigned_sections?: SectionKey[];
   subscription_status: 'free' | 'active' | 'past_due' | 'cancelled';
   plan_name: string;
   credits: number;
@@ -116,6 +128,11 @@ export interface Book {
   previewDuration?: number; // duration in seconds, e.g. 30
   isSynced?: boolean;
   content?: string;
+  stockQuantity?: number;
+  isPhysical?: boolean;
+  created_by?: string;
+  created_by_id?: string;
+  created_at?: string;
 }
 
 export interface Review {
@@ -566,5 +583,114 @@ export interface ScheduledStudioPost {
   posterDataUrl?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/* ------------------------------------------------------------------ Zion RBAC & Modular Architecture */
+
+export interface AuditLogItem {
+  id: string;
+  section: SectionKey | 'admin' | 'auth';
+  action: 'create' | 'update' | 'delete' | 'permission_change' | 'enroll' | 'order' | 'promote' | 'revoke';
+  itemTitle: string;
+  itemId?: string;
+  created_by: string;
+  created_by_id: string;
+  created_at: string;
+  details?: string;
+}
+
+export interface CourseAssignment {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  maxPoints: number;
+  submissionsCount?: number;
+}
+
+export interface SchoolCourseItem {
+  id: string;
+  section: 'school_1' | 'school_2';
+  title: string;
+  courseCode: string;
+  description: string;
+  duration: string;
+  feeKes: number;
+  lessonsCount: number;
+  videoUrl?: string;
+  studyMaterials: string[];
+  assignments: CourseAssignment[];
+  announcements: string[];
+  enrolledStudents: string[];
+  created_by: string;
+  created_by_id?: string;
+  created_at: string;
+}
+
+export interface MissionOutreachItem {
+  id: string;
+  title: string;
+  theme: string;
+  type: 'Physical Crusade' | 'Online Crusade' | 'Mission Trip';
+  venue: string;
+  date: string;
+  time: string;
+  expectedAttendance: number;
+  rsvpsCount: number;
+  registeredVolunteers: string[];
+  description: string;
+  status: 'upcoming' | 'live' | 'completed';
+  created_by: string;
+  created_by_id?: string;
+  created_at: string;
+}
+
+export interface MissionVolunteerItem {
+  id: string;
+  eventId: string;
+  eventTitle: string;
+  userName: string;
+  userEmail: string;
+  userPhone: string;
+  rolePreference: string;
+  registeredAt: string;
+}
+
+export interface PrayerRequestItem {
+  id: string;
+  authorName: string;
+  authorEmail?: string;
+  category: string;
+  request: string;
+  isAnonymous: boolean;
+  status: 'pending' | 'approved';
+  prayersCount: number;
+  createdAt: string;
+}
+
+export interface MissionFieldReportItem {
+  id: string;
+  title: string;
+  location: string;
+  date: string;
+  narrative: string;
+  soulsSavedCount: number;
+  attendeesCount: number;
+  created_by: string;
+  created_by_id?: string;
+  created_at: string;
+}
+
+export interface PaymentSettingsConfig {
+  mpesaPaybill: string;
+  mpesaTill: string;
+  mpesaConsumerKey: string;
+  mpesaConsumerSecret: string;
+  mpesaPasskey: string;
+  paystackPublicKey: string;
+  paystackSecretKey: string;
+  currency: 'KES';
+  updatedAt: string;
+  updatedBy: string;
 }
 

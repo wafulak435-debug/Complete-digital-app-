@@ -6,9 +6,9 @@ import {
 } from "lucide-react";
 import * as d3 from "d3";
 import { User, WifiPurchase } from "../types";
-import { saveWifiPurchaseToFirestore, fetchWifiPurchasesFromFirestore } from "../lib/firestoreUtils";
-import { db } from "../lib/firebase";
-import { collection, onSnapshot } from "firebase/firestore";
+import { saveWifiPurchaseToFirestore, fetchWifiPurchasesFromFirestore, handleFirestoreError, OperationType } from "../lib/firestoreUtils";
+import { db, auth } from "../lib/firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 
 interface ZionWifiProps {
   currentUser: User | null;
@@ -131,17 +131,21 @@ export default function ZionWifi({ currentUser, isOnline, onLogIn }: ZionWifiPro
 
   // Real-time synchronization of purchase records
   useEffect(() => {
-    if (!currentUser) return;
-    
-    // Subscribe to wifiPurchases in Firestore
-    const unSub = onSnapshot(collection(db, "wifiPurchases"), (snap) => {
+    if (!currentUser || currentUser.role === "guest" || !auth.currentUser) return;
+
+    const isPrivileged = ["main_admin", "admin", "sub_admin", "manager"].includes(currentUser.role);
+    const targetQuery = isPrivileged
+      ? collection(db, "wifiPurchases")
+      : query(collection(db, "wifiPurchases"), where("userId", "==", auth.currentUser.uid));
+
+    const unSub = onSnapshot(targetQuery, (snap) => {
       const records: WifiPurchase[] = [];
-      snap.forEach((doc) => {
-        records.push({ id: doc.id, ...doc.data() } as WifiPurchase);
+      snap.forEach((docSnap) => {
+        records.push({ id: docSnap.id, ...docSnap.data() } as WifiPurchase);
       });
       setWifiPurchases(records);
     }, (error) => {
-      console.error("Firestore onSnapshot error (wifiPurchases):", error);
+      handleFirestoreError(error, OperationType.LIST, "wifiPurchases");
     });
 
     return () => unSub();
@@ -169,13 +173,22 @@ export default function ZionWifi({ currentUser, isOnline, onLogIn }: ZionWifiPro
     setActiveNodes(defaults);
   }, [isBroadcasting, currentUser]);
 
+  const matchesCurrentUser = (purchaseUserId?: string) => {
+    if (!purchaseUserId || !currentUser) return false;
+    return (
+      purchaseUserId === currentUser.id ||
+      purchaseUserId === auth.currentUser?.uid ||
+      purchaseUserId.toLowerCase() === currentUser.email.toLowerCase()
+    );
+  };
+
   // Check if current user owns an active (approved) pass for Zion Wi-Fi
   const activeApprovedPurchase = wifiPurchases.find(
-    p => p.userId.toLowerCase() === currentUser?.email.toLowerCase() && p.status === "approved"
+    p => matchesCurrentUser(p.userId) && p.status === "approved"
   );
 
   const activePendingPurchase = wifiPurchases.find(
-    p => p.userId.toLowerCase() === currentUser?.email.toLowerCase() && p.status === "pending"
+    p => matchesCurrentUser(p.userId) && p.status === "pending"
   );
 
   // --- 1. Real-time Countdown and 5-Min Remaining Warning Notification ---

@@ -18,18 +18,34 @@ import {
 
 export const academicsRouter = Router();
 
+function canManageStudents(actor: RequestIdentity): boolean {
+  if (actor.isMainAdmin || actor.role === "main_admin" || actor.role === "manager") return true;
+  if (actor.role === "sub_admin") {
+    return Boolean(actor.capabilities.allowManageStudents || actor.capabilities.allowManageEnrollments);
+  }
+  return false;
+}
+
 function canManageAcademics(actor: RequestIdentity): boolean {
-  return (
-    actor.isMainAdmin ||
-    actor.role === "main_admin" ||
-    actor.role === "sub_admin" ||
-    actor.role === "manager" ||
-    actor.role === "tutor"
-  );
+  if (actor.isMainAdmin || actor.role === "main_admin" || actor.role === "manager" || actor.role === "tutor") {
+    return true;
+  }
+  if (actor.role === "sub_admin") {
+    return Boolean(
+      actor.capabilities.allowManageStudents ||
+        actor.capabilities.allowManageEnrollments ||
+        actor.capabilities.allowManageExams ||
+        actor.capabilities.allowManageLeadership ||
+        actor.capabilities.allowManageComputer ||
+        actor.capabilities.allowManageBible
+    );
+  }
+  return false;
 }
 
 function canAccessClass(actor: RequestIdentity, classId: string): boolean {
-  if (canManageAcademics(actor)) return true;
+  if (actor.isMainAdmin || actor.role === "main_admin" || actor.role === "manager") return true;
+  if (actor.role === "sub_admin" && actor.capabilities.allowManageExams) return true;
   const cls = academicState.classes[classId];
   if (!cls) return false;
   return (
@@ -132,7 +148,7 @@ academicsRouter.post(
   (req: AuthenticatedRequest, res: Response) => {
     const actor = req.identity!;
     if (!canManageAcademics(actor)) {
-      return res.status(403).json({ success: false, error: "Staff permission required." });
+      return res.status(403).json({ success: false, error: "School management permission required." });
     }
     const { instId } = req.params;
     ensureInstitution(instId);
@@ -170,8 +186,8 @@ academicsRouter.put(
   requireAuth,
   (req: AuthenticatedRequest, res: Response) => {
     const actor = req.identity!;
-    if (!canManageAcademics(actor)) {
-      return res.status(403).json({ success: false, error: "Staff permission required." });
+    if (!actor.isMainAdmin && actor.role !== "manager") {
+      return res.status(403).json({ success: false, error: "Only the Manager may switch active academic year." });
     }
     const target = academicState.years[req.params.id];
     if (!target) return res.status(404).json({ success: false, error: "Academic year not found." });
@@ -238,8 +254,8 @@ academicsRouter.put(
   requireAuth,
   (req: AuthenticatedRequest, res: Response) => {
     const actor = req.identity!;
-    if (!canManageAcademics(actor)) {
-      return res.status(403).json({ success: false, error: "Staff permission required." });
+    if (!actor.isMainAdmin && actor.role !== "manager") {
+      return res.status(403).json({ success: false, error: "Only the Manager may switch active academic term." });
     }
     const target = academicState.terms[req.params.id];
     if (!target) return res.status(404).json({ success: false, error: "Term not found." });
@@ -337,8 +353,16 @@ academicsRouter.post(
   requireAuth,
   (req: AuthenticatedRequest, res: Response) => {
     const actor = req.identity!;
-    if (!canManageAcademics(actor)) {
-      return res.status(403).json({ success: false, error: "Staff permission required." });
+    if (!canManageStudents(actor)) {
+      recordAuditLog({
+        actor,
+        category: "ACCESS_DENIED",
+        action: "STUDENT_CREATE_DENIED",
+        targetType: "student",
+        targetId: instIdFromReq(req),
+        details: `Denied student creation by ${actor.email} (missing allowManageStudents/allowManageEnrollments)`,
+      });
+      return res.status(403).json({ success: false, error: "Student management permission required." });
     }
     const { instId } = req.params;
     ensureInstitution(instId);
@@ -371,7 +395,94 @@ academicsRouter.post(
     };
     academicState.students[id] = student;
     persistAcademicState();
+    recordAuditLog({
+      actor,
+      category: "ADMIN_ACTION",
+      action: "STUDENT_ADDED",
+      targetType: "student",
+      targetId: id,
+      details: `Added student "${name}" (${admNo})`,
+    });
     return res.status(201).json({ success: true, student });
+  }
+);
+
+function instIdFromReq(req: AuthenticatedRequest) {
+  return String(req.params?.instId || "zion_academy");
+}
+
+/**
+ * PUT /api/school/students/:id
+ * Allows authorized admins (allowManageStudents / allowManageEnrollments) and Manager to edit student details under monitoring.
+ */
+academicsRouter.put(
+  "/students/:id",
+  requireAuth,
+  (req: AuthenticatedRequest, res: Response) => {
+    const actor = req.identity!;
+    if (!canManageStudents(actor)) {
+      recordAuditLog({
+        actor,
+        category: "ACCESS_DENIED",
+        action: "STUDENT_EDIT_DENIED",
+        targetType: "student",
+        targetId: req.params.id,
+        details: `Blocked student profile edit by ${actor.email}`,
+      });
+      return res.status(403).json({ success: false, error: "Student management permission required." });
+    }
+    const student = academicState.students[req.params.id];
+    if (!student) {
+      return res.status(404).json({ success: false, error: "Student not found." });
+    }
+
+    const nextName = req.body?.name !== undefined ? String(req.body.name).trim() : student.name;
+    const nextAdmNo = req.body?.admNo !== undefined ? String(req.body.admNo).trim() : student.admNo;
+    const nextClassId =
+      req.body?.classId !== undefined ? String(req.body.classId || "").trim() || undefined : student.classId;
+    if (nextClassId && !academicState.classes[nextClassId]) {
+      return res.status(404).json({ success: false, error: "Selected class not found." });
+    }
+
+    const allowedStatuses = new Set(["active", "deferred", "graduated", "transferred"]);
+    const rawStatus = req.body?.status !== undefined ? String(req.body.status).trim().toLowerCase() : student.status;
+    const nextStatus = allowedStatuses.has(rawStatus) ? (rawStatus as AcademicStudent["status"]) : student.status;
+
+    const nextStudentEmail =
+      req.body?.studentEmail !== undefined
+        ? String(req.body.studentEmail || "").trim().toLowerCase() || undefined
+        : student.studentEmail;
+
+    let nextParentEmails = student.parentEmails || [];
+    if (Array.isArray(req.body?.parentEmails)) {
+      nextParentEmails = req.body.parentEmails.map((e: any) => String(e || "").trim().toLowerCase()).filter(Boolean);
+    } else if (req.body?.parentEmail !== undefined) {
+      const p = String(req.body.parentEmail || "").trim().toLowerCase();
+      nextParentEmails = p ? [p] : [];
+    }
+
+    if (!nextName || !nextAdmNo) {
+      return res.status(400).json({ success: false, error: "Student name and admission number are required." });
+    }
+
+    student.name = nextName.slice(0, 120);
+    student.admNo = nextAdmNo.slice(0, 40);
+    student.classId = nextClassId;
+    student.status = nextStatus;
+    student.studentEmail = nextStudentEmail;
+    student.parentEmails = nextParentEmails;
+    persistAcademicState();
+
+    recordAuditLog({
+      actor,
+      category: "ADMIN_ACTION",
+      action: "STUDENT_DETAILS_UPDATED",
+      targetType: "student",
+      targetId: student.id,
+      details: `Updated student ${student.admNo} (${student.name}, status=${student.status})`,
+    });
+
+    return res.json({ success: true, student });
   }
 );
 
@@ -383,8 +494,8 @@ academicsRouter.put(
   requireAuth,
   (req: AuthenticatedRequest, res: Response) => {
     const actor = req.identity!;
-    if (!canManageAcademics(actor)) {
-      return res.status(403).json({ success: false, error: "Staff permission required." });
+    if (!canManageStudents(actor)) {
+      return res.status(403).json({ success: false, error: "Student management permission required." });
     }
     const student = academicState.students[req.params.id];
     if (!student) {
@@ -397,6 +508,14 @@ academicsRouter.put(
     }
     student.classId = classId || undefined;
     persistAcademicState();
+    recordAuditLog({
+      actor,
+      category: "ADMIN_ACTION",
+      action: "STUDENT_CLASS_UPDATED",
+      targetType: "student",
+      targetId: student.id,
+      details: `Placed student ${student.name} into class ${classId || "Unassigned"}`,
+    });
     return res.json({ success: true, student });
   }
 );

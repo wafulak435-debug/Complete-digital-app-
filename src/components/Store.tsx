@@ -6,7 +6,8 @@ import {
   Heart, Atom, Loader2, MoreVertical, Share2, Check, ChevronLeft, ChevronRight,
   Compass, CreditCard, Cloud, HardDrive, ShieldCheck,
   ChevronDown, ChevronUp, HelpCircle, Scale, ListOrdered, Library, X,
-  History, Download, UploadCloud, Calculator, TrendingUp, Award
+  History, Download, UploadCloud, Calculator, TrendingUp, Award,
+  Calendar, MapPin, Users, Megaphone, Flame, MessageSquare, CheckCircle2
 } from "lucide-react";
 import SecureBookReader from "./SecureBookReader";
 import { motion } from "motion/react";
@@ -1562,9 +1563,9 @@ export default function Store({
             </aside>
 
             {/* MAIN BOOKSTORE CANVAS */}
-            <div className="flex-1 min-w-0 w-full space-y-6">
+            <div className="flex-1 min-w-0 w-full space-y-4 sm:space-y-6">
               {/* Top Search & Action Strip */}
-              <div className="rounded-2xl bg-[#0B254D] px-4 py-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shadow-xs">
+              <div className="rounded-2xl bg-[#0B254D] px-3 py-2.5 sm:px-4 sm:py-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 shadow-xs">
                 <div ref={searchContainerRef} className="flex-1 min-w-0 relative">
                   <Search className="absolute top-2.5 left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
                   <input
@@ -1639,7 +1640,7 @@ export default function Store({
                   <button
                     type="button"
                     onClick={() => setShowFilters((prev) => !prev)}
-                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 sm:py-2 text-xs font-semibold transition cursor-pointer ${
                       showFilters
                         ? "bg-[#F5B82E] text-[#0B254D]"
                         : "bg-white/10 hover:bg-white/20 text-white"
@@ -1651,7 +1652,7 @@ export default function Store({
                   <button
                     type="button"
                     onClick={() => setStoreSection("orders")}
-                    className="relative inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 px-3 py-2 text-xs font-semibold text-white transition cursor-pointer"
+                    className="relative inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 px-3 py-1.5 sm:py-2 text-xs font-semibold text-white transition cursor-pointer"
                     title="View your book orders"
                   >
                     <ShoppingBag className="h-4 w-4 text-[#F5B82E]" />
@@ -1670,34 +1671,34 @@ export default function Store({
                   />
                   <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#0B254D]/92 via-[#0B254D]/70 to-[#155EEF]/85" />
 
-                  <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6 px-6 py-7 sm:px-8 sm:py-9">
-                    <div className="space-y-2.5 max-w-xl">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#F5B82E]">
+                  <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-3.5 sm:gap-6 px-4 py-4 sm:px-8 sm:py-9">
+                    <div className="space-y-1.5 sm:space-y-2.5 max-w-xl">
+                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-[#F5B82E]">
                         {showcase.heroEyebrow}
                       </p>
-                      <h1 className="font-display text-2xl sm:text-4xl font-bold tracking-tight leading-tight">
+                      <h1 className="font-display text-xl sm:text-4xl font-bold tracking-tight leading-tight">
                         Grow in Christ
                         <span className="block text-blue-100">Discover Knowledge</span>
                       </h1>
-                      <p className="text-xs sm:text-sm text-blue-100/90 leading-relaxed max-w-lg">
+                      <p className="text-[11px] sm:text-sm text-blue-100/90 leading-relaxed max-w-lg line-clamp-2 sm:line-clamp-none">
                         {showcase.tagline} · M-Pesa STK &amp; instant encrypted digital library access.
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-3 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
                       <button
                         type="button"
                         onClick={() => {
                           document.getElementById("featured_books_anchor")?.scrollIntoView({ behavior: "smooth" });
                         }}
-                        className="inline-flex items-center gap-2 rounded-full bg-[#F5B82E] hover:bg-[#E5A91E] text-[#0B254D] font-bold px-5 py-2.5 text-xs sm:text-sm shadow-sm transition cursor-pointer"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#F5B82E] hover:bg-[#E5A91E] text-[#0B254D] font-bold px-4 py-2 sm:px-5 sm:py-2.5 text-xs sm:text-sm shadow-sm transition cursor-pointer"
                       >
-                        <span>Shop Now &raquo;</span>
+                        <span>Shop Now</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => setStoreSection("library")}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 text-xs transition cursor-pointer"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-white/30 bg-white/10 hover:bg-white/20 text-white font-semibold px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs transition cursor-pointer"
                       >
                         <Library className="h-3.5 w-3.5" />
                         <span>My Library ({purchasedBookIds.length})</span>
@@ -1707,19 +1708,19 @@ export default function Store({
                 </section>
               )}
 
-              {/* Compact Live Showcase Bar (from Manager Portal, unobtrusive) */}
+              {/* Compact Live Showcase Bar */}
               {storeSection === "catalog" && activeSlide && (
                 <section
                   onMouseEnter={() => setIsSlidePaused(true)}
                   onMouseLeave={() => setIsSlidePaused(false)}
-                  className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-4 flex flex-col sm:flex-row items-center gap-4 shadow-2xs"
+                  className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 shadow-2xs"
                 >
                   <img
                     src={activeSlide.imageUrl}
                     alt={activeSlide.title}
-                    className="h-20 w-full sm:w-32 rounded-xl object-cover shrink-0 border border-slate-100 dark:border-slate-800"
+                    className="h-16 w-full sm:w-32 rounded-xl object-cover shrink-0 border border-slate-100 dark:border-slate-800"
                   />
-                  <div className="flex-1 min-w-0 space-y-1 text-left">
+                  <div className="flex-1 min-w-0 space-y-0.5 sm:space-y-1 text-left w-full">
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#155EEF] dark:text-blue-400">
                       <span>{activeSlide.category || "ZION DIGITAL"}</span>
                       <span className="text-slate-300 dark:text-slate-600">·</span>
@@ -1727,20 +1728,20 @@ export default function Store({
                         {String(safeIndex + 1).padStart(2, "0")} / {String(showcase.slides.length).padStart(2, "0")}
                       </span>
                     </div>
-                    <h2 className="font-display text-sm sm:text-base font-bold text-[#0B254D] dark:text-white truncate">
+                    <h2 className="font-display text-xs sm:text-base font-bold text-[#0B254D] dark:text-white truncate">
                       {activeSlide.title}
                     </h2>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+                    <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
                       {activeSlide.subtitle}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 self-end sm:self-center">
                     <button
                       type="button"
                       onClick={() =>
                         setSlideIdx((prev) => (prev - 1 + showcase.slides.length) % showcase.slides.length)
                       }
-                      className="h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
+                      className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
                       aria-label="Previous spotlight"
                     >
                       <ChevronLeft className="h-4 w-4" />
@@ -1748,7 +1749,7 @@ export default function Store({
                     <button
                       type="button"
                       onClick={() => setSlideIdx((prev) => (prev + 1) % showcase.slides.length)}
-                      className="h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
+                      className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer"
                       aria-label="Next spotlight"
                     >
                       <ChevronRight className="h-4 w-4" />
@@ -1762,11 +1763,128 @@ export default function Store({
                           onNavigate?.(activeSlide.targetView);
                         }
                       }}
-                      className="inline-flex items-center gap-1 rounded-lg bg-[#0B254D] hover:bg-[#155EEF] text-white px-3 py-2 text-xs font-semibold transition cursor-pointer"
+                      className="inline-flex items-center gap-1 rounded-lg bg-[#0B254D] hover:bg-[#155EEF] text-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-[11px] sm:text-xs font-semibold transition cursor-pointer"
                     >
                       <span>{activeSlide.ctaLabel || "Open"}</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
+                      <ArrowRight className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                     </button>
+                  </div>
+                </section>
+              )}
+
+              {/* FOUR MAJOR HOMEPAGE SECTIONS */}
+              {storeSection === "catalog" && (
+                <section className="space-y-3 my-1">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="font-display text-base sm:text-xl font-bold text-[#0B254D] dark:text-white">
+                        Zion Digital Core Portals
+                      </h2>
+                      <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
+                        Explore our four academic, spiritual, and publishing hubs.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
+                    {/* 1. Zion Digital School */}
+                    <div
+                      onClick={() => onNavigate?.("school")}
+                      className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-5 cursor-pointer hover:border-[#155EEF] hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div className="space-y-2 sm:space-y-3">
+                        <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-[#155EEF] flex items-center justify-center font-bold">
+                          <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-display text-xs sm:text-sm font-bold text-[#0B254D] dark:text-white group-hover:text-[#155EEF] transition">
+                            Zion Digital School
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 sm:mt-1 line-clamp-2">
+                            Programs, classrooms, tutor notes, assignments, and exams.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] sm:text-xs font-semibold text-[#155EEF]">
+                        <span>Access School</span>
+                        <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+                      </div>
+                    </div>
+
+                    {/* 2. Zion Digital Bookstore */}
+                    <div
+                      onClick={() => {
+                        setStoreSection("catalog");
+                        document.getElementById("store_catalog_anchor")?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                      className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-5 cursor-pointer hover:border-[#155EEF] hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div className="space-y-2 sm:space-y-3">
+                        <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-[#F5B82E] flex items-center justify-center font-bold">
+                          <BookOpen className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-display text-xs sm:text-sm font-bold text-[#0B254D] dark:text-white group-hover:text-[#155EEF] transition">
+                            Digital Bookstore
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 sm:mt-1 line-clamp-2">
+                            Christian books, academic texts, PDF reading, and library.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] sm:text-xs font-semibold text-[#155EEF]">
+                        <span>Browse Books</span>
+                        <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+                      </div>
+                    </div>
+
+                    {/* 3. Evangelism and Missions */}
+                    <div
+                      onClick={() => onNavigate?.("evangelism-missions")}
+                      className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-5 cursor-pointer hover:border-[#155EEF] hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div className="space-y-2 sm:space-y-3">
+                        <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-500 flex items-center justify-center font-bold">
+                          <Heart className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-display text-xs sm:text-sm font-bold text-[#0B254D] dark:text-white group-hover:text-[#155EEF] transition">
+                            Evangelism &amp; Missions
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 sm:mt-1 line-clamp-2">
+                            Crusades, testimonies, evangelism media, and outreach.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] sm:text-xs font-semibold text-[#155EEF]">
+                        <span>Join Crusades</span>
+                        <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+                      </div>
+                    </div>
+
+                    {/* 4. Bible and Language Centre */}
+                    <div
+                      onClick={() => onNavigate?.("bible-school")}
+                      className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-5 cursor-pointer hover:border-[#155EEF] hover:shadow-md transition flex flex-col justify-between"
+                    >
+                      <div className="space-y-2 sm:space-y-3">
+                        <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-500 flex items-center justify-center font-bold">
+                          <Compass className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-display text-xs sm:text-sm font-bold text-[#0B254D] dark:text-white group-hover:text-[#155EEF] transition">
+                            Bible &amp; Language
+                          </h3>
+                          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 sm:mt-1 line-clamp-2">
+                            11-track Bible school, study modules, and dictionary.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] sm:text-xs font-semibold text-[#155EEF]">
+                        <span>Study Scripture</span>
+                        <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-1" />
+                      </div>
+                    </div>
                   </div>
                 </section>
               )}
@@ -2541,6 +2659,351 @@ export default function Store({
                       </div>
                     </div>
                   </section>
+
+                  {/* PUBLIC HOMEPAGE FEEDS: UPCOMING CRUSADES, LEARNING PROGRAMMES, TESTIMONIES & ANNOUNCEMENTS */}
+                  {storeSection === "catalog" && !searchQuery && selectedCategory === "All" && (
+                    <div className="space-y-8 pt-4">
+                      {/* Section 1: Upcoming Crusades & Gospel Outreaches */}
+                      <section className="space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                          <div>
+                            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 mb-1">
+                              <Heart className="h-3.5 w-3.5" />
+                              <span>Evangelism &amp; Missions</span>
+                            </div>
+                            <h2 className="font-display text-lg sm:text-xl font-bold text-[#0B254D] dark:text-white">
+                              Upcoming Crusades &amp; Gospel Outreaches
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              Mass open-air proclamations and interactive worldwide online revival meetings.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.("evangelism-missions")}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#155EEF] hover:underline cursor-pointer self-start sm:self-auto"
+                          >
+                            <span>Open Crusade Centre</span>
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3 flex flex-col justify-between hover:border-[#155EEF]/50 transition">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                                  Physical Crusade
+                                </span>
+                                <span className="text-[11px] font-mono text-slate-400">June 12, 2026</span>
+                              </div>
+                              <h3 className="font-display text-base font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Bungoma County Great Awakening Crusade
+                              </h3>
+                              <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                                Kanduyi Stadium Grounds &middot; Three-day open-air proclamation, salvation prayer, and Bible distribution.
+                              </p>
+                              <div className="text-[11px] text-slate-500 pt-1">
+                                Speakers: Evangelist Kelvin Opara Wafula, Apostle Peter Masinde
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("evangelism-missions")}
+                              className="w-full py-2 px-3 rounded-xl bg-[#155EEF] hover:bg-[#0F49C7] text-white text-xs font-semibold transition text-center cursor-pointer"
+                            >
+                              View Crusade Details
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3 flex flex-col justify-between hover:border-[#155EEF]/50 transition">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                                  Online Crusade
+                                </span>
+                                <span className="text-[11px] font-mono text-slate-400">May 30, 2026</span>
+                              </div>
+                              <h3 className="font-display text-base font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Worldwide Night of Revival &amp; Intercession
+                              </h3>
+                              <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                                Zion Virtual Sanctuary &middot; Live worship, teaching, and worldwide interactive prayer altar call.
+                              </p>
+                              <div className="text-[11px] text-slate-500 pt-1">
+                                Speakers: Evangelist Kelvin Opara Wafula, Zion Worship Ministry
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("evangelism-missions")}
+                              className="w-full py-2 px-3 rounded-xl bg-[#0B254D] hover:bg-[#123A78] text-white text-xs font-semibold transition text-center cursor-pointer"
+                            >
+                              Join Online Sanctuary
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3 flex flex-col justify-between hover:border-[#155EEF]/50 transition">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                                  Field Mission Trip
+                                </span>
+                                <span className="text-[11px] font-mono text-slate-400">June 25, 2026</span>
+                              </div>
+                              <h3 className="font-display text-base font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Webuye High Schools Gospel Outreach
+                              </h3>
+                              <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                                Webuye Town Hall &middot; Reaching secondary students across Western Kenya with the Gospel.
+                              </p>
+                              <div className="text-[11px] text-slate-500 pt-1">
+                                Team: Zion Youth Mission Volunteers, Pastor Grace Achieng
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("evangelism-missions")}
+                              className="w-full py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold transition text-center cursor-pointer"
+                            >
+                              Volunteer or Support
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+
+                      {/* Section 2: Popular Academic & Leadership Programmes */}
+                      <section className="space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                          <div>
+                            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#155EEF] mb-1">
+                              <GraduationCap className="h-3.5 w-3.5" />
+                              <span>Zion Digital School</span>
+                            </div>
+                            <h2 className="font-display text-lg sm:text-xl font-bold text-[#0B254D] dark:text-white">
+                              Popular Academic &amp; Theological Programmes
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              Certified ministerial courses, pastoral formation, and comprehensive Bible curriculum.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.("school")}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#155EEF] hover:underline cursor-pointer self-start sm:self-auto"
+                          >
+                            <span>View All Programmes</span>
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-mono font-bold uppercase text-[#155EEF]">Track 101 &middot; 2 Years</span>
+                              <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Diploma in Pastoral Leadership &amp; Ministry
+                              </h3>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                Comprehensive church administration, homiletics, pastoral care, and ministry leadership.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("school")}
+                              className="text-xs font-semibold text-[#155EEF] hover:underline inline-flex items-center gap-1 pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <span>Course Overview</span>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-mono font-bold uppercase text-rose-600 dark:text-rose-400">Track 202 &middot; 6 Months</span>
+                              <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Certificate in Evangelism &amp; Church Planting
+                              </h3>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                Field outreach methods, crusade preparation, discipleship models, and community engagement.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("school")}
+                              className="text-xs font-semibold text-[#155EEF] hover:underline inline-flex items-center gap-1 pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <span>Course Overview</span>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-mono font-bold uppercase text-amber-600 dark:text-amber-400">Track 303 &middot; 1 Year</span>
+                              <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white leading-snug">
+                                Certificate in Biblical Counseling &amp; Care
+                              </h3>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                Scripture-grounded emotional support, family restoration, and crisis intervention methods.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("school")}
+                              className="text-xs font-semibold text-[#155EEF] hover:underline inline-flex items-center gap-1 pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <span>Course Overview</span>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 flex flex-col justify-between">
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-mono font-bold uppercase text-indigo-600 dark:text-indigo-400">Track 404 &middot; 11 Modules</span>
+                              <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white leading-snug">
+                                11-Track Bible School &amp; Hermeneutics
+                              </h3>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                Systematic theology, biblical languages, Old &amp; New Testament survey, and spiritual discipline.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onNavigate?.("bible-school")}
+                              className="text-xs font-semibold text-[#155EEF] hover:underline inline-flex items-center gap-1 pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <span>Open Bible School</span>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+
+                      {/* Section 3: Verified Faith Testimonies */}
+                      <section className="space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                          <div>
+                            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>Living Proof of the Gospel</span>
+                            </div>
+                            <h2 className="font-display text-lg sm:text-xl font-bold text-[#0B254D] dark:text-white">
+                              Verified Faith Testimonies
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              Real testimonies of salvation, healing, and restored lives from Western Kenya.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.("evangelism-missions")}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#155EEF] hover:underline cursor-pointer self-start sm:self-auto"
+                          >
+                            <span>Read All Testimonies</span>
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                                Salvation
+                              </span>
+                              <span className="text-[11px] text-slate-400">Bungoma</span>
+                            </div>
+                            <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white">
+                              Delivered from Burden at Kanduyi Market
+                            </h3>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                              "During the open-air Gospel preaching, I gave my life to Jesus Christ. My heart was cleansed of anger and I am now growing through local fellowship discipleship."
+                            </p>
+                            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500">
+                              Brother Samuel K. &middot; Kanduyi Assembly
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                                Healing
+                              </span>
+                              <span className="text-[11px] text-slate-400">Webuye</span>
+                            </div>
+                            <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white">
+                              Healed of Severe Chest Pain
+                            </h3>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                              "During the online prayer intercession, faith arose in my heart as we prayed. The chronic pain disappeared instantly and I have remained healthy ever since."
+                            </p>
+                            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500">
+                              Sister Grace Nekesa &middot; Webuye Center
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                                Transformation
+                              </span>
+                              <span className="text-[11px] text-slate-400">Chwele</span>
+                            </div>
+                            <h3 className="font-display text-sm font-bold text-[#0B254D] dark:text-white">
+                              From Addiction to Youth Bible Mentor
+                            </h3>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                              "The mission team in Chwele reached me when I was lost in alcohol. Through patient mentoring and study in Zion Bible courses, I am now guiding other young men."
+                            </p>
+                            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500">
+                              David Simiyu &middot; Chwele Hub
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      {/* Section 4: Ministry Announcements & Key Dates */}
+                      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                          <div className="flex items-center gap-2">
+                            <Megaphone className="h-4 w-4 text-[#155EEF]" />
+                            <h2 className="font-display text-base sm:text-lg font-bold text-[#0B254D] dark:text-white">
+                              Ministry Announcements &amp; Institutional Dates
+                            </h2>
+                          </div>
+                          <span className="text-xs font-mono text-slate-500">
+                            Bungoma Headquarters &middot; Term Academic Cycle
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1">
+                            <div className="text-[10px] font-mono font-bold uppercase text-[#155EEF]">Admissions Active</div>
+                            <h3 className="font-semibold text-[#0B254D] dark:text-white">Term II Academic Enrollment</h3>
+                            <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                              Registration open across School, Tutor Studio, and Bible curriculum modules.
+                            </p>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1">
+                            <div className="text-[10px] font-mono font-bold uppercase text-emerald-600 dark:text-emerald-400">Fellowship Meeting</div>
+                            <h3 className="font-semibold text-[#0B254D] dark:text-white">Western Kenya Ministers Gathering</h3>
+                            <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                              Pastors and crusade coordinators convene on the first Saturday of each month in Kanduyi.
+                            </p>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-1">
+                            <div className="text-[10px] font-mono font-bold uppercase text-amber-600 dark:text-amber-400">Resource Outreach</div>
+                            <h3 className="font-semibold text-[#0B254D] dark:text-white">Free Scripture Distribution</h3>
+                            <p className="text-slate-500 dark:text-slate-400 text-[11px]">
+                              1,000 Holy Scripture and study books scheduled for distribution at upcoming open-air crusades.
+                            </p>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  )}
                 </>
               )}
             </div>

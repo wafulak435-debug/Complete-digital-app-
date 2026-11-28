@@ -1,12 +1,11 @@
 {
-  "projectId": "spheric-retina-spnh2",
-  "appId": "1:486825715709:web:92acb67db3cb20cfe3db94",
-  "apiKey": "AIzaSyDN3JyCJ4XpvpYceW2fQAu90eBP-YSLrhw",
-  "authDomain": "spheric-retina-spnh2.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-completedigitala-0ad6fb46-c5de-405a-9a5f-8840e3fa06f8",
-  "storageBucket": "spheric-retina-spnh2.firebasestorage.app",
-  "messagingSenderId": "486825715709",
+  "projectId": "gen-lang-client-0583860318",
+  "appId": "1:970851869971:web:ec555dc99f09eaba7be6e6",
+  "apiKey": "AIzaSyBKM6BuiIj3PlTULAd3Azk_qdGBmNAZ5AA",
+  "authDomain": "gen-lang-client-0583860318.firebaseapp.com",
+  "storageBucket": "gen-lang-client-0583860318.firebasestorage.app",
+  "messagingSenderId": "970851869971",
   "measurementId": "",
-  "oAuthClientId": "486825715709-5hn21e49egs0ii50rv8ajpe4sp8i25tn.apps.googleusercontent.com",
+  "oAuthClientId": "970851869971-flqp81afp4hbuljn6g3kojl38keojse0.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

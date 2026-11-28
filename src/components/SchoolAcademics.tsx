@@ -5,7 +5,7 @@ import { api, card, input, btn, btnGhost, Field, Badge, Table } from "./schoolUi
 /* ------------------------------------------------------------------ types (mirror server/academicLogic.ts) */
 export interface Year { id: string; name: string; startDate: string; endDate: string; current: boolean }
 export interface TermT { id: string; yearId: string; name: string; startDate: string; endDate: string; current: boolean }
-export interface ClassT { id: string; name: string; stream: string; system: "8-4-4" | "CBC"; classTeacherEmail: string }
+export interface ClassT { id: string; name: string; stream: string; system: "Diploma" | "Certificate" | "Degree"; classTeacherEmail: string }
 export interface SubjectT { id: string; code: string; name: string; system: string }
 export interface AssessmentT { id: string; classId: string; subjectId: string; termId: string; name: string; outOf: number; date: string }
 interface StudentLite { id: string; admNo: string; name: string; classId?: string; status: string }
@@ -198,7 +198,7 @@ function Setup({ instId, years, terms, classes, subjects, students, run, reload,
 }) {
   const [y, setY] = useState({ name: "", startDate: "", endDate: "" });
   const [t, setT] = useState({ yearId: "", name: "", startDate: "", endDate: "" });
-  const [c, setC] = useState({ name: "", stream: "", system: "8-4-4", classTeacherEmail: "" });
+  const [c, setC] = useState({ name: "", stream: "", system: "Diploma", classTeacherEmail: "" });
   const [sub, setSub] = useState({ name: "", code: "", system: "both" });
   const [stu, setStu] = useState({ name: "", admNo: "", studentEmail: "", classId: "" });
   const yearName = (id: string) => years.find((x) => x.id === id)?.name || "-";
@@ -221,34 +221,34 @@ function Setup({ instId, years, terms, classes, subjects, students, run, reload,
         </div>
         <form className="mt-3 grid gap-3 sm:grid-cols-5" onSubmit={async (e) => { e.preventDefault(); if (await run(() => api(`/institutions/${instId}/terms`, "POST", t), "Term added.")) { setT({ ...t, name: "", startDate: "", endDate: "" }); reload(); } }}>
           <Field label="Year"><select className={input} value={t.yearId} onChange={(e) => setT({ ...t, yearId: e.target.value })} required><option value="">Choose…</option>{years.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
-          <Field label="Term name"><input className={input} placeholder="Term 1" value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} required /></Field>
+          <Field label="Semester / Term"><input className={input} placeholder="Semester 1" value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} required /></Field>
           <Field label="Starts"><input type="date" className={input} value={t.startDate} onChange={(e) => setT({ ...t, startDate: e.target.value })} required /></Field>
           <Field label="Ends"><input type="date" className={input} value={t.endDate} onChange={(e) => setT({ ...t, endDate: e.target.value })} required /></Field>
-          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add term</button></div>
+          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add semester</button></div>
         </form>
       </section>
 
       <section className={card}>
-        <h3 className="mb-3 text-base font-bold text-text-primary">Classes & streams</h3>
-        <Table head={["Class", "Curriculum", "Class teacher", "Students"]} empty="No classes yet."
+        <h3 className="mb-3 text-base font-bold text-text-primary">Programs & Cohorts</h3>
+        <Table head={["Program", "Credential", "Faculty Lead", "Enrolled Students"]} empty="No programs yet."
           rows={classes.map((x) => [label(x), <Badge key="s" tone="info">{x.system}</Badge>, x.classTeacherEmail || "-", students.filter((s) => s.classId === x.id).length])} />
-        <form className="mt-3 grid gap-3 sm:grid-cols-5" onSubmit={async (e) => { e.preventDefault(); if (await run(() => api(`/institutions/${instId}/classes`, "POST", c), "Class added.")) { setC({ ...c, name: "", stream: "", classTeacherEmail: "" }); reload(); } }}>
-          <Field label="Class"><input className={input} placeholder="Form 2 / Grade 5" value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} required /></Field>
-          <Field label="Stream (optional)"><input className={input} placeholder="East" value={c.stream} onChange={(e) => setC({ ...c, stream: e.target.value })} /></Field>
-          <Field label="Curriculum"><select className={input} value={c.system} onChange={(e) => setC({ ...c, system: e.target.value })}><option value="8-4-4">8-4-4</option><option value="CBC">CBC / CBE</option></select></Field>
-          <Field label="Class teacher email"><input type="email" className={input} value={c.classTeacherEmail} onChange={(e) => setC({ ...c, classTeacherEmail: e.target.value })} /></Field>
-          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add class</button></div>
+        <form className="mt-3 grid gap-3 sm:grid-cols-5" onSubmit={async (e) => { e.preventDefault(); if (await run(() => api(`/institutions/${instId}/classes`, "POST", c), "Program added.")) { setC({ ...c, name: "", stream: "", classTeacherEmail: "" }); reload(); } }}>
+          <Field label="Program / Cohort"><input className={input} placeholder="Year 1 Theology / Leadership Cohort" value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} required /></Field>
+          <Field label="Major / Stream (optional)"><input className={input} placeholder="Evangelism" value={c.stream} onChange={(e) => setC({ ...c, stream: e.target.value })} /></Field>
+          <Field label="Credential"><select className={input} value={c.system} onChange={(e) => setC({ ...c, system: e.target.value })}><option value="Diploma">Diploma</option><option value="Certificate">Certificate</option><option value="Degree">Degree</option></select></Field>
+          <Field label="Faculty Lead email"><input type="email" className={input} value={c.classTeacherEmail} onChange={(e) => setC({ ...c, classTeacherEmail: e.target.value })} /></Field>
+          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add program</button></div>
         </form>
       </section>
 
       <section className={card}>
-        <h3 className="mb-3 text-base font-bold text-text-primary">Subjects</h3>
-        <Table head={["Code", "Subject", "Curriculum"]} empty="No subjects yet." rows={subjects.map((x) => [<Badge key="c" tone="info">{x.code}</Badge>, x.name, x.system])} />
-        <form className="mt-3 grid gap-3 sm:grid-cols-4" onSubmit={async (e) => { e.preventDefault(); if (await run(() => api(`/institutions/${instId}/subjects`, "POST", sub), "Subject added.")) { setSub({ ...sub, name: "", code: "" }); reload(); } }}>
-          <Field label="Subject"><input className={input} value={sub.name} onChange={(e) => setSub({ ...sub, name: e.target.value })} required /></Field>
-          <Field label="Code (optional)"><input className={input} value={sub.code} onChange={(e) => setSub({ ...sub, code: e.target.value })} /></Field>
-          <Field label="Used in"><select className={input} value={sub.system} onChange={(e) => setSub({ ...sub, system: e.target.value })}><option value="both">Both</option><option value="8-4-4">8-4-4 only</option><option value="CBC">CBC only</option></select></Field>
-          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add subject</button></div>
+        <h3 className="mb-3 text-base font-bold text-text-primary">Seminary Units</h3>
+        <Table head={["Code", "Unit Name", "Level"]} empty="No units yet." rows={subjects.map((x) => [<Badge key="c" tone="info">{x.code}</Badge>, x.name, x.system])} />
+        <form className="mt-3 grid gap-3 sm:grid-cols-4" onSubmit={async (e) => { e.preventDefault(); if (await run(() => api(`/institutions/${instId}/subjects`, "POST", sub), "Unit added.")) { setSub({ ...sub, name: "", code: "" }); reload(); } }}>
+          <Field label="Seminary Unit"><input className={input} value={sub.name} onChange={(e) => setSub({ ...sub, name: e.target.value })} required /></Field>
+          <Field label="Unit Code (optional)"><input className={input} value={sub.code} onChange={(e) => setSub({ ...sub, code: e.target.value })} /></Field>
+          <Field label="Program Level"><select className={input} value={sub.system} onChange={(e) => setSub({ ...sub, system: e.target.value })}><option value="both">All Programs</option><option value="Diploma">Diploma only</option><option value="Certificate">Certificate only</option></select></Field>
+          <div className="flex items-end"><button type="submit" className={btn}><Plus className="h-4 w-4" />Add unit</button></div>
         </form>
       </section>
 

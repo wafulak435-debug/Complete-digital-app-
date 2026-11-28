@@ -1,4 +1,4 @@
-const CACHE_NAME = "zion-reads-v1";
+const CACHE_NAME = "zion-reads-v2";
 const ASSETS_TO_CACHE = [
   "/",
   "/index.html",
@@ -39,6 +39,16 @@ self.addEventListener("activate", (event) => {
 // Fetch Event (Network-First with Cache Fallback for maximum speed, Cache-First for static large PDFs)
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
+
+  // Never cache Vite dev server modules, HMR internals, or backend API routes
+  if (
+    requestUrl.pathname.startsWith("/node_modules/") ||
+    requestUrl.pathname.startsWith("/src/") ||
+    requestUrl.pathname.startsWith("/@") ||
+    requestUrl.pathname.startsWith("/api/")
+  ) {
+    return;
+  }
 
   // If fetching a PDF, use Cache-First to save data and instantly render from Service Worker Offline storage
   const isPdf = event.request.url.endsWith(".pdf") || 

@@ -6,6 +6,7 @@ import {
   persistSecurityState,
   recordAuditLog,
   requireAuth,
+  requireMainAdmin,
   requireManagerAccess,
   securityState,
   MpesaTransactionRecord,
@@ -976,7 +977,7 @@ mpesaRouter.post("/qrcode", requireAuth, async (req: AuthenticatedRequest, res: 
  * POST /api/mpesa/c2b/register
  * Registers Confirmation & Validation URLs with Safaricom Daraja C2B v2 for PayBill 1171473
  */
-mpesaRouter.post("/c2b/register", requireAuth, requireManagerAccess, async (req: AuthenticatedRequest, res: Response) => {
+mpesaRouter.post("/c2b/register", requireAuth, requireMainAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const config = getMpesaConfig();
     if (config.environment !== "production" || !config.isLiveConfigured) {

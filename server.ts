@@ -3,9 +3,11 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type, GenerateVideosOperation } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import mammoth from "mammoth";
+import { requireSqlAuth, SqlAuthenticatedRequest } from "./src/middleware/sqlAuth.ts";
+import * as sqlRepo from "./src/db/repository.ts";
 import {
   attachIdentity,
   AuthenticatedRequest,
@@ -310,14 +312,9 @@ app.post("/api/auth/session", async (req: Request, res: Response) => {
     const name = String(req.body?.name || "").trim();
 
     if (mode === "demo_member") {
-      const uid = "demo_kenya_member";
-      const email = "member@ziondigital.co.ke";
-      const token = signSessionToken({ uid, email, name: "Bungoma Scholar (Demo)" });
-      setSessionCookie(res, token, req);
-      return res.json({
-        success: true,
-        sessionToken: token,
-        user: buildPublicUserResponse(uid, email, "Bungoma Scholar (Demo)"),
+      return res.status(403).json({
+        success: false,
+        error: "Demo guest bypass is disabled. Please sign in with your real email or Google account.",
       });
     }
 
@@ -531,8 +528,12 @@ app.post("/api/admin/sub-admins", requireMainAdmin, (req: AuthenticatedRequest, 
     allowManageBooks: Boolean(rawPerms.allowManageBooks),
     allowConfirmPayments: Boolean(rawPerms.allowConfirmPayments),
     allowManageEnrollments: Boolean(rawPerms.allowManageEnrollments),
+    allowManageStudents: Boolean(rawPerms.allowManageStudents),
     allowManageExams: Boolean(rawPerms.allowManageExams),
     allowIssueCertificates: Boolean(rawPerms.allowIssueCertificates),
+    allowManageLeadership: Boolean(rawPerms.allowManageLeadership),
+    allowManageComputer: Boolean(rawPerms.allowManageComputer),
+    allowManageBible: Boolean(rawPerms.allowManageBible),
     allowModeration: Boolean(rawPerms.allowModeration),
     allowSuspendUsers: Boolean(rawPerms.allowSuspendUsers),
   };
@@ -629,13 +630,29 @@ app.post("/api/admin/tutors/assign", requireMainAdmin, (req: AuthenticatedReques
   const courses = Array.isArray(req.body?.authorizedCourses)
     ? req.body.authorizedCourses.map((c: any) => String(c).trim()).filter(Boolean)
     : [];
+  const name = String(req.body?.name || "").trim();
   if (!email || !email.includes("@")) {
     return res.status(400).json({ success: false, error: "Valid tutor email is required." });
   }
   securityState.tutorCourses[email] = courses;
-  if (securityState.accounts[email] && securityState.accounts[email].role === "member") {
-    securityState.accounts[email].role = "tutor";
+  if (securityState.accounts[email]) {
+    if (securityState.accounts[email].role === "member") {
+      securityState.accounts[email].role = "tutor";
+    }
+    if (name && !securityState.accounts[email].name) {
+      securityState.accounts[email].name = name;
+    }
     securityState.accounts[email].authorizedCourses = courses;
+  } else if (name) {
+    securityState.accounts[email] = {
+      id: `tutor_${Date.now()}`,
+      email,
+      name,
+      role: "tutor",
+      passwordHash: "",
+      authorizedCourses: courses,
+      createdAt: new Date().toISOString(),
+    };
   }
   persistSecurityState();
 
@@ -795,6 +812,42 @@ app.get("/api/admin/audit-logs", requireAdminAccess("allowVault"), (req: Authent
     ? securityState.auditLogs.filter((l) => l.category === category).slice(0, limit)
     : securityState.auditLogs.slice(0, limit);
   return res.json({ success: true, auditLogs: logs });
+});
+
+app.get("/api/manager/monitoring", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const limit = Math.min(Number(req.query.limit || 150), 500);
+  const subAdminEmails = new Set(Object.keys(securityState.subAdminPermissions).map((e) => e.toLowerCase()));
+  const staffActions = securityState.auditLogs
+    .filter((l) => l.actorRole !== "main_admin" || subAdminEmails.has((l.actorEmail || "").toLowerCase()))
+    .slice(0, limit);
+  const blockedAttempts = securityState.auditLogs
+    .filter((l) => l.category === "ACCESS_DENIED")
+    .slice(0, limit);
+  const allRecent = securityState.auditLogs.slice(0, limit);
+
+  const subAdmins = Object.values(securityState.subAdminPermissions).map((sa) => {
+    const emailLower = sa.email.toLowerCase();
+    const recentCount = securityState.auditLogs.filter((l) => l.actorEmail.toLowerCase() === emailLower).length;
+    const deniedCount = securityState.auditLogs.filter(
+      (l) => l.actorEmail.toLowerCase() === emailLower && l.category === "ACCESS_DENIED"
+    ).length;
+    const lastAction = securityState.auditLogs.find((l) => l.actorEmail.toLowerCase() === emailLower) || null;
+    return {
+      ...sa,
+      recentCount,
+      deniedCount,
+      lastActionAt: lastAction?.timestamp || null,
+      lastActionSummary: lastAction ? `${lastAction.action}: ${lastAction.details}` : null,
+    };
+  });
+
+  return res.json({
+    success: true,
+    subAdmins,
+    staffActions,
+    blockedAttempts,
+    recentAuditLogs: allRecent,
+  });
 });
 
 app.all("/api/admin/audit-logs*", requireAuth, (_req: AuthenticatedRequest, res: Response) => {
@@ -2033,10 +2086,17 @@ app.get("/api/exams", requireAuth, (_req: AuthenticatedRequest, res: Response) =
     id: ex.id,
     lessonId: ex.lessonId,
     courseTrack: ex.courseTrack,
+    courseCode: ex.courseCode || "",
+    school: ex.school || "leadership",
+    assessmentType: ex.assessmentType || "exam",
+    allowMicrophone: ex.allowMicrophone !== false,
+    writtenQuestionsCount: Array.isArray(ex.writtenQuestions) ? ex.writtenQuestions.length : 0,
     title: ex.title,
     durationMinutes: ex.durationMinutes,
     maxAttempts: ex.maxAttempts,
     resultsReleased: ex.resultsReleased,
+    createdBy: ex.createdBy,
+    updatedAt: ex.updatedAt,
     questionsCount: ex.questions.length || (securityState.examAnswerKeys[ex.id]?.answers?.length ?? 0),
   }));
   return res.json({ success: true, exams });
@@ -2053,6 +2113,11 @@ app.get("/api/exams/:examId", requireAuth, (req: AuthenticatedRequest, res: Resp
       id: exam.id,
       lessonId: exam.lessonId,
       courseTrack: exam.courseTrack,
+      courseCode: exam.courseCode || "",
+      school: exam.school || "leadership",
+      assessmentType: exam.assessmentType || "exam",
+      allowMicrophone: exam.allowMicrophone !== false,
+      writtenQuestions: Array.isArray(exam.writtenQuestions) ? exam.writtenQuestions : [],
       title: exam.title,
       questions: stripQuestionAnswerKeys(exam.questions),
       durationMinutes: exam.durationMinutes,
@@ -2065,10 +2130,15 @@ app.get("/api/exams/:examId", requireAuth, (req: AuthenticatedRequest, res: Resp
 app.post("/api/exams", requireAuth, (req: AuthenticatedRequest, res: Response) => {
   const actor = req.identity!;
   const courseTrack = String(req.body?.courseTrack || "leadership").trim();
+  const courseCode = String(req.body?.courseCode || "").trim();
   const examId = sanitizeUploadId(String(req.body?.id || `exam_${Date.now()}`));
   if (!examId) return res.status(400).json({ success: false, error: "Invalid examId." });
 
-  if (!canTutorAccessCourse(actor, courseTrack) && !canTutorAccessCourse(actor, examId)) {
+  if (
+    !canTutorAccessCourse(actor, courseTrack) &&
+    !canTutorAccessCourse(actor, examId) &&
+    (!courseCode || !canTutorAccessCourse(actor, courseCode))
+  ) {
     recordAuditLog({
       actor,
       category: "ACCESS_DENIED",
@@ -2078,20 +2148,33 @@ app.post("/api/exams", requireAuth, (req: AuthenticatedRequest, res: Response) =
       details: `User denied access to author exam for course "${courseTrack}"`,
       ip: extractIp(req),
     });
-    return res.status(403).json({ success: false, error: "Not authorized to manage examinations for this course." });
+    return res.status(403).json({ success: false, error: "Not authorized to manage CATs or examinations for this course." });
   }
 
   const rawQuestions = Array.isArray(req.body?.questions) ? req.body.questions : [];
+  const writtenQuestions = Array.isArray(req.body?.writtenQuestions)
+    ? req.body.writtenQuestions
+        .map((wq: any) => ({
+          prompt: String(wq?.prompt || "").trim().slice(0, 800),
+          maxMarks: Math.max(1, Math.min(100, Number(wq?.maxMarks || 10))),
+        }))
+        .filter((wq: any) => wq.prompt.length > 0)
+    : [];
   const now = new Date().toISOString();
 
   securityState.exams[examId] = {
     id: examId,
-    lessonId: String(req.body?.lessonId || examId),
+    lessonId: String(req.body?.lessonId || courseTrack || examId),
     courseTrack,
-    title: String(req.body?.title || "Academic Examination"),
+    courseCode,
+    school: req.body?.school === "bible" ? "bible" : "leadership",
+    assessmentType: req.body?.assessmentType === "cat" ? "cat" : "exam",
+    allowMicrophone: req.body?.allowMicrophone !== false,
+    writtenQuestions,
+    title: String(req.body?.title || "Academic Examination").slice(0, 180),
     questions: stripQuestionAnswerKeys(rawQuestions),
-    durationMinutes: Math.max(5, Math.min(180, Number(req.body?.durationMinutes || 30))),
-    maxAttempts: Math.max(1, Math.min(10, Number(req.body?.maxAttempts || 3))),
+    durationMinutes: Math.max(2, Math.min(240, Number(req.body?.durationMinutes || 30))),
+    maxAttempts: Math.max(1, Math.min(10, Number(req.body?.maxAttempts || 1))),
     resultsReleased: Boolean(req.body?.resultsReleased ?? false),
     createdBy: actor.email,
     updatedAt: now,
@@ -2216,15 +2299,38 @@ app.post("/api/exams/:examId/submit", requireAuth, (req: AuthenticatedRequest, r
     return res.status(400).json({ success: false, error: "This examination attempt has already been submitted or expired." });
   }
 
-  // Enforce server-side exam timing window (15s clock drift grace)
-  if (Date.now() > new Date(attempt.expiresAt).getTime() + 15_000) {
-    attempt.status = "expired";
-    attempt.updatedAt = new Date().toISOString();
-    persistSecurityState();
-    return res.status(403).json({ success: false, error: "Examination time window expired before submission." });
+  const autoSubmitReason = (
+    ["completed", "timer_expired", "tab_or_exit"].includes(String(req.body?.autoSubmitReason || ""))
+      ? String(req.body?.autoSubmitReason)
+      : "completed"
+  ) as "completed" | "timer_expired" | "tab_or_exit";
+
+  // Allow server grace for automatic timer/lockdown submissions so unfinished answers still lock & save
+  const deadlineGraceMs = autoSubmitReason === "completed" ? 20_000 : 120_000;
+  if (Date.now() > new Date(attempt.expiresAt).getTime() + deadlineGraceMs) {
+    attempt.autoSubmitReason = "timer_expired";
   }
 
   const submittedAnswers = (req.body?.answers && typeof req.body.answers === "object") ? req.body.answers : {};
+  const writtenAnswers: Record<string, string> = {};
+  if (req.body?.writtenAnswers && typeof req.body.writtenAnswers === "object") {
+    for (const [k, v] of Object.entries(req.body.writtenAnswers)) {
+      writtenAnswers[String(k)] = String(v || "").slice(0, 6000);
+    }
+  }
+  const audioResponses: Record<string, { mimeType: string; dataUrl: string; durationSec?: number }> = {};
+  if (req.body?.audioResponses && typeof req.body.audioResponses === "object") {
+    for (const [k, v] of Object.entries(req.body.audioResponses as Record<string, any>)) {
+      if (v && typeof v.dataUrl === "string" && v.dataUrl.startsWith("data:audio/") && v.dataUrl.length <= 2_500_000) {
+        audioResponses[String(k)] = {
+          mimeType: String(v.mimeType || "audio/webm").slice(0, 60),
+          dataUrl: v.dataUrl,
+          durationSec: Number(v.durationSec || 0),
+        };
+      }
+    }
+  }
+
   let correctCount = 0;
   const totalQuestions = keys.answers.length;
 
@@ -2241,10 +2347,14 @@ app.post("/api/exams/:examId/submit", requireAuth, (req: AuthenticatedRequest, r
   });
 
   const score = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
-  const passed = score >= 80;
+  const passed = score >= 60;
   const nowIso = new Date().toISOString();
 
+  attempt.assessmentType = exam.assessmentType || "exam";
   attempt.answers = submittedAnswers;
+  attempt.writtenAnswers = writtenAnswers;
+  attempt.audioResponses = audioResponses;
+  attempt.autoSubmitReason = autoSubmitReason;
   attempt.correctCount = correctCount;
   attempt.totalQuestions = totalQuestions;
   attempt.score = score;
@@ -2262,6 +2372,7 @@ app.post("/api/exams/:examId/submit", requireAuth, (req: AuthenticatedRequest, r
     correctCount,
     totalQuestions,
     passed,
+    autoSubmitReason,
     resultsReleased: exam.resultsReleased,
     breakdown,
   });
@@ -2389,12 +2500,11 @@ app.post("/api/my-ai-assistant", requireAdminAccess(), enforceAiRateLimit, async
     });
 
     const response = await aiClient.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-4-hydrogen",
       contents: { parts },
       config: {
         systemInstruction:
           "You are the Super Admin Independent AI Companion, providing analytical explanations and step-by-step guidance.",
-        tools: [{ googleSearch: {} }],
       },
     });
 
@@ -2406,13 +2516,35 @@ app.post("/api/my-ai-assistant", requireAdminAccess(), enforceAiRateLimit, async
 });
 
 app.post("/api/ai/assistant", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { prompt, voiceInput, history, category, enableGoogleSearch, images } = req.body;
+  const actor = req.identity!;
+  const isSchoolTutorAllowed =
+    actor.isMainAdmin ||
+    actor.role === "sub_admin" ||
+    actor.role === "manager" ||
+    actor.role === "tutor";
+
+  if (req.body?.schoolContext && !isSchoolTutorAllowed) {
+    return res.status(403).json({
+      success: false,
+      error: "School AI tools are restricted exclusively to authorized Tutors and Administrators.",
+    });
+  }
+
+  const {
+    prompt,
+    voiceInput,
+    history,
+    category,
+    enableGoogleSearch,
+    model: requestedModel,
+    images,
+  } = req.body;
 
   try {
     const aiClient = getGenAI();
     const contents: any[] = [];
     let systemInstruction =
-      "You are Gemini, Google's advanced, speedy, intelligent, and friendly AI model. You serve as Zion Digital's official AI Companion in Bungoma, Kenya. You have complete memory of all previous messages in this conversation history. Address users respectfully as 'Leader' or 'Scholar'. NEVER use markdown '#' tag headers; format titles using CAPITALIZED BOLD lines.";
+      "You are Zion Digital's intelligent AI Scholar Companion in Bungoma, Kenya. You remember previous messages in the conversation history and address users respectfully as 'Leader' or 'Scholar'. Format major headings clearly without excess clutter.";
 
     if (category === "Problem Solver") {
       systemInstruction += " Present formal, step-by-step STEM, Coding, and Mathematics solutions.";
@@ -2479,23 +2611,31 @@ app.post("/api/ai/assistant", requireAuth, enforceAiRateLimit, async (req: Authe
     }
 
     if (aiClient) {
-      const modelToUse = category === "Problem Solver" ? "gemini-3.1-pro-preview" : "gemini-3.6-flash";
+      const modelToUse = "gemini-4-hydrogen";
+
+      const config: any = {
+        systemInstruction,
+      };
+
       const response = await aiClient.models.generateContent({
         model: modelToUse,
         contents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-          tools: enableGoogleSearch ? [{ googleSearch: {} }] : [],
-        },
+        config,
       });
 
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
       const groundingSources = chunks
-        .map((chunk: any) => ({
-          title: chunk.web?.title || chunk.title || "Grounded Resource",
-          uri: chunk.web?.uri || chunk.uri || "#",
-        }))
+        .flatMap((chunk: any) => {
+          const items: Array<{ title: string; uri: string; type?: string }> = [];
+          if (chunk.web?.uri) {
+            items.push({
+              title: chunk.web.title || "Grounded Web Source",
+              uri: chunk.web.uri,
+              type: "web",
+            });
+          }
+          return items;
+        })
         .filter((s: any) => s.title && s.uri);
 
       return res.json({
@@ -2519,7 +2659,24 @@ app.post("/api/ai/assistant", requireAuth, enforceAiRateLimit, async (req: Authe
   }
 });
 
-app.post("/api/school/generate-class", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+function requireSchoolTutorOrAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const actor = req.identity;
+  if (!actor) return res.status(401).json({ success: false, error: "Authentication required." });
+  const allowed =
+    actor.isMainAdmin ||
+    actor.role === "sub_admin" ||
+    actor.role === "manager" ||
+    actor.role === "tutor";
+  if (!allowed) {
+    return res.status(403).json({
+      success: false,
+      error: "School AI tools are restricted to authorized Tutors and Administrators. Students do not have AI access in school.",
+    });
+  }
+  return next();
+}
+
+app.post("/api/school/generate-class", requireAuth, requireSchoolTutorOrAdmin, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, schoolType } = req.body;
   if (!topic) return res.status(400).json({ success: false, error: "A topic is required." });
 
@@ -2538,7 +2695,7 @@ app.post("/api/school/generate-class", requireAuth, enforceAiRateLimit, async (r
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Generate a complete academic syllabus class for topic "${topic}" at ${schoolName} with exactly 5 points and 5 selfAssessment MCQs.`,
           config: {
             responseMimeType: "application/json",
@@ -2687,7 +2844,7 @@ app.post("/api/school/generate-class", requireAuth, enforceAiRateLimit, async (r
   }
 });
 
-app.post("/api/school/generate-quiz", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+app.post("/api/school/generate-quiz", requireAuth, requireSchoolTutorOrAdmin, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { notes, subtopic, count, schoolType } = req.body;
   if (!notes) {
     return res.status(400).json({ success: false, error: "Study notes are required to generate examination questions." });
@@ -2703,7 +2860,7 @@ app.post("/api/school/generate-quiz", requireAuth, enforceAiRateLimit, async (re
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Construct exactly ${qCount} rigorous 4-option MCQs based on "${subtopic || "General Topic"}":\n${String(notes).slice(0, 14000)}`,
           config: {
             responseMimeType: "application/json",
@@ -2786,7 +2943,7 @@ app.post("/api/school/generate-quiz", requireAuth, enforceAiRateLimit, async (re
   }
 });
 
-app.post("/api/school/generate-notes", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+app.post("/api/school/generate-notes", requireAuth, requireSchoolTutorOrAdmin, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, schoolType } = req.body;
   if (!topic) return res.status(400).json({ success: false, error: "A study topic is required." });
 
@@ -2797,9 +2954,8 @@ app.post("/api/school/generate-notes", requireAuth, enforceAiRateLimit, async (r
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-4-hydrogen",
           contents: `Generate a comprehensive academic syllabus of 10 topics (5 subtopics each) for "${topic}" (track: "${schoolType || "leadership"}").`,
-          config: { tools: [{ googleSearch: {} }] },
         });
         if (response.text) detailedNotes = response.text;
       } catch {
@@ -2817,7 +2973,7 @@ app.post("/api/school/generate-notes", requireAuth, enforceAiRateLimit, async (r
   }
 });
 
-app.post("/api/school/generate-section-notes", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+app.post("/api/school/generate-section-notes", requireAuth, requireSchoolTutorOrAdmin, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { topic, sectionTitle, sectionBrief, schoolType, sectionIndex } = req.body;
   if (!topic || !sectionTitle) {
     return res.status(400).json({ success: false, error: "Topic and Section title are required." });
@@ -2830,9 +2986,8 @@ app.post("/api/school/generate-section-notes", requireAuth, enforceAiRateLimit, 
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-4-hydrogen",
           contents: `Write 400 words of academic study notes for Section ${sectionIndex || 1}: "${sectionTitle}" under "${topic}" (${sectionBrief || ""}) for track "${schoolType || "leadership"}".`,
-          config: { tools: [{ googleSearch: {} }] },
         });
         if (response.text) detailedNotes = response.text;
       } catch {
@@ -2850,7 +3005,7 @@ app.post("/api/school/generate-section-notes", requireAuth, enforceAiRateLimit, 
   }
 });
 
-app.post("/api/school/generate-curriculum", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+app.post("/api/school/generate-curriculum", requireAuth, requireSchoolTutorOrAdmin, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { subject } = req.body;
   if (!subject) return res.status(400).json({ success: false, error: "Subject is required." });
 
@@ -2861,9 +3016,8 @@ app.post("/api/school/generate-curriculum", requireAuth, enforceAiRateLimit, asy
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-4-hydrogen",
           contents: `Formulate an academic curriculum of 10 topics with 5 subtopics each for "${subject}".`,
-          config: { tools: [{ googleSearch: {} }] },
         });
         if (response.text) detailedContent = response.text;
       } catch {
@@ -2879,6 +3033,597 @@ app.post("/api/school/generate-curriculum", requireAuth, enforceAiRateLimit, asy
   } catch (err) {
     return res.status(500).json({ success: false, error: safeError(err, "Curriculum generation failed.") });
   }
+});
+
+// ============================================================================
+// SCHOOL TUTOR RECRUITMENT, COURSE-LOCKED NOTES, ONLINE CLASSES & ASSIGNMENTS
+// ============================================================================
+function getStudentEnrolledCourseSet(email: string, uid?: string): Set<string> {
+  const lower = email.toLowerCase().trim();
+  const keys = new Set<string>();
+  Object.values(securityState.enrollments).forEach((enr) => {
+    const matchesUser = enr.userEmail.toLowerCase() === lower || (uid && enr.userId === uid);
+    if (!matchesUser) return;
+    if (enr.status === "rejected") return;
+    if (enr.courseId) keys.add(enr.courseId.toLowerCase().trim());
+    if (enr.courseCode) keys.add(enr.courseCode.toLowerCase().trim());
+  });
+  return keys;
+}
+
+function isSchoolStaffOrAdmin(identity: AuthenticatedRequest["identity"]): boolean {
+  if (!identity) return false;
+  return (
+    identity.isMainAdmin ||
+    identity.role === "sub_admin" ||
+    identity.role === "manager" ||
+    identity.role === "tutor"
+  );
+}
+
+// 1. Tutor Recruitment Campaigns
+app.get("/api/school/tutor-campaigns", (req: AuthenticatedRequest, res: Response) => {
+  const isAdmin = Boolean(req.identity && (req.identity.isMainAdmin || req.identity.role === "sub_admin"));
+  const all = Object.values(securityState.tutorCampaigns).sort((a, b) =>
+    b.openedAt.localeCompare(a.openedAt)
+  );
+  const campaigns = isAdmin ? all : all.filter((c) => c.status === "open");
+  return res.json({ success: true, campaigns });
+});
+
+app.post("/api/admin/tutor-campaigns", requireAdminAccess(), (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const title = String(req.body?.title || "").trim().slice(0, 140);
+  const subjectArea = String(req.body?.subjectArea || "").trim().slice(0, 140);
+  const qualificationsRequired = String(req.body?.qualificationsRequired || "").trim().slice(0, 600);
+  const description = String(req.body?.description || "").trim().slice(0, 1200);
+  const school = (["leadership", "bible", "both"].includes(req.body?.school) ? req.body.school : "both") as
+    | "leadership"
+    | "bible"
+    | "both";
+
+  if (!title || !subjectArea) {
+    return res.status(400).json({ success: false, error: "Title and subject area are required." });
+  }
+
+  const id = `camp_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const campaign = {
+    id,
+    title,
+    school,
+    subjectArea,
+    qualificationsRequired: qualificationsRequired || "National ID, KCSE Certificate, College/University Certificate & CV",
+    description,
+    status: "open" as const,
+    openedBy: actor.email,
+    openedAt: new Date().toISOString(),
+  };
+
+  securityState.tutorCampaigns[id] = campaign;
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "ADMIN_ACTION",
+    action: "TUTOR_CAMPAIGN_OPENED",
+    targetType: "tutor_campaign",
+    targetId: id,
+    details: `Opened tutor recruitment campaign "${title}" (${school})`,
+    ip: extractIp(req),
+  });
+
+  return res.status(201).json({ success: true, campaign });
+});
+
+app.patch("/api/admin/tutor-campaigns/:id", requireAdminAccess(), (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const campaign = securityState.tutorCampaigns[req.params.id];
+  if (!campaign) return res.status(404).json({ success: false, error: "Campaign not found." });
+
+  const nextStatus = req.body?.status === "closed" ? "closed" : "open";
+  campaign.status = nextStatus;
+  if (nextStatus === "closed") {
+    campaign.closedAt = new Date().toISOString();
+  } else {
+    delete campaign.closedAt;
+  }
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "ADMIN_ACTION",
+    action: nextStatus === "closed" ? "TUTOR_CAMPAIGN_CLOSED" : "TUTOR_CAMPAIGN_REOPENED",
+    targetType: "tutor_campaign",
+    targetId: campaign.id,
+    details: `${nextStatus === "closed" ? "Closed" : "Reopened"} tutor recruitment "${campaign.title}"`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, campaign });
+});
+
+// 2. Tutor Applications (with CV, National ID, KCSE Cert, University/College Cert)
+function validateUploadedDoc(raw: any, label: string): { name: string; mimeType: string; dataUrl: string } {
+  if (!raw || typeof raw !== "object" || typeof raw.dataUrl !== "string" || !raw.dataUrl.startsWith("data:")) {
+    throw new Error(`${label} document upload is required.`);
+  }
+  if (raw.dataUrl.length > 3_500_000) {
+    throw new Error(`${label} file is too large (max ~2.5 MB).`);
+  }
+  return {
+    name: String(raw.name || `${label.toLowerCase().replace(/\s+/g, "_")}.pdf`).slice(0, 120),
+    mimeType: String(raw.mimeType || "application/pdf").slice(0, 80),
+    dataUrl: raw.dataUrl,
+  };
+}
+
+app.post("/api/school/tutor-applications", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const campaignId = String(req.body?.campaignId || "").trim();
+  const campaign = securityState.tutorCampaigns[campaignId];
+  if (!campaign || campaign.status !== "open") {
+    return res.status(400).json({
+      success: false,
+      error: "Tutor recruitment for this posting is currently closed or unavailable.",
+    });
+  }
+
+  const applicantName = String(req.body?.applicantName || actor.name).trim().slice(0, 120);
+  const phone = String(req.body?.phone || "").trim().slice(0, 30);
+  const educationLevel = String(req.body?.educationLevel || "").trim().slice(0, 120);
+  const yearsExperience = Math.max(0, Math.min(60, Number(req.body?.yearsExperience || 0)));
+  const qualificationSummary = String(req.body?.qualificationSummary || "").trim().slice(0, 2000);
+  const schoolPreference = (["leadership", "bible", "both"].includes(req.body?.schoolPreference)
+    ? req.body.schoolPreference
+    : campaign.school) as "leadership" | "bible" | "both";
+
+  if (!applicantName || !phone || !educationLevel || !qualificationSummary) {
+    return res.status(400).json({
+      success: false,
+      error: "Full name, phone, education level, and qualification summary are required.",
+    });
+  }
+
+  let cvDoc, nationalIdDoc, kcseCertDoc, collegeCertDoc;
+  try {
+    cvDoc = validateUploadedDoc(req.body?.cvDoc, "CV / Resume");
+    nationalIdDoc = validateUploadedDoc(req.body?.nationalIdDoc, "National ID");
+    kcseCertDoc = validateUploadedDoc(req.body?.kcseCertDoc, "KCSE Certificate");
+    collegeCertDoc = validateUploadedDoc(req.body?.collegeCertDoc, "University / College Certificate");
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err?.message || "Invalid uploaded document." });
+  }
+
+  const id = `tapp_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const application = {
+    id,
+    campaignId,
+    applicantEmail: actor.email.toLowerCase(),
+    applicantName,
+    phone,
+    educationLevel,
+    yearsExperience,
+    qualificationSummary,
+    schoolPreference,
+    cvDoc,
+    nationalIdDoc,
+    kcseCertDoc,
+    collegeCertDoc,
+    status: "pending" as const,
+    assignedCourses: [],
+    createdAt: new Date().toISOString(),
+  };
+
+  securityState.tutorApplications[id] = application;
+  persistSecurityState();
+
+  return res.status(201).json({ success: true, application });
+});
+
+app.get("/api/school/my-tutor-applications", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const lower = actor.email.toLowerCase();
+  const mine = Object.values(securityState.tutorApplications)
+    .filter((a) => a.applicantEmail.toLowerCase() === lower)
+    .map((a) => ({
+      ...a,
+      cvDoc: { name: a.cvDoc.name, mimeType: a.cvDoc.mimeType, dataUrl: "" },
+      nationalIdDoc: { name: a.nationalIdDoc.name, mimeType: a.nationalIdDoc.mimeType, dataUrl: "" },
+      kcseCertDoc: { name: a.kcseCertDoc.name, mimeType: a.kcseCertDoc.mimeType, dataUrl: "" },
+      collegeCertDoc: { name: a.collegeCertDoc.name, mimeType: a.collegeCertDoc.mimeType, dataUrl: "" },
+    }));
+  return res.json({ success: true, applications: mine });
+});
+
+app.get("/api/admin/tutor-applications", requireAdminAccess(), (_req: AuthenticatedRequest, res: Response) => {
+  const applications = Object.values(securityState.tutorApplications).sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt)
+  );
+  return res.json({ success: true, applications });
+});
+
+app.put("/api/admin/tutor-applications/:id/review", requireAdminAccess(), (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const application = securityState.tutorApplications[req.params.id];
+  if (!application) return res.status(404).json({ success: false, error: "Tutor application not found." });
+
+  const decision = req.body?.decision === "approved" ? "approved" : "denied";
+  const assignedCourses = Array.isArray(req.body?.assignedCourses)
+    ? req.body.assignedCourses.map((c: any) => String(c).trim()).filter(Boolean)
+    : [];
+  const reviewNote = String(req.body?.reviewNote || "").trim().slice(0, 500);
+
+  if (decision === "approved" && assignedCourses.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Select at least one Leadership or Bible School course to assign when approving a tutor.",
+    });
+  }
+
+  application.status = decision;
+  application.assignedCourses = decision === "approved" ? assignedCourses : [];
+  application.reviewNote = reviewNote;
+  application.reviewedBy = actor.email;
+  application.reviewedAt = new Date().toISOString();
+
+  const lowerEmail = application.applicantEmail.toLowerCase();
+  if (decision === "approved") {
+    const existingCourses = securityState.tutorCourses[lowerEmail] || [];
+    const mergedCourses = Array.from(new Set([...existingCourses, ...assignedCourses]));
+    securityState.tutorCourses[lowerEmail] = mergedCourses;
+
+    if (securityState.accounts[lowerEmail]) {
+      if (securityState.accounts[lowerEmail].role === "member") {
+        securityState.accounts[lowerEmail].role = "tutor";
+      }
+      securityState.accounts[lowerEmail].authorizedCourses = mergedCourses;
+    } else {
+      securityState.accounts[lowerEmail] = {
+        id: `tutor_${Date.now()}`,
+        email: lowerEmail,
+        name: application.applicantName,
+        role: "tutor",
+        passwordHash: "",
+        authorizedCourses: mergedCourses,
+        createdAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  persistSecurityState();
+
+  recordAuditLog({
+    actor,
+    category: "ROLE_CHANGE",
+    action: decision === "approved" ? "TUTOR_APPLICATION_APPROVED" : "TUTOR_APPLICATION_DENIED",
+    targetType: "tutor_application",
+    targetId: application.id,
+    details: `${decision.toUpperCase()} tutor application for ${lowerEmail} (${assignedCourses.join(", ")})`,
+    ip: extractIp(req),
+  });
+
+  return res.json({ success: true, application });
+});
+
+// 3. Course-Locked Tutor Notes (PDF, Word, Slides, Sheet)
+app.get("/api/school/notes", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const allNotes = Object.values(securityState.schoolCourseNotes).sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt)
+  );
+
+  if (actor.isMainAdmin || actor.role === "sub_admin" || actor.role === "manager") {
+    return res.json({ success: true, notes: allNotes, enrolledCourseKeys: ["*"] });
+  }
+
+  const enrolledKeys = getStudentEnrolledCourseSet(actor.email, actor.uid);
+
+  if (actor.role === "tutor") {
+    const allowedNotes = allNotes.filter(
+      (n) =>
+        canTutorAccessCourse(actor, n.courseId) ||
+        canTutorAccessCourse(actor, n.courseCode) ||
+        n.tutorEmail.toLowerCase() === actor.email.toLowerCase() ||
+        enrolledKeys.has(n.courseId.toLowerCase()) ||
+        enrolledKeys.has(n.courseCode.toLowerCase())
+    );
+    return res.json({
+      success: true,
+      notes: allowedNotes,
+      enrolledCourseKeys: Array.from(enrolledKeys),
+    });
+  }
+
+  // Strict student access check: ONLY return notes for courses the student is enrolled in
+  const studentNotes = allNotes.filter(
+    (n) => enrolledKeys.has(n.courseId.toLowerCase()) || enrolledKeys.has(n.courseCode.toLowerCase())
+  );
+
+  return res.json({
+    success: true,
+    notes: studentNotes,
+    enrolledCourseKeys: Array.from(enrolledKeys),
+  });
+});
+
+app.post("/api/school/notes", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseId = String(req.body?.courseId || "").trim();
+  const courseCode = String(req.body?.courseCode || courseId).trim();
+  const courseTitle = String(req.body?.courseTitle || courseId).trim().slice(0, 180);
+  const school = (req.body?.school === "bible" ? "bible" : "leadership") as "leadership" | "bible";
+  const title = String(req.body?.title || "").trim().slice(0, 180);
+  const content = String(req.body?.content || "").trim().slice(0, 80_000);
+  const publishFormat = (
+    ["pdf", "docx", "slides", "sheet"].includes(req.body?.publishFormat) ? req.body.publishFormat : "pdf"
+  ) as "pdf" | "docx" | "slides" | "sheet";
+
+  if (!courseId || !title || !content) {
+    return res.status(400).json({ success: false, error: "Course, note title, and content are required." });
+  }
+
+  if (!canTutorAccessCourse(actor, courseId) && !canTutorAccessCourse(actor, courseCode)) {
+    return res.status(403).json({
+      success: false,
+      error: "You may only publish notes to courses assigned to you by the Administrator.",
+    });
+  }
+
+  const now = new Date().toISOString();
+  const id = `note_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const note = {
+    id,
+    courseId,
+    courseCode,
+    courseTitle,
+    school,
+    title,
+    content,
+    publishFormat,
+    tutorEmail: actor.email.toLowerCase(),
+    tutorName: actor.name,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  securityState.schoolCourseNotes[id] = note;
+  persistSecurityState();
+
+  return res.status(201).json({ success: true, note });
+});
+
+app.delete("/api/school/notes/:id", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const note = securityState.schoolCourseNotes[req.params.id];
+  if (!note) return res.status(404).json({ success: false, error: "Course note not found." });
+
+  const canDelete =
+    actor.isMainAdmin ||
+    actor.role === "sub_admin" ||
+    note.tutorEmail.toLowerCase() === actor.email.toLowerCase();
+  if (!canDelete) return res.status(403).json({ success: false, error: "Not authorized to remove this note." });
+
+  delete securityState.schoolCourseNotes[req.params.id];
+  persistSecurityState();
+  return res.json({ success: true });
+});
+
+// 4. Online Classes & Google Meet Sessions
+app.get("/api/school/classes", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const list = Object.values(securityState.schoolCourseClasses).sort((a, b) =>
+    a.scheduledFor.localeCompare(b.scheduledFor)
+  );
+  if (isSchoolStaffOrAdmin(actor)) {
+    return res.json({ success: true, classes: list });
+  }
+  const enrolledKeys = getStudentEnrolledCourseSet(actor.email, actor.uid);
+  const filtered = list.filter(
+    (c) => enrolledKeys.has(c.courseId.toLowerCase()) || enrolledKeys.size === 0
+  );
+  return res.json({ success: true, classes: filtered });
+});
+
+app.post("/api/school/classes", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseId = String(req.body?.courseId || "").trim();
+  const courseTitle = String(req.body?.courseTitle || courseId).trim().slice(0, 180);
+  const school = (req.body?.school === "bible" ? "bible" : "leadership") as "leadership" | "bible";
+  const title = String(req.body?.title || "").trim().slice(0, 180);
+  const scheduledFor = String(req.body?.scheduledFor || "").trim().slice(0, 60);
+  const durationMinutes = Math.max(15, Math.min(360, Number(req.body?.durationMinutes || 60)));
+  const meetUrl = String(req.body?.meetUrl || "").trim().slice(0, 400);
+  const classroomUrl = String(req.body?.classroomUrl || "").trim().slice(0, 400);
+  const notes = String(req.body?.notes || "").trim().slice(0, 1000);
+
+  if (!courseId || !title || !scheduledFor) {
+    return res.status(400).json({ success: false, error: "Course, session title, and schedule are required." });
+  }
+  if (!canTutorAccessCourse(actor, courseId)) {
+    return res.status(403).json({ success: false, error: "You may only schedule classes for your assigned courses." });
+  }
+
+  const id = `cls_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const cls = {
+    id,
+    courseId,
+    courseTitle,
+    school,
+    title,
+    scheduledFor,
+    durationMinutes,
+    meetUrl: meetUrl || "https://meet.google.com/new",
+    classroomUrl: classroomUrl || undefined,
+    notes: notes || undefined,
+    tutorEmail: actor.email.toLowerCase(),
+    tutorName: actor.name,
+    createdAt: new Date().toISOString(),
+  };
+
+  securityState.schoolCourseClasses[id] = cls;
+  persistSecurityState();
+  return res.status(201).json({ success: true, schoolClass: cls });
+});
+
+app.delete("/api/school/classes/:id", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const cls = securityState.schoolCourseClasses[req.params.id];
+  if (!cls) return res.status(404).json({ success: false, error: "Class session not found." });
+  if (!actor.isMainAdmin && cls.tutorEmail.toLowerCase() !== actor.email.toLowerCase()) {
+    return res.status(403).json({ success: false, error: "Cannot delete another tutor's class." });
+  }
+  delete securityState.schoolCourseClasses[req.params.id];
+  persistSecurityState();
+  return res.json({ success: true });
+});
+
+// 5. Course Learner-Tutor Discussions (Zero AI)
+app.get("/api/school/discussions", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const courseId = String(req.query.courseId || "").trim().toLowerCase();
+  const list = Object.values(securityState.schoolCourseDiscussions)
+    .filter((d) => !courseId || d.courseId.toLowerCase() === courseId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return res.json({ success: true, discussions: list });
+});
+
+app.post("/api/school/discussions", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseId = String(req.body?.courseId || "").trim();
+  const courseTitle = String(req.body?.courseTitle || courseId).trim().slice(0, 160);
+  const message = String(req.body?.message || "").trim().slice(0, 2000);
+  const parentId = req.body?.parentId ? String(req.body.parentId).trim() : undefined;
+
+  if (!courseId || !message) {
+    return res.status(400).json({ success: false, error: "Course and message are required." });
+  }
+
+  const id = `disc_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const entry = {
+    id,
+    courseId,
+    courseTitle,
+    authorEmail: actor.email.toLowerCase(),
+    authorName: actor.name,
+    authorRole: actor.role,
+    message,
+    parentId,
+    createdAt: new Date().toISOString(),
+  };
+
+  securityState.schoolCourseDiscussions[id] = entry;
+  persistSecurityState();
+  return res.status(201).json({ success: true, discussion: entry });
+});
+
+// 6. Course Assignments & Grading
+app.get("/api/school/assignments", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const all = Object.values(securityState.schoolCourseAssignments).sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt)
+  );
+  if (isSchoolStaffOrAdmin(actor)) {
+    return res.json({ success: true, assignments: all });
+  }
+  const enrolledKeys = getStudentEnrolledCourseSet(actor.email, actor.uid);
+  const lowerEmail = actor.email.toLowerCase();
+  const visible = all
+    .filter((a) => enrolledKeys.has(a.courseId.toLowerCase()))
+    .map((a) => ({
+      ...a,
+      submissions: a.submissions[lowerEmail] ? { [lowerEmail]: a.submissions[lowerEmail] } : {},
+    }));
+  return res.json({ success: true, assignments: visible });
+});
+
+app.post("/api/school/assignments", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const courseId = String(req.body?.courseId || "").trim();
+  const courseTitle = String(req.body?.courseTitle || courseId).trim().slice(0, 180);
+  const school = (req.body?.school === "bible" ? "bible" : "leadership") as "leadership" | "bible";
+  const title = String(req.body?.title || "").trim().slice(0, 180);
+  const instructions = String(req.body?.instructions || "").trim().slice(0, 4000);
+  const dueDate = String(req.body?.dueDate || "").trim().slice(0, 60);
+  const maxMarks = Math.max(5, Math.min(100, Number(req.body?.maxMarks || 20)));
+
+  if (!courseId || !title || !instructions) {
+    return res.status(400).json({ success: false, error: "Course, assignment title, and instructions are required." });
+  }
+  if (!canTutorAccessCourse(actor, courseId)) {
+    return res.status(403).json({ success: false, error: "You may only assign work to courses assigned to you." });
+  }
+
+  const id = `asg_${Date.now()}_${crypto.randomBytes(2).toString("hex")}`;
+  const assignment = {
+    id,
+    courseId,
+    courseTitle,
+    school,
+    title,
+    instructions,
+    dueDate: dueDate || "Next Class",
+    maxMarks,
+    tutorEmail: actor.email.toLowerCase(),
+    tutorName: actor.name,
+    submissions: {},
+    createdAt: new Date().toISOString(),
+  };
+
+  securityState.schoolCourseAssignments[id] = assignment;
+  persistSecurityState();
+  return res.status(201).json({ success: true, assignment });
+});
+
+app.post("/api/school/assignments/:id/submit", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const assignment = securityState.schoolCourseAssignments[req.params.id];
+  if (!assignment) return res.status(404).json({ success: false, error: "Assignment not found." });
+
+  const enrolledKeys = getStudentEnrolledCourseSet(actor.email, actor.uid);
+  if (!isSchoolStaffOrAdmin(actor) && !enrolledKeys.has(assignment.courseId.toLowerCase())) {
+    return res.status(403).json({ success: false, error: "You must be enrolled in this course to submit assignments." });
+  }
+
+  const answerText = String(req.body?.answerText || "").trim().slice(0, 8000);
+  if (!answerText) return res.status(400).json({ success: false, error: "Assignment response text is required." });
+
+  const lowerEmail = actor.email.toLowerCase();
+  assignment.submissions[lowerEmail] = {
+    studentEmail: lowerEmail,
+    studentName: actor.name,
+    answerText,
+    attachmentName: req.body?.attachmentName ? String(req.body.attachmentName).slice(0, 120) : undefined,
+    attachmentDataUrl:
+      typeof req.body?.attachmentDataUrl === "string" &&
+      req.body.attachmentDataUrl.startsWith("data:") &&
+      req.body.attachmentDataUrl.length <= 2_500_000
+        ? req.body.attachmentDataUrl
+        : undefined,
+    submittedAt: new Date().toISOString(),
+  };
+
+  persistSecurityState();
+  return res.json({ success: true, submission: assignment.submissions[lowerEmail] });
+});
+
+app.put("/api/school/assignments/:id/grade", requireAuth, requireSchoolTutorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.identity!;
+  const assignment = securityState.schoolCourseAssignments[req.params.id];
+  if (!assignment) return res.status(404).json({ success: false, error: "Assignment not found." });
+  if (!canTutorAccessCourse(actor, assignment.courseId)) {
+    return res.status(403).json({ success: false, error: "Not authorized to grade this course's assignments." });
+  }
+
+  const studentEmail = String(req.body?.studentEmail || "").toLowerCase().trim();
+  const sub = assignment.submissions[studentEmail];
+  if (!sub) return res.status(404).json({ success: false, error: "Student submission not found." });
+
+  const marks = Math.max(0, Math.min(assignment.maxMarks, Number(req.body?.marks || 0)));
+  sub.marks = marks;
+  sub.feedback = String(req.body?.feedback || "").trim().slice(0, 1000);
+  sub.gradedBy = actor.email.toLowerCase();
+
+  persistSecurityState();
+  return res.json({ success: true, submission: sub });
 });
 
 app.post("/api/ai/extract", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
@@ -2907,7 +3652,7 @@ app.post("/api/ai/extract", requireAuth, enforceAiRateLimit, async (req: Authent
       const docxText = mammothResult.value || "";
       if (aiClient) {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Refine and structure this extracted Word text into clean prose (use ALL CAPS headings, no # hashes):\n\n${docxText}`,
         });
         textResult = response.text || docxText;
@@ -2918,7 +3663,7 @@ app.post("/api/ai/extract", requireAuth, enforceAiRateLimit, async (req: Authent
       const decodedText = Buffer.from(rawBase64, "base64").toString("utf8");
       if (aiClient) {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Polish and format this plain text cleanly:\n\n${decodedText}`,
         });
         textResult = response.text || decodedText;
@@ -2927,7 +3672,7 @@ app.post("/api/ai/extract", requireAuth, enforceAiRateLimit, async (req: Authent
       }
     } else if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-4-hydrogen",
         contents: [
           { inlineData: { mimeType, data: rawBase64 } },
           { text: "Extract and summarize all text cleanly without markdown '#' headers." },
@@ -2961,7 +3706,7 @@ app.post("/api/ai/publish", requireAuth, enforceAiRateLimit, async (req: Authent
 
     if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-4-hydrogen",
         contents: `Create a structured multi-chapter eBook titled "${title}" by ${author} (${category}) from:\n${String(originalContent || "").slice(0, 12000)}`,
       });
       compiledBook = response.text || "";
@@ -3003,7 +3748,7 @@ app.post("/api/ai/publish-document", requireAuth, enforceAiRateLimit, async (req
       const docxText = mammothResult.value || "";
       if (aiClient) {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Structure an eBook titled "${title}" by ${author} (${category}) based on:\n${docxText.slice(0, 15000)}`,
         });
         compiledBook = response.text || docxText;
@@ -3012,7 +3757,7 @@ app.post("/api/ai/publish-document", requireAuth, enforceAiRateLimit, async (req
       }
     } else if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-4-hydrogen",
         contents: [
           { inlineData: { mimeType: "application/pdf", data: rawBase64 } },
           { text: `Synthesize a multi-chapter academic eBook titled "${title}" by ${author} (${category}).` },
@@ -3042,7 +3787,7 @@ app.post("/api/ai/language-translate", requireAuth, enforceAiRateLimit, async (r
     const aiClient = getGenAI();
     if (aiClient) {
       const response = await aiClient.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-4-hydrogen",
         contents: `Mode: ${mode || "translate"}. Target language: ${targetLang || "Swahili"}. Input: "${text || ""}"`,
       });
       return res.json({ success: true, text: response.text });
@@ -3074,7 +3819,7 @@ app.post("/api/ai/batch-classify", requireAuth, enforceAiRateLimit, async (req: 
       if (aiClient) {
         try {
           const response = await aiClient.models.generateContent({
-            model: "gemini-3.6-flash",
+            model: "gemini-4-hydrogen",
             contents: `Classify "${book.title}" by ${book.author || "Scholar"} (${book.description || ""}) into JSON {"category": "...", "introduction": "..."}`,
             config: { responseMimeType: "application/json" },
           });
@@ -3116,121 +3861,11 @@ app.post("/api/ai/batch-classify", requireAuth, enforceAiRateLimit, async (req: 
   }
 });
 
-app.post("/api/ai/generate-image", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { prompt, aspectRatio, hdMode } = req.body;
-  if (!prompt) return res.status(400).json({ success: false, error: "Prompt is required." });
-
-  try {
-    const aiClient = getGenAI();
-    let imageUrl = "";
-
-    if (aiClient) {
-      const model = hdMode ? "gemini-3.1-flash-image" : "gemini-3.1-flash-lite-image";
-      const response = await aiClient.models.generateContent({
-        model,
-        contents: { parts: [{ text: String(prompt) }] },
-        config: { imageConfig: { aspectRatio: aspectRatio || "1:1" } },
-      });
-      const part = response?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-      if (part?.inlineData?.data) {
-        imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-
-    if (!imageUrl) {
-      imageUrl = `https://picsum.photos/seed/${encodeURIComponent(String(prompt))}/800/800`;
-    }
-
-    return res.json({ success: true, imageUrl });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: safeError(err, "Image generation failed.") });
-  }
-});
-
-app.post("/api/ai/generate-video", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { prompt, aspectRatio, resolution } = req.body;
-  if (!prompt) return res.status(400).json({ success: false, error: "Prompt is required." });
-
-  try {
-    const aiClient = getGenAI();
-    if (aiClient) {
-      const operation = await aiClient.models.generateVideos({
-        model: "veo-3.1-lite-generate-preview",
-        prompt: String(prompt),
-        config: {
-          numberOfVideos: 1,
-          resolution: resolution || "720p",
-          aspectRatio: aspectRatio || "16:9",
-        },
-      });
-      return res.json({ success: true, operationName: operation.name });
-    }
-    return res.json({ success: true, operationName: `mock-operations/veo-video-${Date.now()}`, offline: true });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: safeError(err, "Video generation failed.") });
-  }
-});
-
-app.post("/api/ai/video-status", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const { operationName } = req.body;
-  if (!operationName) return res.status(400).json({ success: false, error: "Operation name is required." });
-
-  try {
-    if (String(operationName).startsWith("mock-operations/")) {
-      const ts = parseInt(String(operationName).split("-").pop() || "0", 10);
-      return res.json({ success: true, done: Date.now() - ts > 3500, offline: true });
-    }
-
-    const aiClient = getGenAI();
-    if (!aiClient) return res.status(503).json({ success: false, error: "AI video service unavailable." });
-    const op = new GenerateVideosOperation();
-    op.name = String(operationName);
-    const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    return res.json({ success: true, done: updated.done });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: safeError(err, "Failed checking video status.") });
-  }
-});
-
-app.all("/api/ai/video-download", requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const operationName = req.method === "POST" ? req.body?.operationName : String(req.query.operationName || "");
-  if (!operationName) return res.status(400).json({ success: false, error: "Operation name is required." });
-
-  try {
-    if (String(operationName).startsWith("mock-operations/")) {
-      return res.redirect("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4");
-    }
-    const aiClient = getGenAI();
-    if (!aiClient) return res.status(503).json({ success: false, error: "AI video service unavailable." });
-
-    const op = new GenerateVideosOperation();
-    op.name = String(operationName);
-    const updated = await aiClient.operations.getVideosOperation({ operation: op });
-    const uri = updated.response?.generatedVideos?.[0]?.video?.uri;
-    if (!uri) return res.status(404).json({ success: false, error: "Video not ready." });
-
-    const videoRes = await fetch(uri, { headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "" } });
-    res.setHeader("Content-Type", "video/mp4");
-    if (videoRes.body) {
-      const reader = videoRes.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(Buffer.from(value));
-      }
-      return res.end();
-    }
-    return res.redirect(uri);
-  } catch (err) {
-    return res.status(500).json({ success: false, error: safeError(err, "Video download failed.") });
-  }
-});
-
-app.post("/api/ai/compile-lecture-questions", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { topic, content, schoolType } = req.body;
+app.post("/api/ai/generate-lecture-questions", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const { topic, content, courseTrack } = req.body;
+  const track = String(courseTrack || "leadership").trim().toLowerCase() || "leadership";
   if (!topic || !content) return res.status(400).json({ success: false, error: "Topic and content are required." });
 
-  const track = String(schoolType || "leadership");
   try {
     const aiClient = getGenAI();
     let questionsList: any[] = [];
@@ -3238,7 +3873,7 @@ app.post("/api/ai/compile-lecture-questions", requireAuth, enforceAiRateLimit, a
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Generate 3 4-option MCQs for "${topic}" from:\n${String(content).slice(0, 10000)}\nReturn raw JSON array [{"question": "...", "options": ["..."], "correctIndex": 0, "explanation": "..."}]`,
         });
         const cleaned = (response.text || "").replace(/```json|```/g, "").trim();
@@ -3332,7 +3967,7 @@ app.post("/api/ai/edit-video", requireAuth, enforceAiRateLimit, async (req: Auth
     if (aiClient) {
       try {
         const response = await aiClient.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: "gemini-4-hydrogen",
           contents: `Video Title: "${videoName || "Uploaded Video"}", Category: "${category || "Evangelism"}", Directives: "${prompt || ""}"`,
           config: {
             systemInstruction: "Return structured JSON with title, summary, trimPoints, subtitles, voiceoverScriptEnglish, voiceoverScriptSwahili, sermonOutlineDoc, appliedEffects, highlightClipTitle.",
@@ -3375,7 +4010,7 @@ app.get("/api/site/showcase", (_req: Request, res: Response) => {
   });
 });
 
-app.put("/api/site/showcase", requireManagerAccess, (req: AuthenticatedRequest, res: Response) => {
+app.put("/api/site/showcase", requireMainAdmin, (req: AuthenticatedRequest, res: Response) => {
   const payload = req.body || {};
   const slidesRaw = Array.isArray(payload.slides) ? payload.slides.slice(0, 12) : [];
   const cleanSlides = slidesRaw
@@ -3423,39 +4058,58 @@ app.put("/api/site/showcase", requireManagerAccess, (req: AuthenticatedRequest, 
 });
 
 // ============================================================================
-// AI CAPABILITY ENDPOINTS (@google/genai SDK)
+// AI CAPABILITY ENDPOINTS (@google/genai FREE-TIER STRICT)
 // ============================================================================
 app.post("/api/ai/chat", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { prompt, model: modelParam, history, systemInstruction } = req.body;
-  if (!prompt) return res.status(400).json({ success: false, error: "Prompt is required." });
+  const { prompt, message, model: modelParam, history, systemInstruction, enableGoogleSearch } = req.body;
+  const userMessage = String(prompt || message || "").trim();
+  if (!userMessage) return res.status(400).json({ success: false, error: "Prompt is required." });
 
   const aiClient = getGenAI();
   if (!aiClient) {
     return res.status(503).json({ success: false, error: "Gemini API key is not configured on server." });
   }
 
-  const model = modelParam || "gemini-4-hydrogen";
-  try {
-    const chat = aiClient.chats.create({
-      model,
-      config: {
-        systemInstruction: systemInstruction || "You are Zion Digital AI Assistant, providing expert Christian fellowship, academic guidance, and administrative support.",
-      },
-    });
+  const model = "gemini-4-hydrogen";
 
+  try {
+    const formattedHistory: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
     if (Array.isArray(history)) {
-      // populate historical turns if provided
-      for (const h of history.slice(-6)) {
-        if (h?.role === "user" && h?.text) {
-          // can prime or we can just send the message
-        }
+      for (const h of history.slice(-16)) {
+        const textVal = String(h?.text || "").trim();
+        if (!textVal) continue;
+        formattedHistory.push({
+          role: h.role === "user" ? "user" : "model",
+          parts: [{ text: textVal }],
+        });
       }
     }
 
-    const response = await chat.sendMessage({ message: String(prompt).slice(0, 4000) });
-    return res.json({ success: true, reply: response.text || "" });
+    const config: any = {
+      systemInstruction:
+        systemInstruction ||
+        "You are Zion Digital AI Assistant, providing expert Christian fellowship, academic guidance, and administrative support.",
+    };
+
+    const chat = aiClient.chats.create({
+      model,
+      history: formattedHistory,
+      config,
+    });
+
+    const response = await chat.sendMessage({ message: userMessage.slice(0, 4000) });
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const groundingSources = chunks
+      .flatMap((chunk: any) => {
+        const items: Array<{ title: string; uri: string; type?: string }> = [];
+        if (chunk.web?.uri) items.push({ title: chunk.web.title || "Web Source", uri: chunk.web.uri, type: "web" });
+        return items;
+      })
+      .filter((s: any) => s.title && s.uri);
+
+    return res.json({ success: true, reply: response.text || "", model, groundingSources });
   } catch (err: any) {
-    return res.status(502).json({ success: false, error: String(err?.message || "AI chat failed.") });
+    return res.status(502).json({ success: false, error: safeError(err, "AI chat failed.") });
   }
 });
 
@@ -3473,20 +4127,32 @@ app.post("/api/ai/search-grounding", requireAuth, enforceAiRateLimit, async (req
       model: "gemini-4-hydrogen",
       contents: String(prompt).slice(0, 4000),
       config: {
-        tools: [{ googleSearch: {} }],
-        systemInstruction: "You are Zion Digital Research Assistant with real-time Google Search grounding.",
+        systemInstruction: "You are Zion Digital Research Assistant powered strictly by Gemini 4 Hydrogen.",
       },
     });
 
-    const groundingMetadata = (response as any)?.candidates?.[0]?.groundingMetadata;
     return res.json({
       success: true,
       text: response.text || "",
-      groundingMetadata: groundingMetadata || null,
+      groundingMetadata: null,
     });
   } catch (err: any) {
-    return res.status(502).json({ success: false, error: String(err?.message || "Search grounding failed.") });
+    return res.status(502).json({ success: false, error: safeError(err, "Research assistant failed.") });
   }
+});
+
+app.post("/api/ai/transcribe-audio", requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(410).json({
+    success: false,
+    error: "Server audio transcription disabled to keep app strictly on Gemini 4 Hydrogen free tier.",
+  });
+});
+
+app.post("/api/ai/tts", requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(410).json({
+    success: false,
+    error: "Server TTS disabled to avoid billing; using built-in browser speech synthesis.",
+  });
 });
 
 app.post("/api/ai/generate-music", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
@@ -3494,74 +4160,290 @@ app.post("/api/ai/generate-music", requireAuth, enforceAiRateLimit, async (req: 
   if (!prompt) return res.status(400).json({ success: false, error: "Music prompt is required." });
 
   const aiClient = getGenAI();
-  if (!aiClient) {
-    return res.status(503).json({ success: false, error: "Gemini API key is not configured on server." });
-  }
-
-  const model = duration === "full" ? "lyria-3-pro-preview" : "lyria-3-clip-preview";
   try {
-    const response = await aiClient.models.generateContent({
-      model,
-      contents: `Generate a sacred Christian / inspirational music composition for: ${String(prompt).slice(0, 500)}`,
-    });
+    let composition: any = null;
+    if (aiClient) {
+      try {
+        const resp = await aiClient.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: `Compose a sacred hymn / worship chord & melody arrangement for: "${String(prompt).slice(0, 400)}" (${duration === "full" ? "16 bars" : "8 bars"}). Return valid JSON with keys: title, keySignature, tempoBpm (integer 64-120), chords (array of {name, freqs: array of 3 numbers in Hz}), melodyNotes (array of numbers in Hz), lyrics (string).`,
+          config: { responseMimeType: "application/json" },
+        });
+        if (resp.text) composition = JSON.parse(resp.text.trim());
+      } catch {
+        composition = null;
+      }
+    }
+
+    if (!composition || !Array.isArray(composition.chords)) {
+      composition = {
+        title: `Zion Hymn: ${String(prompt).slice(0, 40)}`,
+        keySignature: "C Major",
+        tempoBpm: 78,
+        chords: [
+          { name: "C", freqs: [261.63, 329.63, 392.0] },
+          { name: "F", freqs: [349.23, 440.0, 523.25] },
+          { name: "Am", freqs: [220.0, 261.63, 329.63] },
+          { name: "G", freqs: [196.0, 246.94, 392.0] },
+        ],
+        melodyNotes: [523.25, 493.88, 440.0, 392.0, 349.23, 392.0, 440.0, 523.25],
+        lyrics: `Praise rises across Zion hills for: ${String(prompt).slice(0, 120)}.`,
+      };
+    }
+
     return res.json({
       success: true,
-      audioUrl: response.text || "https://commondatastorage.googleapis.com/codesign-bucket/sample-worship.mp3",
-      message: "Music generated successfully via Lyria.",
+      composition,
+      message: "Synthesized interactive sacred Web Audio arrangement.",
     });
   } catch (err: any) {
-    return res.status(502).json({ success: false, error: String(err?.message || "Music generation failed.") });
+    return res.status(502).json({ success: false, error: safeError(err, "Music arrangement failed.") });
   }
 });
 
 app.post("/api/ai/generate-image", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const { prompt } = req.body;
+  const { prompt, aspectRatio } = req.body;
   if (!prompt) return res.status(400).json({ success: false, error: "Image prompt is required." });
 
-  const aiClient = getGenAI();
-  if (!aiClient) {
-    return res.status(503).json({ success: false, error: "Gemini API key is not configured on server." });
-  }
+  const cleanPrompt = String(prompt).slice(0, 400);
+  const ratio = String(aspectRatio || "1:1");
+  const dimensions = ratio === "16:9" ? { w: 960, h: 540 } : ratio === "9:16" ? { w: 540, h: 960 } : { w: 800, h: 800 };
 
   try {
-    const response = await aiClient.models.generateContent({
-      model: "gemini-nano-banana-2.1",
-      contents: `Generate a high fidelity professional illustration or book cover: ${String(prompt).slice(0, 500)}`,
-    });
-    // In SDK, nano banana returns image part or text description
-    const part = (response as any)?.candidates?.[0]?.content?.parts?.[0];
-    let imageUrl = part?.inlineData ? `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` : null;
-    if (!imageUrl) {
-      imageUrl = "https://images.unsplash.com/photo-1532012197267-da84d127e765?auto=format&fit=crop&q=80&w=800";
+    const aiClient = getGenAI();
+    let svgMarkup = "";
+
+    if (aiClient) {
+      try {
+        const response = await aiClient.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: `Create a high-craft vector SVG poster/book-cover artwork with viewBox="0 0 ${dimensions.w} ${dimensions.h}" for: "${cleanPrompt}". Output ONLY raw <svg ...>...</svg> markup with rich gradients, clean typography, geometric architectural motifs, and zero external links or script tags.`,
+        });
+        const raw = String(response.text || "").replace(/```svg|```xml|```/g, "").trim();
+        const svgMatch = raw.match(/<svg[\s\S]*<\/svg>/i);
+        if (svgMatch) {
+          svgMarkup = svgMatch[0].replace(/<script[\s\S]*?<\/script>/gi, "");
+        }
+      } catch {
+        svgMarkup = "";
+      }
     }
-    return res.json({ success: true, imageUrl });
+
+    if (!svgMarkup) {
+      const safeTitle = cleanPrompt.replace(/[<>&"']/g, "").slice(0, 42);
+      svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dimensions.w} ${dimensions.h}">
+  <defs>
+    <linearGradient id="zionBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B254D"/>
+      <stop offset="55%" stop-color="#155EEF"/>
+      <stop offset="100%" stop-color="#7C2D12"/>
+    </linearGradient>
+  </defs>
+  <rect width="${dimensions.w}" height="${dimensions.h}" fill="url(#zionBg)"/>
+  <circle cx="${dimensions.w * 0.5}" cy="${dimensions.h * 0.4}" r="${Math.min(dimensions.w, dimensions.h) * 0.24}" fill="none" stroke="#F5B82E" stroke-width="4" opacity="0.85"/>
+  <path d="M ${dimensions.w * 0.5} ${dimensions.h * 0.22} L ${dimensions.w * 0.5} ${dimensions.h * 0.58} M ${dimensions.w * 0.36} ${dimensions.h * 0.36} L ${dimensions.w * 0.64} ${dimensions.h * 0.36}" stroke="#F5B82E" stroke-width="10" stroke-linecap="round"/>
+  <rect x="48" y="48" width="${dimensions.w - 96}" height="${dimensions.h - 96}" rx="24" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="2"/>
+  <text x="${dimensions.w * 0.5}" y="${dimensions.h * 0.78}" text-anchor="middle" fill="#FFFFFF" font-family="Georgia, serif" font-weight="bold" font-size="30">${safeTitle}</text>
+  <text x="${dimensions.w * 0.5}" y="${dimensions.h * 0.86}" text-anchor="middle" fill="#FDE68A" font-family="monospace" font-size="14" letter-spacing="4">ZION DIGITAL STUDIO</text>
+</svg>`;
+    }
+
+    const imageUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+    return res.json({ success: true, imageUrl, svgMarkup });
   } catch (err: any) {
-    return res.status(502).json({ success: false, error: String(err?.message || "Image generation failed.") });
+    return res.status(502).json({ success: false, error: safeError(err, "Vector cover generation failed.") });
   }
 });
 
 app.post("/api/ai/generate-video", requireAuth, enforceAiRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const { prompt, aspectRatio } = req.body;
-  if (!prompt) return res.status(400).json({ success: false, error: "Video prompt is required." });
-
-  const aiClient = getGenAI();
-  if (!aiClient) {
-    return res.status(503).json({ success: false, error: "Gemini API key is not configured on server." });
-  }
+  if (!prompt) return res.status(400).json({ success: false, error: "Storyboard prompt is required." });
 
   try {
-    // Using gemini-omni-1.2-flash via interactions / generateVideos
-    const resp = await aiClient.models.generateContent({
-      model: "gemini-omni-1.2-flash",
-      contents: `Generate cinematic video production (${aspectRatio || "16:9"}): ${String(prompt).slice(0, 500)}`,
-    });
+    const aiClient = getGenAI();
+    let storyboard: any = null;
+
+    if (aiClient) {
+      try {
+        const resp = await aiClient.models.generateContent({
+          model: "gemini-4-hydrogen",
+          contents: `Create a 4-scene animated ministry/academic storyboard (${aspectRatio || "16:9"}) for: "${String(prompt).slice(0, 500)}". Return JSON with: title, aspectRatio, scenes (array of 4 objects: { headline, subtitle, narration, accentColor, bgColor }).`,
+          config: { responseMimeType: "application/json" },
+        });
+        if (resp.text) storyboard = JSON.parse(resp.text.trim());
+      } catch {
+        storyboard = null;
+      }
+    }
+
+    if (!storyboard || !Array.isArray(storyboard.scenes)) {
+      storyboard = {
+        title: String(prompt).slice(0, 64),
+        aspectRatio: aspectRatio || "16:9",
+        scenes: [
+          {
+            headline: "Zion Vision Opening",
+            subtitle: String(prompt).slice(0, 72),
+            narration: "Welcome to a guided visual reflection from Zion Digital Academy.",
+            bgColor: "#0B254D",
+            accentColor: "#F5B82E",
+          },
+          {
+            headline: "Foundation of Truth",
+            subtitle: "Scriptural wisdom meets modern scholarship",
+            narration: "True leadership anchors communities with clarity, integrity, and service.",
+            bgColor: "#123A78",
+            accentColor: "#38BDF8",
+          },
+          {
+            headline: "Bungoma & Global Outreach",
+            subtitle: "Equipping leaders across campuses",
+            narration: "Every lesson equips scholars to build transformative initiatives in their towns.",
+            bgColor: "#7C2D12",
+            accentColor: "#FBBF24",
+          },
+          {
+            headline: "Call to Action",
+            subtitle: "Read. Lead. Transform.",
+            narration: "Continue exploring in Zion Digital School and Community.",
+            bgColor: "#064E3B",
+            accentColor: "#34D399",
+          },
+        ],
+      };
+    }
+
     return res.json({
       success: true,
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-      summary: resp.text || "Cinematic video generated successfully.",
+      storyboard,
+      summary: `Prepared 4-scene interactive canvas reel for "${storyboard.title}".`,
     });
   } catch (err: any) {
-    return res.status(502).json({ success: false, error: String(err?.message || "Video generation failed.") });
+    return res.status(502).json({ success: false, error: safeError(err, "Storyboard generation failed.") });
+  }
+});
+
+// ============================================================================
+// CLOUD SQL (POSTGRESQL) PERSISTENCE ENDPOINTS (FIREBASE ID TOKEN VERIFIED)
+// ============================================================================
+app.get("/api/sql/profile", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    const user = await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not load user profile.") });
+  }
+});
+
+app.post("/api/sql/profile", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    const user = await sqlRepo.getOrCreateSqlUser({
+      uid: req.sqlUser!.uid,
+      email: req.sqlUser!.email,
+      displayName: req.body?.displayName ? String(req.body.displayName).slice(0, 100) : req.sqlUser!.name,
+      photoUrl: req.body?.photoUrl ? String(req.body.photoUrl).slice(0, 500) : req.sqlUser!.picture,
+    });
+    return res.json({ success: true, user });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not update user profile.") });
+  }
+});
+
+app.get("/api/sql/creations", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    const items = await sqlRepo.listSqlCreations(req.sqlUser!.uid);
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not load saved AI creations.") });
+  }
+});
+
+app.post("/api/sql/creations", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    const item = await sqlRepo.createSqlCreation({
+      userId: req.sqlUser!.uid,
+      mode: String(req.body?.mode || "chat").slice(0, 40),
+      model: String(req.body?.model || "gemini-4-hydrogen").slice(0, 60),
+      title: String(req.body?.title || "Zion AI Session").slice(0, 140),
+      prompt: String(req.body?.prompt || "").slice(0, 6000),
+      outputText: req.body?.outputText ? String(req.body.outputText).slice(0, 20000) : undefined,
+      svgArtwork: req.body?.svgArtwork ? String(req.body.svgArtwork).slice(0, 50000) : undefined,
+      groundingSources: Array.isArray(req.body?.groundingSources) ? req.body.groundingSources.slice(0, 20) : [],
+    });
+    return res.json({ success: true, item });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not save AI creation.") });
+  }
+});
+
+app.delete("/api/sql/creations/:id", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  const numericId = Number(req.params.id);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return res.status(400).json({ success: false, error: "Invalid creation id." });
+  }
+  try {
+    const deleted = await sqlRepo.deleteSqlCreation(req.sqlUser!.uid, numericId);
+    return res.json({ success: deleted });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not delete AI creation.") });
+  }
+});
+
+app.get("/api/sql/school-enrollments", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    const items = await sqlRepo.listSqlEnrollments(req.sqlUser!.uid);
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not load enrollments.") });
+  }
+});
+
+app.post("/api/sql/school-enrollments", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    const item = await sqlRepo.createSqlEnrollment({
+      userId: req.sqlUser!.uid,
+      studentName: String(req.body?.studentName || req.sqlUser!.name || "Zion Scholar").slice(0, 120),
+      schoolTrack: String(req.body?.schoolTrack || "leadership").slice(0, 60),
+      programTitle: String(req.body?.programTitle || "Zion Leadership Certificate").slice(0, 160),
+      campus: String(req.body?.campus || "Bungoma Main Campus").slice(0, 120),
+      status: String(req.body?.status || "enrolled").slice(0, 40),
+      progressPercent: Number(req.body?.progressPercent || 0),
+      feeStatus: String(req.body?.feeStatus || "pending").slice(0, 40),
+    });
+    return res.json({ success: true, item });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not save school enrollment.") });
+  }
+});
+
+app.get("/api/sql/game-scores", async (req: Request, res: Response) => {
+  const gameKey = String(req.query.gameKey || "zion-quest-3d").slice(0, 60);
+  try {
+    const items = await sqlRepo.listTopGameScores(gameKey, 10);
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not load leaderboard.") });
+  }
+});
+
+app.post("/api/sql/game-scores", requireSqlAuth, async (req: SqlAuthenticatedRequest, res: Response) => {
+  try {
+    await sqlRepo.getOrCreateSqlUser(req.sqlUser!);
+    const item = await sqlRepo.saveGameScore({
+      userId: req.sqlUser!.uid,
+      playerName: String(req.body?.playerName || req.sqlUser!.name || "Scholar").slice(0, 60),
+      gameKey: String(req.body?.gameKey || "zion-quest-3d").slice(0, 60),
+      score: Number(req.body?.score || 0),
+      scrollsCollected: Number(req.body?.scrollsCollected || 0),
+      waveReached: Number(req.body?.waveReached || 1),
+    });
+    return res.json({ success: true, item });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: safeError(err, "Could not save game score.") });
   }
 });
 
@@ -3680,7 +4562,7 @@ export async function startServer(portOverride?: number) {
   const listenPort = portOverride ?? PORT;
   return new Promise<import("http").Server>((resolve) => {
     const server = app.listen(listenPort, "0.0.0.0", () => {
-      console.log(`🚀 Zion Digital Full-Stack server listening on http://0.0.0.0:${listenPort}`);
+      console.log(`Zion Digital Full-Stack server listening on http://0.0.0.0:${listenPort} (Gemini 4 Hydrogen Only)`);
       resolve(server);
     });
   });

@@ -1,11 +1,16 @@
 import React, { useEffect, useState } from "react";
 import {
-  supabase,
-  isSupabaseConfigured,
   ensureUserProfile,
   mapProfileToAppUser,
 } from "../lib/supabaseClient";
-import { firebaseGoogleSignIn, firebaseConfigInfo } from "../lib/firebase";
+import { syncUserSession, logUserActivity } from "../lib/firestoreUtils";
+import { auth, firebaseGoogleSignIn, firebaseConfigInfo } from "../lib/firebase";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+} from "firebase/auth";
 import { secureApiFetch, setSessionToken } from "../lib/aiClient";
 import {
   loadShowcaseLocal,
@@ -138,54 +143,12 @@ export default function AuthScreen({
       return;
     }
 
-    if (!isSupabaseConfigured || !supabase) {
-      if (mode === "reset") {
-        setSuccessMsg(
-          `Preview Mode: Configure Supabase environment variables to send live password reset emails for ${trimmedEmail}.`
-        );
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        const serverUser = await exchangeServerSession({
-          mode: mode === "signup" ? "register" : "login",
-          email: trimmedEmail,
-          password,
-          name: fullName.trim() || undefined,
-          phone: phoneNumber.trim() || undefined,
-        });
-        const mergedUser: User = {
-          ...serverUser,
-          phone_number: phoneNumber.trim() || serverUser.phone_number,
-          subscription_status: "free",
-          plan_name: "Kenya Hub Member",
-          credits: 50,
-          readingStreak: 1,
-          dailyGoalMinutes: 30,
-        };
-        (onDemoFallbackLogin || onAuthenticated)(
-          mergedUser,
-          mode === "signup" ? "Account Registered" : "Account Sign-In"
-        );
-      } catch (err: any) {
-        setErrorMsg(err?.message || "Authentication failed. Please verify your email and password.");
-      } finally {
-        setIsLoading(false);
-      }
-      return;
-    }
-
     setIsLoading(true);
     try {
       if (mode === "reset") {
-        const redirectTo = `${window.location.origin}/`;
-        const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-          redirectTo,
-        });
-        if (error) throw error;
+        await sendPasswordResetEmail(auth, trimmedEmail);
         setSuccessMsg(
-          `Password reset link sent to ${trimmedEmail}. Please check your inbox and spam folder.`
+          `Password reset instructions sent to ${trimmedEmail}. Please check your inbox.`
         );
         return;
       }
@@ -194,69 +157,81 @@ export default function AuthScreen({
         if (password.length < 6) {
           throw new Error("Password must be at least 6 characters long.");
         }
-        const { data, error } = await supabase.auth.signUp({
+        let firebaseUid = "";
+        let idToken = "";
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
+          if (cred.user) {
+            firebaseUid = cred.user.uid;
+            idToken = await cred.user.getIdToken();
+            await updateProfile(cred.user, {
+              displayName: fullName.trim() || trimmedEmail.split("@")[0],
+            });
+          }
+        } catch (fbErr: any) {
+          console.warn("Firebase email signup notice:", fbErr?.message || fbErr);
+        }
+
+        const serverUser = await exchangeServerSession({
+          mode: idToken ? "firebase" : "register",
+          idToken: idToken || undefined,
           email: trimmedEmail,
           password,
-          options: {
-            data: {
-              full_name: fullName.trim() || trimmedEmail.split("@")[0],
-              phone_number: phoneNumber.trim() || null,
-            },
-          },
+          name: fullName.trim() || undefined,
+          phone: phoneNumber.trim() || undefined,
         });
-        if (error) throw error;
 
-        if (data.user && data.session) {
-          const profile = await ensureUserProfile(data.user);
-          const appUser = mapProfileToAppUser(data.user, profile);
-          const serverSynced = await exchangeServerSession({
-            mode: "supabase",
-            accessToken: data.session.access_token,
-          });
-          onAuthenticated(
-            {
-              ...appUser,
-              role: serverSynced.role,
-              isMainAdmin: serverSynced.isMainAdmin,
-              permissions: serverSynced.permissions,
-              authorizedCourses: serverSynced.authorizedCourses,
-            },
-            "Supabase Sign-Up"
-          );
-        } else {
-          setSuccessMsg(
-            `Account created for ${trimmedEmail}! Check your email to confirm your account, then sign in.`
-          );
-          setMode("login");
-        }
+        await ensureUserProfile({
+          id: firebaseUid || serverUser.id,
+          email: trimmedEmail,
+          user_metadata: { full_name: fullName.trim(), phone_number: phoneNumber.trim() },
+        });
+
+        const mergedUser: User = {
+          ...serverUser,
+          phone_number: phoneNumber.trim() || serverUser.phone_number,
+          subscription_status: serverUser.subscription_status || "free",
+          plan_name: serverUser.plan_name || "Kenya Hub Member",
+          credits: serverUser.credits ?? 50,
+          readingStreak: 1,
+          dailyGoalMinutes: 30,
+        };
+
+        (onDemoFallbackLogin || onAuthenticated)(mergedUser, "Account Registered");
         return;
       }
 
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // mode === "login"
+      let idToken = "";
+      try {
+        const cred = await signInWithEmailAndPassword(auth, trimmedEmail, password);
+        if (cred.user) {
+          idToken = await cred.user.getIdToken();
+        }
+      } catch (fbErr: any) {
+        console.warn("Firebase login notice:", fbErr?.message || fbErr);
+      }
+
+      const serverUser = await exchangeServerSession({
+        mode: idToken ? "firebase" : "login",
+        idToken: idToken || undefined,
         email: trimmedEmail,
         password,
       });
-      if (error) throw error;
-      if (!data.user || !data.session) throw new Error("Could not retrieve user session.");
 
-      const profile = await ensureUserProfile(data.user);
-      const appUser = mapProfileToAppUser(data.user, profile);
-      const serverSynced = await exchangeServerSession({
-        mode: "supabase",
-        accessToken: data.session.access_token,
-      });
-      onAuthenticated(
-        {
-          ...appUser,
-          role: serverSynced.role,
-          isMainAdmin: serverSynced.isMainAdmin,
-          permissions: serverSynced.permissions,
-          authorizedCourses: serverSynced.authorizedCourses,
-        },
-        "Supabase Email Login"
-      );
+      const mergedUser: User = {
+        ...serverUser,
+        phone_number: phoneNumber.trim() || serverUser.phone_number,
+        subscription_status: serverUser.subscription_status || "free",
+        plan_name: serverUser.plan_name || "Kenya Hub Member",
+        credits: serverUser.credits ?? 50,
+        readingStreak: 1,
+        dailyGoalMinutes: 30,
+      };
+
+      (onDemoFallbackLogin || onAuthenticated)(mergedUser, "Account Sign-In");
     } catch (err: any) {
-      setErrorMsg(err?.message || "Authentication failed. Please verify your details.");
+      setErrorMsg(err?.message || "Authentication failed. Please verify your email and password.");
     } finally {
       setIsLoading(false);
     }
@@ -268,23 +243,23 @@ export default function AuthScreen({
     setIsLoading(true);
 
     try {
-      if (isSupabaseConfigured && supabase) {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: window.location.origin,
-          },
-        });
-        if (error) throw error;
-        return;
-      }
-
-      // Firebase Authentication Google Sign-In connected to /api/auth/session
       const { user, idToken } = await firebaseGoogleSignIn();
       const verifiedUser = await exchangeServerSession({
         mode: "firebase",
         idToken,
       });
+      await syncUserSession(
+        user.uid,
+        user.email || verifiedUser.email,
+        user.displayName || verifiedUser.name,
+        user.photoURL || undefined
+      );
+      void logUserActivity(
+        user.email || verifiedUser.email,
+        user.displayName || verifiedUser.name,
+        "Google Sign-In",
+        "Authenticated via Google Sign-In with Firebase Auth"
+      );
       onAuthenticated(
         {
           ...verifiedUser,
@@ -303,6 +278,7 @@ export default function AuthScreen({
       setIsLoading(false);
     }
   };
+
 
   const handleQuickDemoAccess = async () => {
     setErrorMsg("");
@@ -484,51 +460,11 @@ export default function AuthScreen({
               </div>
             </div>
 
-            {/* Supported Payment & Storage Providers */}
-            <div className="rounded-xl border border-[#E7E1D8] bg-[#F7F4EE] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 text-[#1F1B18] font-semibold">
-                <CreditCard className="h-4 w-4 text-[#A8421B]" />
-                <span>Payments &amp; Cloud Storage Ready</span>
-              </div>
-              <div className="flex flex-wrap gap-2 text-[11px] text-[#6E655E]">
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-[#E7E1D8]">
-                  <Smartphone className="h-3 w-3 text-[#2E7D32]" />
-                  Safaricom M-Pesa STK (KES)
-                </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-[#E7E1D8]">
-                  <CreditCard className="h-3 w-3 text-[#A8421B]" />
-                  Paystack Cards &amp; Mobile Money
-                </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-[#E7E1D8]">
-                  <HardDrive className="h-3 w-3 text-[#1F1B18]" />
-                  Supabase Vault &amp; Offline IndexedDB
-                </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-[#E7E1D8]">
-                  <BookOpen className="h-3 w-3 text-[#A8421B]" />
-                  66-Book NIV Bible Included
-                </span>
-              </div>
-            </div>
+
           </section>
 
           {/* RIGHT: Clean Sign-In / Registration Card */}
           <section className="lg:col-span-5 space-y-4">
-            {!isSupabaseConfigured && (
-              <div className="rounded-xl border border-[#E7C6B6] bg-[#FBF1EB] p-3.5 text-left text-xs text-[#5E2812] flex items-start gap-2.5">
-                <AlertTriangle className="h-4 w-4 text-[#A8421B] shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <p className="font-semibold text-[11px] uppercase tracking-wider text-[#A8421B]">
-                    Firebase Connected ({firebaseConfigInfo.projectId}) · Supabase Setup Needed
-                  </p>
-                  <p className="text-[11px] leading-relaxed">
-                    Firebase Auth and Cloud Firestore are active. Add{" "}
-                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_URL</code> and{" "}
-                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> (or{" "}
-                    <code className="bg-white/70 px-1 rounded">VITE_SUPABASE_ANON_KEY</code>) to connect Supabase Auth and storage.
-                  </p>
-                </div>
-              </div>
-            )}
 
             <div className="w-full bg-white border border-[#E7E1D8] rounded-2xl p-6 sm:p-7 shadow-sm">
               <div className="flex items-center gap-3 pb-5 mb-5 border-b border-[#E7E1D8] text-left">
@@ -805,7 +741,7 @@ export default function AuthScreen({
                 </>
               )}
 
-              {!isSupabaseConfigured && mode !== "admin" && (
+              {mode !== "admin" && (
                 <button
                   type="button"
                   onClick={handleQuickDemoAccess}

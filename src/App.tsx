@@ -12,10 +12,12 @@ import {
   fetchAppSettingsFromFirestore,
   fetchBookOrdersFromFirestore, saveBookOrderToFirestore, deleteBookOrderFromFirestore,
   saveNotificationToFirestore,
-  logUserActivity
+  logUserActivity,
+  handleFirestoreError,
+  OperationType
 } from "./lib/firestoreUtils";
-import { auth, googleSignIn, googleLogout, db, testConnection } from "./lib/firebase";
-import { collection, onSnapshot } from "firebase/firestore";
+import { auth, firebaseGoogleSignIn, googleLogout, db, testConnection } from "./lib/firebase";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 
 // Sub-components
@@ -27,31 +29,27 @@ import DocStudio from "./components/DocStudio";
 import AIChat from "./components/AIChat";
 import Community from "./components/Community";
 import Contact from "./components/Contact";
-import AdminPanel from "./components/AdminPanel";
 import Dashboard from "./components/Dashboard";
 import GmailConsole from "./components/GmailConsole";
 import BookThreedViewer from "./components/BookThreedViewer";
-import PlayStoreHub from "./components/PlayStoreHub";
 import OfflineDictionary from "./components/OfflineDictionary";
-import WebsiteCenter from "./components/WebsiteCenter";
-import MpesaApiConsole from "./components/MpesaApiConsole";
 import Announcements from "./components/Announcements";
 import SermonsMotivation from "./components/SermonsMotivation";
 import CertificateVerificationView from "./components/CertificateVerificationView";
 import AuthScreen from "./components/AuthScreen";
 import UpgradeModal from "./components/UpgradeModal";
-import ManagerPortal from "./components/ManagerPortal";
-import CampusesMap from "./components/CampusesMap";
 import ProfessionalHub from "./components/ProfessionalHub";
-import ZionVirtualClassroom from "./components/ZionVirtualClassroom";
 import AITutorStudio from "./components/AITutorStudio";
 import BibleSchoolEnvironment from "./components/BibleSchoolEnvironment";
-import EvangelismMinistryForum from "./components/EvangelismMinistryForum";
+import EvangelismMissionsDashboard from "./components/EvangelismMissionsDashboard";
+import ZionCampus3DView from "./components/ZionCampus3DView";
+import ZionDesignSystemViewer from "./components/ZionDesignSystemViewer";
+import ZionSettingsPanel from "./components/ZionSettingsPanel";
+import ZionAdminPortal from "./components/ZionAdminPortal";
 import { BOOKS_DEFAULT_COVER } from "./lib/showcase";
 import { secureApiFetch, setSessionToken } from "./lib/aiClient";
+import { syncSqlProfile } from "./lib/sqlClient";
 import {
-  supabase,
-  isSupabaseConfigured,
   isPaystackConfigured,
   ensureUserProfile,
   mapProfileToAppUser,
@@ -113,7 +111,7 @@ export default function App() {
 
   // Global application brand and custom themes configuration settings
   const [globalSettings, setGlobalSettings] = useState<AppSettings>({
-    primaryColor: "#3B82F6",
+    primaryColor: "#A8421B",
     fontSizeMultiplier: 1.0,
     customLogoUrl: ""
   });
@@ -160,7 +158,17 @@ export default function App() {
     const handleCustomNavigation = (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail && customEvent.detail.view) {
-        const viewStr = customEvent.detail.view;
+        const rawView = String(customEvent.detail.view);
+        const viewStr =
+          rawView === "mpesa-api"
+            ? "admin"
+            : rawView === "virtual-classroom"
+            ? "school"
+            : rawView === "campuses-map"
+            ? "3d-campus"
+            : ["website-center", "playstore-hub", "zion-quest"].includes(rawView)
+            ? "store"
+            : rawView;
         setCurrentView((cur) => {
           if (viewStr === cur) return cur;
           setViewHistory((prev) => {
@@ -174,16 +182,6 @@ export default function App() {
     window.addEventListener("WAFULA_NAVIGATE", handleCustomNavigation);
     return () => {
       window.removeEventListener("WAFULA_NAVIGATE", handleCustomNavigation);
-    };
-  }, []);
-
-  // Google Maps quota defense state & event listener
-  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
-  useEffect(() => {
-    const handleQuotaExceeded = () => setGmpQuotaExceeded(true);
-    window.addEventListener("gmp-quota-exceeded", handleQuotaExceeded);
-    return () => {
-      window.removeEventListener("gmp-quota-exceeded", handleQuotaExceeded);
     };
   }, []);
 
@@ -229,15 +227,22 @@ export default function App() {
 
 
   // View state history routing (respects /admin, /manager-portal, and ?view=...)
+  const normalizeView = (v: string): string => {
+    if (v === "mpesa-api") return "admin";
+    if (v === "virtual-classroom") return "school";
+    if (v === "campuses-map") return "3d-campus";
+    if (["website-center", "playstore-hub", "zion-quest"].includes(v)) return "store";
+    return v;
+  };
   const [currentView, setCurrentView] = useState<string>(() => {
     if (typeof window !== "undefined") {
       const p = window.location.pathname.toLowerCase();
       if (p.startsWith("/admin")) return "admin";
       if (p.startsWith("/manager-portal")) return "manager-portal";
       const qView = new URLSearchParams(window.location.search).get("view");
-      if (qView) return qView;
+      if (qView) return normalizeView(qView);
     }
-    return localStorage.getItem("WAFULA_CURRENT_VIEW") || "store";
+    return normalizeView(localStorage.getItem("WAFULA_CURRENT_VIEW") || "store");
   });
   const [initialBookId, setInitialBookId] = useState<string | null>(null);
   const [viewHistory, setViewHistory] = useState<string[]>(() => {
@@ -360,127 +365,102 @@ export default function App() {
       return false;
     };
 
-    if (!isSupabaseConfigured || !supabase) {
-      (async () => {
-        const restored = await verifyServerCookieSession();
-        if (!mounted) return;
-        if (restored) {
-          setIsCheckingAuth(false);
-          return;
-        }
-
-        // Check if Firebase Auth has an active persisted user session
-        try {
-          if (typeof auth.authStateReady === "function") {
-            await auth.authStateReady();
-          }
-          if (mounted && auth.currentUser) {
-            const idToken = await auth.currentUser.getIdToken();
-            const fbRes = await secureApiFetch("/api/auth/session", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ mode: "firebase", idToken }),
-            });
-            const fbData = await fbRes.json().catch(() => ({}));
-            if (mounted && fbRes.ok && fbData?.success && fbData?.user) {
-              if (fbData.sessionToken) setSessionToken(fbData.sessionToken);
-              setCurrentUser(fbData.user);
-              localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(fbData.user));
-              setCookie("WAFULA_CURRENT_USER", JSON.stringify(fbData.user), 7);
-              recordUserSession(fbData.user, "Firebase Session");
-              syncOrdersFromServer();
-              setIsCheckingAuth(false);
-              return;
-            }
-          }
-        } catch {
-          // Non-fatal fallback
-        }
-
-        if (!mounted) return;
-        // Never auto-promote unverified local cache to admin/manager
-        const cookieUser = getCookie("WAFULA_CURRENT_USER");
-        const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
-        if (savedUser) {
-          try {
-            const parsed = JSON.parse(savedUser);
-            if (parsed && ["admin", "main_admin", "sub_admin", "manager"].includes(parsed.role)) {
-              parsed.role = "member";
-              delete parsed.permissions;
-              delete parsed.isMainAdmin;
-            }
-            setCurrentUser(parsed);
-          } catch {
-            setCurrentUser(null);
-          }
-        } else {
-          setCurrentUser(null);
-        }
-        setIsCheckingAuth(false);
-      })();
-      return () => {
-        mounted = false;
-      };
-    }
-
-    const hydrateSupabaseUser = async (session: any) => {
-      const sessionUser = session?.user;
+    (async () => {
+      const restored = await verifyServerCookieSession();
       if (!mounted) return;
-      if (!sessionUser) {
-        setCurrentUser(null);
-        setSessionToken(null);
+      if (restored) {
         setIsCheckingAuth(false);
         return;
       }
-      const profile = await ensureUserProfile(sessionUser);
-      let appUser = mapProfileToAppUser(sessionUser, profile);
-      if (session?.access_token) {
-        try {
-          const syncRes = await secureApiFetch("/api/auth/session", {
+
+      // Check if Firebase Auth has an active persisted user session
+      try {
+        if (typeof auth.authStateReady === "function") {
+          await auth.authStateReady();
+        }
+        if (mounted && auth.currentUser) {
+          const idToken = await auth.currentUser.getIdToken();
+          const fbRes = await secureApiFetch("/api/auth/session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: "supabase", accessToken: session.access_token }),
+            body: JSON.stringify({ mode: "firebase", idToken }),
           });
-          const syncData = await syncRes.json().catch(() => ({}));
-          if (syncRes.ok && syncData?.success && syncData?.user) {
-            if (syncData.sessionToken) setSessionToken(syncData.sessionToken);
-            appUser = {
-              ...appUser,
-              role: syncData.user.role,
-              isMainAdmin: syncData.user.isMainAdmin,
-              permissions: syncData.user.permissions,
-              authorizedCourses: syncData.user.authorizedCourses,
-            };
+          const fbData = await fbRes.json().catch(() => ({}));
+          if (mounted && fbRes.ok && fbData?.success && fbData?.user) {
+            if (fbData.sessionToken) setSessionToken(fbData.sessionToken);
+            setCurrentUser(fbData.user);
+            localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(fbData.user));
+            setCookie("WAFULA_CURRENT_USER", JSON.stringify(fbData.user), 7);
+            recordUserSession(fbData.user, "Firebase Session");
+            syncOrdersFromServer();
+            setIsCheckingAuth(false);
+            return;
           }
-        } catch {
-          // Non-fatal in preview
         }
+      } catch {
+        // Non-fatal fallback
       }
+
       if (!mounted) return;
-      setCurrentUser(appUser);
-      localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(appUser));
-      setCookie("WAFULA_CURRENT_USER", JSON.stringify(appUser), 7);
-      recordUserSession(appUser, "Supabase Session");
-      syncOrdersFromServer();
+      // Fallback local cookie / cache verification
+      const cookieUser = getCookie("WAFULA_CURRENT_USER");
+      const savedUser = cookieUser || localStorage.getItem("WAFULA_CURRENT_USER");
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (parsed && ["admin", "main_admin", "sub_admin", "manager"].includes(parsed.role)) {
+            parsed.role = "member";
+            delete parsed.permissions;
+            delete parsed.isMainAdmin;
+          }
+          setCurrentUser(parsed);
+        } catch {
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
       setIsCheckingAuth(false);
-    };
+    })();
 
-    supabase.auth
-      .getSession()
-      .then(({ data }) => hydrateSupabaseUser(data?.session || null))
-      .catch(() => {
-        if (mounted) setIsCheckingAuth(false);
-      });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      hydrateSupabaseUser(session || null);
+    // Listen to Firebase auth state changes in real-time
+    const unsubscribeAuth = auth.onAuthStateChanged(async (fbUser) => {
+      if (!mounted) return;
+      if (fbUser) {
+        try {
+          const idToken = await fbUser.getIdToken();
+          const fbRes = await secureApiFetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "firebase", idToken }),
+          });
+          const fbData = await fbRes.json().catch(() => ({}));
+          if (mounted && fbRes.ok && fbData?.success && fbData?.user) {
+            if (fbData.sessionToken) setSessionToken(fbData.sessionToken);
+            const enrichedUser: User = {
+              ...fbData.user,
+              avatarUrl: fbUser.photoURL || fbData.user.avatarUrl,
+            };
+            setCurrentUser(enrichedUser);
+            localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(enrichedUser));
+            setCookie("WAFULA_CURRENT_USER", JSON.stringify(enrichedUser), 7);
+            recordUserSession(enrichedUser, "Firebase Session");
+            syncUserSession(
+              fbUser.uid,
+              fbUser.email || enrichedUser.email,
+              fbUser.displayName || enrichedUser.name,
+              fbUser.photoURL || undefined
+            ).catch(() => {});
+            void syncSqlProfile();
+            syncOrdersFromServer();
+          }
+        } catch {}
+      }
     });
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      unsubscribeAuth();
     };
   }, []);
 
@@ -632,7 +612,7 @@ export default function App() {
 
   // Listen in real-time to administrative broadcasts & free book releases
   useEffect(() => {
-    if (!isOnline) return;
+    if (!isOnline || !auth.currentUser || !currentUser || currentUser.role === "guest") return;
     try {
       const q = collection(db, "notifications");
       const unSub = onSnapshot(q, (snapshot) => {
@@ -652,13 +632,13 @@ export default function App() {
           localStorage.setItem("WAFULA_BROADCAST", latestBanner);
         }
       }, (err) => {
-        console.warn("Offline or permission restricted on notifications syncing.");
+        console.warn("Notifications listener notice:", err?.message || err);
       });
       return () => unSub();
     } catch (e) {
       console.warn("Failed initializing notifications listener:", e);
     }
-  }, [isOnline]);
+  }, [isOnline, currentUser?.id, currentUser?.role]);
 
   // Key background helper to cache shared/uploaded base64 book contents locally
   const saveBase64PdfToIndexedDb = (bookId: string, base64Url: string) => {
@@ -694,8 +674,13 @@ export default function App() {
   // Hybrid Online/Offline Books Bidirectional Synchronization Engine with Real-time Firestore Sync
   useEffect(() => {
     if (!isOnline) return;
+    const isBookAdmin = Boolean(
+      currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role)
+    );
     try {
-      const q = collection(db, "books");
+      const q = isBookAdmin
+        ? collection(db, "books")
+        : query(collection(db, "books"), where("status", "==", "active"));
       const unSub = onSnapshot(q, (snapshot) => {
         const remoteBooks: Book[] = [];
 
@@ -703,14 +688,12 @@ export default function App() {
           const b = { ...docSnap.data() } as Book;
           const isMockId = ["b1", "b2", "b3", "b15", "unit_01", "unit_02", "unit_03", "unit_04", "unit_05", "unit_06", "theology_infinite_volume_supplement_for_1mb_compliance"].includes(b.id) || b.id.startsWith("unit_") || b.id.startsWith("b1") || b.id.startsWith("b2") || b.id.startsWith("b3");
           if (isMockId) {
-            deleteBookFromFirestore(b.id).catch(() => {});
+            if (isBookAdmin) deleteBookFromFirestore(b.id).catch(() => {});
             return;
           }
           
           if (b.pdfUrl && b.pdfUrl.startsWith("data:application/pdf;base64,")) {
-            // Background save the heavy PDF to IndexedDB for offline capability
             saveBase64PdfToIndexedDb(b.id, b.pdfUrl);
-            // Replace with indexeddb references for local storage to prevent saturation crashes
             b.pdfUrl = "indexeddb://" + b.id;
           }
           remoteBooks.push(b);
@@ -720,25 +703,14 @@ export default function App() {
           setBooks((prev) => {
             const localBooks = [...prev];
             const currentRemoteIds = new Set(remoteBooks.map(b => b.id));
-            
-            // Filter out books that were deleted from the remote database.
-            // A book is considered deleted on remote if:
-            // 1. It is not present in remoteBooks (remoteIds does not have it)
-            // 2. AND it has already been synced before (isSynced is not false)
             const keptLocalBooks = localBooks.filter(lb => {
               const isRemotePresent = currentRemoteIds.has(lb.id);
               if (isRemotePresent) return true;
               if (lb.isSynced === false) return true;
               return false;
             });
-
-            // Detect any book records that exist ONLY locally and need syncing (isSynced === false)
             const localOnly = keptLocalBooks.filter(lb => !currentRemoteIds.has(lb.id) && lb.isSynced === false);
-            
-            // Preserve local IndexedDB/blob PDF references when merging remote book updates
             const localById = new Map(localBooks.map((lb) => [lb.id, lb]));
-
-            // Since remoteBooks are authoritative, mark them as isSynced: true while keeping live local PDF pointers
             const markedRemoteBooks = remoteBooks.map((rb) => {
               const localMatch = localById.get(rb.id);
               const keepLocalPdf =
@@ -753,45 +725,43 @@ export default function App() {
             });
 
             const merged = [...localOnly, ...markedRemoteBooks];
-            
-            // Unique-ify array to prevent duplicate IDs
             const map = new Map<string, Book>();
             merged.forEach(b => map.set(b.id, b));
             const finalBooks = Array.from(map.values());
-            
             safeSetLocalStorage("WAFULA_BOOKS", JSON.stringify(finalBooks));
-            
-            // Instantly push local-only additions up to the live Firestore collection
-            localOnly.forEach((lb) => {
-              const sanitizedBook = { ...lb, isSynced: true };
-              saveBookToFirestore(sanitizedBook)
-                .then(() => {
-                  setBooks(current => current.map(item => item.id === lb.id ? { ...item, isSynced: true } : item));
-                  const saved = localStorage.getItem("WAFULA_BOOKS");
-                  if (saved) {
-                    const parsed = JSON.parse(saved) as Book[];
-                    const updated = parsed.map(item => item.id === lb.id ? { ...item, isSynced: true } : item);
-                    localStorage.setItem("WAFULA_BOOKS", JSON.stringify(updated));
-                  }
-                  recordSyncEvent({
-                    title: "Books uploaded",
-                    detail: `Uploaded offline book "${lb.title}" to cloud library`,
-                    category: "books",
-                    status: "synced",
-                    itemCount: 1,
+
+            if (isBookAdmin) {
+              localOnly.forEach((lb) => {
+                const sanitizedBook = { ...lb, isSynced: true };
+                saveBookToFirestore(sanitizedBook)
+                  .then(() => {
+                    setBooks(current => current.map(item => item.id === lb.id ? { ...item, isSynced: true } : item));
+                    const saved = localStorage.getItem("WAFULA_BOOKS");
+                    if (saved) {
+                      const parsed = JSON.parse(saved) as Book[];
+                      const updated = parsed.map(item => item.id === lb.id ? { ...item, isSynced: true } : item);
+                      localStorage.setItem("WAFULA_BOOKS", JSON.stringify(updated));
+                    }
+                    recordSyncEvent({
+                      title: "Books uploaded",
+                      detail: `Uploaded offline book "${lb.title}" to cloud library`,
+                      category: "books",
+                      status: "synced",
+                      itemCount: 1,
+                    });
+                  })
+                  .catch((err) => {
+                    console.warn(`Firestore sync upload failed for offline-added book: ${lb.title}`, err);
+                    recordSyncEvent({
+                      title: "Books queued offline",
+                      detail: `Kept "${lb.title}" queued for retry`,
+                      category: "books",
+                      status: "queued",
+                      itemCount: 1,
+                    });
                   });
-                })
-                .catch((err) => {
-                  console.warn(`Firestore sync upload failed for offline-added book: ${lb.title}`, err);
-                  recordSyncEvent({
-                    title: "Books queued offline",
-                    detail: `Kept "${lb.title}" queued for retry`,
-                    category: "books",
-                    status: "queued",
-                    itemCount: 1,
-                  });
-                });
-            });
+              });
+            }
 
             recordSyncEvent({
               title: "Books synced",
@@ -803,8 +773,7 @@ export default function App() {
             
             return finalBooks;
           });
-        } else {
-          // If Firestore contains zero books, we seed all of our INITIAL_BOOKS globally so everyone gets them
+        } else if (isBookAdmin) {
           console.log("Firestore books cache is empty. Seeding INITIAL_BOOKS globally for all users...");
           INITIAL_BOOKS.forEach((ib) => {
             const sanitizedBook = { ...ib, isSynced: true };
@@ -821,13 +790,13 @@ export default function App() {
           });
         }
       }, (error) => {
-        console.warn("Firestore real-time books sync error, offline, or restricted:", error);
+        console.warn("Firestore real-time books sync notice:", error?.message || error);
       });
       return () => unSub();
     } catch (e) {
       console.warn("Failed initializing books real-time subscription:", e);
     }
-  }, [isOnline]);
+  }, [isOnline, currentUser?.role]);
 
   // Hybrid Online/Offline Upload Requests Bidirectional Synchronization Engine
   useEffect(() => {
@@ -1031,14 +1000,22 @@ export default function App() {
         })
     );
 
-    // 2. Sync Saved Documents
-    const targetUserId = currentUser?.email || "guest_academic";
-    tasks.push(
-      fetchSavedDocumentsFromFirestore(targetUserId)
+    // 2. Sync Saved Documents (only when authenticated with Firebase Auth)
+    const targetUserId = auth.currentUser?.uid || currentUser?.id;
+    if (auth.currentUser && targetUserId) {
+      tasks.push(
+        fetchSavedDocumentsFromFirestore(targetUserId)
         .then((remoteDocs) => {
           setSavedDocuments((prevDocs) => {
             const remoteIds = new Set((remoteDocs || []).map((d) => d.id));
-            const pendingUpload = prevDocs.filter((d) => !remoteIds.has(d.id));
+            const pendingUpload = prevDocs.filter(
+              (d) =>
+                auth.currentUser &&
+                (d.userId === auth.currentUser.uid || d.userId === auth.currentUser.email) &&
+                !remoteIds.has(d.id) &&
+                !d.id.startsWith("doc_sample_") &&
+                !d.id.startsWith("d_")
+            );
 
             if (pendingUpload.length > 0) {
               pendingUpload.forEach((d) => {
@@ -1071,7 +1048,8 @@ export default function App() {
         .catch((err) => {
           console.warn("Automated documents metadata sync fetch failed:", err);
         })
-    );
+      );
+    }
 
     // 3. Sync Offline Community Chat Messages
     tasks.push(
@@ -1079,7 +1057,13 @@ export default function App() {
         .then((remoteMsgs) => {
           setCommunityMessages((prevMsgs) => {
             const remoteIds = new Set((remoteMsgs || []).map((m) => m.id));
-            const pendingUpload = prevMsgs.filter((m) => !remoteIds.has(m.id));
+            const pendingUpload = prevMsgs.filter(
+              (m) =>
+                auth.currentUser &&
+                (m.userId === auth.currentUser.uid || m.userId === auth.currentUser.email) &&
+                !remoteIds.has(m.id) &&
+                !m.id.startsWith("msg_")
+            );
 
             if (pendingUpload.length > 0) {
               pendingUpload.forEach((m) => {
@@ -1115,7 +1099,13 @@ export default function App() {
         .then((remoteRequests) => {
           setUploadRequests((prevRequests) => {
             const remoteIds = new Set((remoteRequests || []).map((r) => r.id));
-            const pendingUpload = prevRequests.filter((r) => !remoteIds.has(r.id));
+            const pendingUpload = prevRequests.filter(
+              (r) =>
+                auth.currentUser &&
+                (r.userId === auth.currentUser.uid || r.userId === auth.currentUser.email) &&
+                !remoteIds.has(r.id) &&
+                !r.id.startsWith("upl_")
+            );
 
             if (pendingUpload.length > 0) {
               pendingUpload.forEach((r) => {
@@ -1186,14 +1176,14 @@ export default function App() {
 
     // 6. Sync any offline-queued Supabase Storage Vault files if configured & signed in
     const vaultOwner = currentUser?.id || currentUser?.email;
-    if (isSupabaseConfigured && vaultOwner) {
+    if (vaultOwner) {
       tasks.push(
         syncLocalVaultFilesToSupabase(vaultOwner)
           .then((syncedCount) => {
             if (syncedCount > 0) {
               recordSyncEvent({
-                title: "Supabase Storage synced",
-                detail: `Synchronized ${syncedCount} private vault files to Supabase Storage`,
+                title: "Storage Vault synced",
+                detail: `Synchronized ${syncedCount} private vault files to cloud storage`,
                 category: "uploads",
                 status: "synced",
                 itemCount: syncedCount,
@@ -1316,31 +1306,44 @@ export default function App() {
   const handleGoogleMockLogin = async () => {
     try {
       setAuthError("");
-      const res = await googleSignIn();
-      if (res?.user) {
-        const idToken = await res.user.getIdToken();
-        const verifyRes = await secureApiFetch("/api/auth/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "firebase", idToken }),
-        });
-        const verifyData = await verifyRes.json().catch(() => ({}));
-        if (!verifyRes.ok || !verifyData?.success || !verifyData?.user) {
-          throw new Error(verifyData?.error || "Server rejected Google token verification.");
-        }
-        if (verifyData.sessionToken) {
-          setSessionToken(verifyData.sessionToken);
-        }
-        const userProfile = verifyData.user as User;
-        setCurrentUser(userProfile);
-        localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(userProfile));
-        setCookie("WAFULA_CURRENT_USER", JSON.stringify(userProfile), 7);
-        recordUserSession(userProfile, "Verified Google Account");
-        syncOrdersFromServer();
-        setShowAuthModal(false);
+      const { user, idToken } = await firebaseGoogleSignIn();
+      const verifyRes = await secureApiFetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "firebase", idToken }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok || !verifyData?.success || !verifyData?.user) {
+        throw new Error(verifyData?.error || "Server rejected Google token verification.");
       }
+      if (verifyData.sessionToken) {
+        setSessionToken(verifyData.sessionToken);
+      }
+      const userProfile: User = {
+        ...(verifyData.user as User),
+        avatarUrl: user.photoURL || (verifyData.user as User).avatarUrl,
+      };
+      await syncUserSession(
+        user.uid,
+        user.email || userProfile.email,
+        user.displayName || userProfile.name,
+        user.photoURL || undefined
+      );
+      void logUserActivity(
+        user.email || userProfile.email,
+        user.displayName || userProfile.name,
+        "Google Sign-In",
+        "Signed in with Google Firebase Auth"
+      );
+      setCurrentUser(userProfile);
+      localStorage.setItem("WAFULA_CURRENT_USER", JSON.stringify(userProfile));
+      setCookie("WAFULA_CURRENT_USER", JSON.stringify(userProfile), 7);
+      recordUserSession(userProfile, "Firebase Google Sign-In");
+      void syncSqlProfile();
+      syncOrdersFromServer();
+      setShowAuthModal(false);
     } catch (error: any) {
-      setAuthError(error?.message || "Google sign-in unavailable. Please sign in with verified email credentials.");
+      setAuthError(error?.message || "Google sign-in unavailable. Please allow popups or sign in with email credentials.");
     }
   };
 
@@ -1381,9 +1384,6 @@ export default function App() {
     }
     try {
       await secureApiFetch("/api/auth/logout", { method: "POST" });
-      if (isSupabaseConfigured && supabase) {
-        await supabase.auth.signOut();
-      }
       await googleLogout();
       await auth.signOut();
     } catch (_) {}
@@ -1394,7 +1394,8 @@ export default function App() {
   };
 
   // View navigator with history trace tracking and URL synchronization
-  const navigateTo = (viewStr: string) => {
+  const navigateTo = (rawView: string) => {
+    const viewStr = normalizeView(rawView);
     if (typeof window !== "undefined") {
       const targetUrl =
         viewStr === "admin"
@@ -1702,22 +1703,20 @@ export default function App() {
       const folder = type === "photo" ? "images" : "documents";
       uploadUserFile(ownerId, actualFile, folder)
         .then((res) => {
-          const storageRef = `supabase://user-uploads/${res.path}`;
+          const storageRef = res.path;
           setUploadRequests((prev) => {
             const next = prev.map((u) => (u.id === fileId ? { ...u, contentUrl: storageRef } : u));
             safeSetLocalStorage("WAFULA_MEMBER_UPLOADS", JSON.stringify(next));
             return next;
           });
           saveUploadRequestToFirestore({ ...fresh, contentUrl: storageRef }).catch(() => {});
-          if (res.storageBackend === "supabase") {
-            recordSyncEvent({
-              title: "Supabase Storage synced",
-              detail: `Backed up "${titleStr}" to Supabase Storage bucket`,
-              category: "uploads",
-              status: "synced",
-              itemCount: 1,
-            });
-          }
+          recordSyncEvent({
+            title: "Storage Vault synced",
+            detail: `Backed up "${titleStr}" to storage vault`,
+            category: "uploads",
+            status: "synced",
+            itemCount: 1,
+          });
         })
         .catch(() => {});
 
@@ -2435,39 +2434,8 @@ export default function App() {
         onToggleSleekMode={handleToggleSleekMode}
       />
 
-      {/* Main interactive window viewport - Responsive pl matching desktop sidebar layout */}
-      <main className="flex-grow lg:pl-52 pt-3 md:pt-4 pb-24 lg:pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col safe-area-x">
-        {(!isSupabaseConfigured || !isPaystackConfigured) && !dismissedSetupBanner && (
-          <div className="mx-3 sm:mx-4 mb-3 rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/50 dark:border-amber-700/60 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left text-xs text-amber-950 dark:text-amber-100 shadow-xs">
-            <div className="space-y-0.5">
-              <p className="font-black text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-300">
-                Firebase Connected · External Keys Pending
-              </p>
-              <p className="text-[11px] leading-relaxed">
-                {!isSupabaseConfigured && "Supabase env vars (VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY) "}
-                {!isSupabaseConfigured && !isPaystackConfigured && "and "}
-                {!isPaystackConfigured && "Paystack key (VITE_PAYSTACK_PUBLIC_KEY) "}
-                are not set yet. Firebase Firestore sync remains active while unconfigured services stay in local mode.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowUpgradeModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase cursor-pointer"
-              >
-                Test KES Billing
-              </button>
-              <button
-                type="button"
-                onClick={() => setDismissedSetupBanner(true)}
-                className="px-2.5 py-1.5 rounded-lg border border-amber-400/50 text-amber-900 dark:text-amber-200 font-bold text-[10px] uppercase cursor-pointer"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
+      {/* Main interactive window viewport */}
+      <main className="flex-grow pt-3 md:pt-4 pb-24 lg:pb-14 min-h-[calc(100vh-4rem)] w-full max-w-full overflow-x-hidden flex flex-col safe-area-x">
 
         {broadcastAnnouncement && !isBannerClosed && (
           <div className="mx-3 sm:mx-4 mb-4 md:mb-6 relative overflow-hidden bg-gradient-to-r from-red-700 via-rose-700 to-amber-600 text-white rounded-2xl p-3 sm:p-4 shadow-md flex items-center justify-between gap-2.5 sm:gap-4 animate-fade-in border border-rose-500/25">
@@ -2483,24 +2451,6 @@ export default function App() {
             <button
               onClick={() => setIsBannerClosed(true)}
               className="p-1 px-1.5 sm:px-2 hover:bg-white/10 rounded-lg text-white font-mono text-[9px] sm:text-[10px] uppercase font-bold transition shrink-0 active:scale-95 border border-white/20 bg-white/5 cursor-pointer"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
-        {gmpQuotaExceeded && (
-          <div className="mx-3 sm:mx-4 mb-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/60 p-3.5 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="text-base">🗺️</span>
-              <div>
-                <p className="font-bold">Google Maps preview mode active</p>
-                <p className="text-[11px] opacity-90">Interactive maps API quota limit reached. Campus coordinates, addresses, and external navigation links remain fully accessible.</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setGmpQuotaExceeded(false)}
-              className="px-2.5 py-1 rounded-md text-[10px] font-bold border border-amber-400 dark:border-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer shrink-0"
             >
               Dismiss
             </button>
@@ -2533,31 +2483,6 @@ export default function App() {
                 initialBookId={initialBookId}
                 onClearInitialBookId={() => setInitialBookId(null)}
               />
-            )}
-
-            {currentView === "mpesa-api" && (
-              (["admin", "main_admin", "manager"].includes(currentUser.role) || currentUser.permissions?.allowConfirmPayments) ? (
-                <MpesaApiConsole
-                  currentUser={currentUser}
-                  books={books}
-                  onUnlockBookManual={(_bookId) => {
-                    syncOrdersFromServer();
-                  }}
-                />
-              ) : (
-                <div className="max-w-lg mx-auto mt-12 p-8 rounded-3xl border border-rose-500/30 bg-rose-950/15 text-center space-y-4">
-                  <h2 className="text-xl font-black text-rose-500">403 — Finance Access Restricted</h2>
-                  <p className="text-xs text-slate-600 dark:text-slate-300">
-                    Only finance administrators or authorized managers can access payment confirmation controls.
-                  </p>
-                  <button
-                    onClick={() => navigateTo("store")}
-                    className="px-5 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold uppercase cursor-pointer"
-                  >
-                    Return to Store
-                  </button>
-                </div>
-              )
             )}
 
             {currentView === "sermons-motivation" && (
@@ -2615,14 +2540,6 @@ export default function App() {
               />
             )}
 
-            {currentView === "playstore-hub" && (
-              <PlayStoreHub />
-            )}
-
-            {currentView === "website-center" && (
-              <WebsiteCenter />
-            )}
-
             {currentView === "announcements" && (
               <Announcements
                 currentUser={currentUser}
@@ -2661,22 +2578,28 @@ export default function App() {
             )}
 
             {currentView === "dashboard" && (
-              <Dashboard
-                currentUser={currentUser}
-                onLogIn={handleLogIn}
-                onOpenUpgrade={() => setShowUpgradeModal(true)}
-                books={books}
-                purchasedBookIds={purchasedBookIds}
-                wishlistBookIds={wishlistBookIds}
-                unlockedBadgeIds={unlockedBadgeIds}
-                savedDocuments={savedDocuments}
-                uploadRequests={uploadRequests}
-                communityMessages={communityMessages}
-                onRemoveWishlist={handleToggleWishlist}
-                onAddNewDocument={handleAddNewDocument}
-                isOnline={effectiveIsOnline}
-                onTriggerSync={runBackgroundSync}
-              />
+              <div
+                id="main_app_dashboard_grid"
+                className="w-full"
+                style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}
+              >
+                <Dashboard
+                  currentUser={currentUser}
+                  onLogIn={handleLogIn}
+                  onOpenUpgrade={() => setShowUpgradeModal(true)}
+                  books={books}
+                  purchasedBookIds={purchasedBookIds}
+                  wishlistBookIds={wishlistBookIds}
+                  unlockedBadgeIds={unlockedBadgeIds}
+                  savedDocuments={savedDocuments}
+                  uploadRequests={uploadRequests}
+                  communityMessages={communityMessages}
+                  onRemoveWishlist={handleToggleWishlist}
+                  onAddNewDocument={handleAddNewDocument}
+                  isOnline={effectiveIsOnline}
+                  onTriggerSync={runBackgroundSync}
+                />
+              </div>
             )}
 
             {currentView === "verify" && (
@@ -2686,21 +2609,13 @@ export default function App() {
             )}
 
             {currentView === "contact" && (
-              <Contact onOpenMap={() => navigateTo("campuses-map")} />
+              <Contact onNavigate={navigateTo} />
             )}
 
-            {currentView === "campuses-map" && (
-              <CampusesMap
-                onBack={() => navigateTo("store")}
-                onNavigateView={navigateTo}
-              />
-            )}
-
-            {currentView === "virtual-classroom" && (
-              <ZionVirtualClassroom
-                currentUser={currentUser}
-                onLeaveClass={() => navigateTo("school")}
-              />
+            {currentView === "3d-campus" && (
+              <div className="mx-auto max-w-7xl w-full px-4 py-6">
+                <ZionCampus3DView />
+              </div>
             )}
 
             {currentView === "ai-tutor" && (
@@ -2719,78 +2634,61 @@ export default function App() {
               />
             )}
 
-            {currentView === "evangelism-forum" && (
-              <EvangelismMinistryForum
+            {(currentView === "evangelism-missions" || currentView === "evangelism-forum") && (
+              <EvangelismMissionsDashboard
                 currentUser={currentUser}
-              />
-            )}
-
-            {currentView === "manager-portal" && (
-              <ManagerPortal
-                currentUser={currentUser}
-                isDarkMode={globalSettings.darkMode}
-                onBack={() => navigateTo("store")}
-                onSyncOrders={syncOrdersFromServer}
+                onLogIn={handleLogIn}
                 onNavigate={navigateTo}
-                onOpenAdminPanel={() => navigateTo("admin")}
-                booksCount={books.length}
+                initialTab="meetings"
               />
             )}
 
-            {currentView === "admin" && (
-              adminAccessState === "checking" ? (
-                <div className="min-h-[50vh] flex flex-col items-center justify-center p-8 text-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-[#A8421B] mb-3" />
-                  <p className="text-sm font-bold text-[#6E655E]">
-                    Verifying server-side Administrator authorization...
-                  </p>
-                </div>
-              ) : adminAccessState === "granted" && ["admin", "main_admin", "sub_admin"].includes(currentUser.role) ? (
-                <AdminPanel
-                  currentUser={currentUser}
-                  uploadRequests={uploadRequests}
-                  onToggleUploadVisibility={handleToggleUploadVisibility}
-                  onApproveUpload={handleApproveUpload}
-                  onRejectUpload={handleRejectUpload}
-                  onApproveDeletion={handleApproveDeletion}
-                  onDeleteUploadPermanently={handleDeleteUploadPermanently}
-                  broadcastAnnouncement={broadcastAnnouncement}
-                  onUpdateBroadcastAnnouncement={handleUpdateBroadcastAnnouncement}
-                  books={books}
-                  onAddNewBookDoc={handleAddNewBook}
-                  onDeleteBookDoc={handleDeleteBook}
-                  globalSettings={globalSettings}
-                  onUpdateSettings={setGlobalSettings}
-                  bookOrders={bookOrders}
-                  onApproveBookOrder={handleApproveBookOrder}
-                  onRejectBookOrder={handleRejectBookOrder}
-                />
-              ) : (
-                <div className="max-w-lg mx-auto mt-12 p-8 rounded-3xl border border-rose-500/30 bg-rose-950/15 text-center space-y-4">
-                  <h2 className="text-xl font-black text-rose-500">403 — Administrator Access Restricted</h2>
-                  <p className="text-sm text-[#6E655E] dark:text-[#B6ABA0]">
-                    {adminAccessError || "Only verified administrators may access the /admin console."}
-                  </p>
-                  <button
-                    onClick={() => navigateTo("store")}
-                    className="px-5 py-2.5 rounded-xl bg-[#1F1B18] text-white text-xs font-bold uppercase cursor-pointer"
-                  >
-                    Return to Store
-                  </button>
-                </div>
-              )
+            {currentView === "design-system" && (
+              <ZionDesignSystemViewer onClose={() => navigateTo("store")} />
+            )}
+
+            {currentView === "settings" && (
+              <ZionSettingsPanel
+                currentUser={currentUser}
+                onClose={() => navigateTo("store")}
+                isDarkMode={globalSettings.darkMode}
+                onToggleDarkMode={() => {
+                  const nextDark = !globalSettings.darkMode;
+                  setGlobalSettings((prev) => ({ ...prev, darkMode: nextDark }));
+                }}
+              />
+            )}
+
+            {(currentView === "manager-portal" || currentView === "admin") && (
+              <ZionAdminPortal
+                currentUser={currentUser}
+                onBack={() => navigateTo("store")}
+                books={books}
+                bookOrders={bookOrders}
+                uploadRequests={uploadRequests}
+                globalSettings={globalSettings}
+                onUpdateSettings={setGlobalSettings}
+                onUpdateBroadcastAnnouncement={handleUpdateBroadcastAnnouncement}
+                onAddNewBookDoc={handleAddNewBook}
+                onDeleteBookDoc={handleDeleteBook}
+                onApproveBookOrder={handleApproveBookOrder}
+                onRejectBookOrder={handleRejectBookOrder}
+                onApproveUploadRequest={handleApproveUpload}
+                onRejectUploadRequest={handleRejectUpload}
+                onNavigate={navigateTo}
+              />
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* Footer copyright */}
-      <footer className="bg-bg-surface border-t border-border-main pt-6 pb-20 lg:pb-6 text-center text-xs text-text-secondary font-mono lg:pl-52">
+      <footer className="bg-bg-surface border-t border-border-main pt-6 pb-20 lg:pb-6 text-center text-xs text-text-secondary font-mono">
         <div>© 2026 Zion Digital · Read. Lead. Transform. · Bungoma, Kenya.</div>
       </footer>
 
       {/* Universal Floating Voice Commands Assistant Widget */}
-      <div className="fixed bottom-20 left-3 lg:bottom-6 lg:left-56 z-40">
+      <div className="fixed bottom-20 left-3 lg:bottom-6 lg:left-6 z-40">
         <div className="flex flex-col items-start space-y-2">
           {voiceNotification && (
             <div className="bg-slate-900 text-white text-[10px] sm:text-xs font-bold py-2 px-3.5 rounded-xl shadow-xl max-w-xs border border-slate-800 animate-bounce">
@@ -2892,14 +2790,19 @@ export default function App() {
               </div>
             )}
 
-            {/* Sign in with Google shortcut banner */}
+            {/* Sign in with Google button */}
             <button
               type="button"
               onClick={handleGoogleMockLogin}
-              className="w-full mb-5 py-2.5 px-4 border border-stone-800 rounded-xl text-xs font-bold text-stone-300 bg-stone-950/40 hover:bg-stone-950 transition flex items-center justify-center space-x-2 relative z-10 cursor-pointer active:scale-98"
+              className="w-full mb-5 py-2.5 px-4 border border-stone-700 rounded-xl text-xs font-bold text-stone-100 bg-stone-950/60 hover:bg-stone-950 transition flex items-center justify-center space-x-2.5 relative z-10 cursor-pointer active:scale-98"
             >
-              <span className="text-sm">🌐</span>
-              <span>Continue with Google Cloud</span>
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z" fill="#FBBC05" />
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+              </svg>
+              <span>Continue with Google</span>
             </button>
 
             <div className="relative flex items-center justify-center my-4 relative z-10">

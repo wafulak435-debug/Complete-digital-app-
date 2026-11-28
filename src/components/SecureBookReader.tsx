@@ -6,7 +6,7 @@ import {
   Plus, Trash, Save, Layers, Wifi, WifiOff, Highlighter, BookOpen,
   Volume2, VolumeX, Printer, Brush, Mic, MicOff, Loader2, Settings
 } from "lucide-react";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
 import { collection, addDoc, onSnapshot, query, where, deleteDoc, doc, orderBy } from "firebase/firestore";
 import { getPdfFromOfflineDb, savePdfToOfflineDb } from "../utils/pdfDb";
 import { invokeGeminiAction, secureApiFetch } from "../lib/aiClient";
@@ -295,15 +295,16 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
 
   // Synchronize reading progress from Firestore (Load on mount)
   useEffect(() => {
-    if (!currentUser || !book.id) return;
-    
+    if (!currentUser || currentUser.role === "guest" || !auth.currentUser || !book.id) return;
+    const uid = auth.currentUser.uid;
+
     const loadProgress = async () => {
       setCloudStatus('syncing');
       try {
         const { getDocs, query, collection, where } = await import("firebase/firestore");
         const q = query(
           collection(db, "reading_progress"),
-          where("userId", "==", currentUser.id || "guest"),
+          where("userId", "==", uid),
           where("bookId", "==", book.id)
         );
         const snapshot = await getDocs(q);
@@ -315,25 +316,26 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
         }
         setCloudStatus('synced');
       } catch (err) {
-        console.error("Failed to load reading progress from Firestore:", err);
+        console.warn("Failed to load reading progress from Firestore:", err);
         setCloudStatus('idle');
       }
     };
     
     loadProgress();
-  }, [currentUser?.id, book.id]);
+  }, [currentUser?.id, currentUser?.role, book.id]);
 
   // Synchronize reading progress back to Firestore (Save on change)
   useEffect(() => {
-    if (!currentUser || !book.id) return;
+    if (!currentUser || currentUser.role === "guest" || !auth.currentUser || !book.id) return;
+    const uid = auth.currentUser.uid;
     
     const saveProgress = async () => {
       setCloudStatus('syncing');
       try {
-        const { getDocs, query, collection, where, doc, addDoc } = await import("firebase/firestore");
+        const { getDocs, query, collection, where, doc, addDoc, updateDoc } = await import("firebase/firestore");
         const q = query(
           collection(db, "reading_progress"),
-          where("userId", "==", currentUser.id || "guest"),
+          where("userId", "==", uid),
           where("bookId", "==", book.id)
         );
         const snapshot = await getDocs(q);
@@ -342,26 +344,26 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
         
         if (!snapshot.empty) {
           const docId = snapshot.docs[0].id;
-          const { updateDoc } = await import("firebase/firestore");
           await updateDoc(doc(db, "reading_progress", docId), {
+            userId: uid,
+            bookId: book.id,
             currentPage,
             percentage: progressPercent,
             updatedAt: new Date().toISOString()
           });
         } else {
           await addDoc(collection(db, "reading_progress"), {
-            userId: currentUser.id || "guest",
+            userId: uid,
             bookId: book.id,
             currentPage,
             percentage: progressPercent,
             updatedAt: new Date().toISOString()
           });
         }
-        // Sync local storage as well
         localStorage.setItem(`wafula_bookmark_${book.id}`, currentPage.toString());
         setCloudStatus('synced');
       } catch (err) {
-        console.error("Failed to save reading progress to Firestore:", err);
+        console.warn("Failed to save reading progress to Firestore:", err);
         setCloudStatus('idle');
       }
     };
@@ -371,7 +373,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
     }, 1200);
     
     return () => clearTimeout(timeout);
-  }, [currentPage, currentUser?.id, book.id]);
+  }, [currentPage, currentUser?.id, currentUser?.role, book.id]);
 
   const [isTimerActive, setIsTimerActive] = useState(!canAccessFully && !!book.allowPreview);
   const [timeLeft, setTimeLeft] = useState(book.previewDuration || 30);
@@ -446,7 +448,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
           console.error("Reader: Failed to load book blob from IndexedDB indices:", err);
           if (active) setResolvedPdfUrl(null);
         }
-      } else if (book.pdfUrl.startsWith("supabase://")) {
+      } else if (book.pdfUrl.startsWith("supabase://") || book.pdfUrl.startsWith("firestore://") || (book.pdfUrl.includes("/") && !book.pdfUrl.startsWith("http"))) {
         try {
           const signed = await getUserFileSignedUrl(book.pdfUrl, 3600);
           if (signed) {
@@ -836,23 +838,26 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
 
   // --- Real-time Annotations Sync (Cloud & IndexedDB fallback) ---
   useEffect(() => {
-    if (!currentUser) {
-      setIsLoadingAnnotations(false);
+    if (!currentUser || currentUser.role === "guest" || !auth.currentUser) {
+      getFromIndexedDB().then((localList) => {
+        setAnnotations(localList.filter((x) => x.bookId === book.id));
+        setIsLoadingAnnotations(false);
+      }).catch(() => setIsLoadingAnnotations(false));
       return;
     }
 
     try {
       const q = query(
         collection(db, "annotations"),
-        where("userId", "==", currentUser.id),
+        where("userId", "==", auth.currentUser.uid),
         where("bookId", "==", book.id),
         orderBy("createdAt", "desc")
       );
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const list: any[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() });
+        snapshot.forEach((docSnap) => {
+          list.push({ id: docSnap.id, ...docSnap.data() });
         });
         setAnnotations(list);
         setIsLoadingAnnotations(false);
@@ -881,11 +886,12 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
     }
 
     const comment = newAnnotationComment.trim();
+    const uid = auth.currentUser?.uid || currentUser?.id || "guest";
 
     const payload = {
       bookId: book.id,
       bookTitle: book.title,
-      userId: currentUser?.id || "guest",
+      userId: uid,
       userName: currentUser?.name || "Anonymous Member",
       page: currentPage,
       text: t,
@@ -895,7 +901,7 @@ Please write at least 3 dense chapters. For each chapter, include an introductio
     };
 
     try {
-      if (currentUser) {
+      if (currentUser && currentUser.role !== "guest" && auth.currentUser) {
         await addDoc(collection(db, "annotations"), payload);
       } else {
         await saveToIndexedDB({ ...payload, id: Date.now() });

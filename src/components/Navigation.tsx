@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowDown, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Gamepad2, Search, Sparkles, Mail, Smartphone, Sun, Moon, Globe, Wifi, CreditCard, Megaphone, Monitor, GraduationCap, Settings, HardDrive, Trash2, Database, Video, Crown, MapPin, Briefcase, Flame, Heart } from "lucide-react";
-import { User, Book, SavedDocument, CommunityMessage, AppSettings } from "../types";
+import { motion, AnimatePresence } from "motion/react";
+import { BookOpen, User as UserIcon, Menu, X, ArrowUp, ArrowDown, ArrowLeft, Home, Compass, MessageSquare, Trophy, ShieldCheck, HelpCircle, FileText, UploadCloud, Search, Sparkles, Mail, Smartphone, Sun, Moon, Wifi, CreditCard, Megaphone, Monitor, GraduationCap, Settings, HardDrive, Trash2, Database, Video, Crown, Briefcase, Flame, Heart, KeyRound, FolderOpen } from "lucide-react";
+import { User, Book, SavedDocument, CommunityMessage, AppSettings, SectionKey } from "../types";
 import { getCookie, setCookie } from "../utils/cookies";
 import { saveAppSettingsToFirestore } from "../lib/firestoreUtils";
+import { isSuperAdmin as checkSuperAdmin, isManager as checkManager, canAccessSection } from "../lib/zionRbac";
 
 import appLogo from "../assets/images/zion_digital_logo_1781070536038.png";
 
@@ -82,13 +84,14 @@ export default function Navigation({
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // Collapsible navigational folders to optimize space on laptop and phone screens
+  // Collapsible navigational folders inside the right drawer
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    "📖 BOOKS, SERMONS & WORSHIP MEDIA": true,
-    "🎓 LEADERSHIP & BIBLE SCHOOL": true,
-    "💡 AI STUDY & PUBLISHING": false,
-    "🤝 FELLOWSHIP & CAMPUS": false,
-    "🌐 SERVICES & ADMIN": false,
+    "Books, Sermons & Media": true,
+    "Leadership & Bible School": true,
+    "Evangelism & Missions": true,
+    "AI Study & Publishing": true,
+    "Fellowship & Campus": true,
+    "Services & Hubs": true,
   });
 
   const toggleSection = (cat: string) => {
@@ -98,12 +101,12 @@ export default function Navigation({
     }));
   };
 
-  const isAdmin = Boolean(
-    currentUser && ["main_admin", "admin", "sub_admin"].includes(currentUser.role)
-  );
-  const isManager = Boolean(
-    currentUser && (isAdmin || currentUser.role === "manager")
-  );
+  const isAdmin = checkSuperAdmin(currentUser);
+  const isManager = checkManager(currentUser);
+  const isStrictManagerOnly = isManager && !isAdmin;
+  const userAssignedSections: SectionKey[] = Array.isArray(currentUser?.assigned_sections)
+    ? currentUser!.assigned_sections!
+    : [];
 
   // Dynamic user font selector preference state lookup
   const [selectedFont, setSelectedFont] = useState<string>(() => {
@@ -127,9 +130,9 @@ export default function Navigation({
   const [adminCheckedConfirmation, setAdminCheckedConfirmation] = useState(false);
   const [isUpdatingIcon, setIsUpdatingIcon] = useState(false);
 
-  // States for unified Settings Panel (including Offline Cache & Media Management)
+  // States for unified Settings Panel (Appearance, Account, Offline Cache & Branding)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<"offline" | "branding">("offline");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<"general" | "account" | "offline" | "branding">("general");
   const [offlineCaches, setOfflineCaches] = useState<{bookId: string; size: number; title: string; author: string; category: string}[]>([]);
   const [cacheLoading, setCacheLoading] = useState(false);
   const [storageEstimate, setStorageEstimate] = useState<{usage: number; quota: number} | null>(null);
@@ -193,26 +196,26 @@ export default function Navigation({
     if (window.confirm("Are you sure you want to delete this cached book PDF blob from local offline cache storage?")) {
       const { deletePdfFromOfflineDb } = await import("../utils/pdfDb");
       await deletePdfFromOfflineDb(bookId);
-      alert("✅ Book blob successfully cleared from local offline cache.");
+      alert("Book blob cleared from local offline cache.");
       loadOfflineSettingsData();
     }
   };
 
   const handlePruneAllLocalCache = async () => {
-    if (window.confirm("⚠️ WARNING: This will completely wipe all offline cached book PDF documents to recover maximum local storage space. Users will need to re-download/cache books to read offline. Proceed?")) {
+    if (window.confirm("WARNING: This will wipe all offline cached book PDF documents to recover local storage space. Users will need to re-download books to read offline. Proceed?")) {
       const { getAllOfflinePdfs, deletePdfFromOfflineDb } = await import("../utils/pdfDb");
       const offlineMap = await getAllOfflinePdfs();
       const keys = Array.from(offlineMap.keys());
       for (const k of keys) {
         await deletePdfFromOfflineDb(k);
       }
-      alert("✅ All local offline book blobs successfully purged and IndexedDB storage reclaimed.");
+      alert("All local offline book blobs purged and IndexedDB storage reclaimed.");
       loadOfflineSettingsData();
     }
   };
 
   const handleClearAnnotations = async () => {
-    if (window.confirm("⚠️ WARNING: This will delete all your local annotations, highlighted text and reading notes. This action is irreversible. Proceed?")) {
+    if (window.confirm("WARNING: This will delete all your local annotations, highlighted text, and reading notes. This action is irreversible. Proceed?")) {
       if (typeof window !== "undefined" && window.indexedDB) {
         const req = window.indexedDB.open("WafulaReadsDB", 1);
         req.onsuccess = (e) => {
@@ -222,7 +225,7 @@ export default function Navigation({
             const store = tx.objectStore("offline_annotations");
             const clearReq = store.clear();
             clearReq.onsuccess = () => {
-              alert("✅ All local annotations and notes deleted successfully.");
+              alert("All local annotations and notes deleted.");
               loadOfflineSettingsData();
             };
           }
@@ -248,7 +251,7 @@ export default function Navigation({
       return;
     }
     if (!adminCheckedConfirmation) {
-      alert("❌ Admin Certification Required: You must check the confirmation checkbox to apply changes.");
+      alert("Admin Certification Required: Check the confirmation checkbox to apply changes.");
       return;
     }
 
@@ -265,7 +268,7 @@ export default function Navigation({
       if (onUpdateSettings) {
         onUpdateSettings(updatedSettings);
       }
-      alert("✅ Zion Enterprise Icon successfully updated and synchronized globally! The updated emblem is now active.");
+      alert("Zion Enterprise Icon updated and synchronized globally.");
       setIsLogoModalOpen(false);
       setSelectedPresetIndex(null);
       setAdminCheckedConfirmation(false);
@@ -405,80 +408,77 @@ export default function Navigation({
     window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
   };
 
-  // Polished list of sidebar navigation items
-  const navItems = [
-    { id: "dashboard", label: "My Library", icon: <Trophy className="h-4 w-4" /> },
-    { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4" /> },
-    { id: "sermons-motivation", label: "Sermons, Motivation & Worship", icon: <Video className="h-4 w-4" /> },
-    { id: "school", label: "Leadership & Bible School", icon: <Compass className="h-4 w-4 text-blue-400" /> },
-    { id: "bible-school", label: "11-Track Bible School", icon: <Flame className="h-4 w-4 text-[#F5B82E]" /> },
-    { id: "virtual-classroom", label: "Virtual Classroom (Live)", icon: <Video className="h-4 w-4 text-[#34D399]" /> },
-    { id: "ai-tutor", label: "AI Tutor Studio", icon: <Sparkles className="h-4 w-4 text-[#F5B82E]" /> },
-    { id: "evangelism-forum", label: "Evangelism & Ministry", icon: <Heart className="h-4 w-4 text-rose-400" /> },
-    { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4" /> },
-    { id: "offline-dictionary", label: "Bible Dictionary", icon: <BookOpen className="h-4 w-4 text-indigo-400" /> },
-    { id: "companion", label: "Study Assistant Chat", icon: <MessageSquare className="h-4 w-4" /> },
-    { id: "studio", label: "Doc Studio Editor", icon: <FileText className="h-4 w-4" /> },
-    { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-teal-500" /> },
-    { id: "community", label: "Zion Connect & Messages", icon: <MessageSquare className="h-4 w-4" /> },
-    { id: "professional", label: "Zion Professional", icon: <Briefcase className="h-4 w-4 text-[#F5B82E]" /> },
-    { id: "announcements", label: "Campus Announcements", icon: <Megaphone className="h-4 w-4" /> },
-    { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-rose-500" /> },
-    { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400" /> },
-    { id: "campuses-map", label: "Campuses & Map Locator", icon: <MapPin className="h-4 w-4 text-[#FB923C]" /> },
-    { id: "contact", label: "Contact Us", icon: <HelpCircle className="h-4 w-4" /> },
-  ];
 
-  // Grouped navigation for sidebar
-  const groupedNavigation = [
+  // Grouped navigation dynamically filtered by RBAC role and assigned_sections
+  const rawGroupedNavigation: Array<{
+    category: string;
+    section?: SectionKey;
+    items: Array<{ id: string; label: string; icon: React.ReactNode; section?: SectionKey }>;
+  }> = [
     {
-      category: "📖 BOOKS, SERMONS & WORSHIP MEDIA",
+      category: "Bookstore & Media",
+      section: "bookstore",
       items: [
-        { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
-        { id: "sermons-motivation", label: "Sermons, Motivation & Worship", icon: <Video className="h-4 w-4 text-amber-500" /> },
-        { id: "dashboard", label: "My Library Dashboard", icon: <Trophy className="h-4 w-4 text-amber-500" /> },
-        { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-[#2DD4BF]" /> },
-      ]
+        { id: "store", label: "Digital Bookstore", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" />, section: "bookstore" },
+        { id: "threed-loft", label: "3D Bookstore Loft", icon: <Compass className="h-4 w-4 text-[#2DD4BF]" />, section: "bookstore" },
+        { id: "dashboard", label: "My Library Dashboard", icon: <Trophy className="h-4 w-4 text-amber-400" /> },
+      ],
     },
     {
-      category: "🎓 LEADERSHIP & BIBLE SCHOOL",
+      category:
+        isStrictManagerOnly && userAssignedSections.includes("school_1") && userAssignedSections.includes("school_2")
+          ? "School 1 & School 2 (Combined)"
+          : "Leadership & Bible Schools",
       items: [
-        { id: "school", label: "Leadership & Bible School", icon: <Compass className="h-4 w-4 text-[#60A5FA]" /> },
-        { id: "bible-school", label: "11-Track Bible School", icon: <Flame className="h-4 w-4 text-[#F5B82E]" /> },
-        { id: "virtual-classroom", label: "Zion Virtual Classroom (Live)", icon: <Video className="h-4 w-4 text-[#34D399]" /> },
-        { id: "devotional", label: "Devotional Bible", icon: <HelpCircle className="h-4 w-4 text-[#34D399]" /> },
-        { id: "offline-dictionary", label: "Bible & Theological Dictionary", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" /> },
-      ]
+        { id: "school", label: "School 1: Leadership Academy", icon: <Compass className="h-4 w-4 text-[#60A5FA]" />, section: "school_1" },
+        { id: "bible-school", label: "School 2: Bible Seminary", icon: <Flame className="h-4 w-4 text-[#F5B82E]" />, section: "school_2" },
+        { id: "devotional", label: "Devotional Bible (NIV)", icon: <HelpCircle className="h-4 w-4 text-[#34D399]" />, section: "school_2" },
+        { id: "offline-dictionary", label: "Theological Dictionary", icon: <BookOpen className="h-4 w-4 text-[#818CF8]" />, section: "school_2" },
+      ],
     },
     {
-      category: "💡 AI STUDY & PUBLISHING",
+      category: "AI Study & Publishing",
       items: [
-        { id: "ai-tutor", label: "Zion AI Tutor Studio", icon: <Sparkles className="h-4 w-4 text-[#F5B82E]" /> },
+        { id: "ai-tutor", label: "Zion AI Tutor (Hydrogen 4)", icon: <Sparkles className="h-4 w-4 text-[#F5B82E]" />, section: "school_1" },
         { id: "companion", label: "Study Assistant Chat", icon: <MessageSquare className="h-4 w-4 text-emerald-400" /> },
-        { id: "studio", label: "Doc Studio & Publishing", icon: <FileText className="h-4 w-4 text-slate-400" /> },
-      ]
+        { id: "studio", label: "Doc Studio & Publishing", icon: <FileText className="h-4 w-4 text-slate-300" /> },
+      ],
     },
     {
-      category: "🤝 FELLOWSHIP & CAMPUS",
+      category: "Evangelism & Mission",
+      section: "mission",
       items: [
-        { id: "evangelism-forum", label: "Evangelism & Ministry Forum", icon: <Heart className="h-4 w-4 text-[#F87171]" /> },
+        { id: "evangelism-missions", label: "Evangelism & Missions Centre", icon: <Heart className="h-4 w-4 text-[#F87171]" />, section: "mission" },
+        { id: "sermons-motivation", label: "Sermons & Worship Media", icon: <Video className="h-4 w-4 text-amber-400" />, section: "mission" },
+      ],
+    },
+    {
+      category: "Fellowship & Campus",
+      items: [
         { id: "community", label: "Zion Connect & Messages", icon: <MessageSquare className="h-4 w-4 text-[#34D399]" /> },
         { id: "professional", label: "Zion Professional", icon: <Briefcase className="h-4 w-4 text-[#F5B82E]" /> },
         { id: "announcements", label: "Campus Announcements", icon: <Megaphone className="h-4 w-4 text-[#F87171]" /> },
-        { id: "campuses-map", label: "Campuses & Map Locator", icon: <MapPin className="h-4 w-4 text-[#FB923C]" /> },
-        { id: "contact", label: "Contact Us", icon: <HelpCircle className="h-4 w-4 text-[#38BDF8]" /> },
-      ]
+        { id: "3d-campus", label: "3D Sanctuary & Campus", icon: <Compass className="h-4 w-4 text-[#60A5FA]" /> },
+        { id: "contact", label: "Contact & Campus Tour", icon: <HelpCircle className="h-4 w-4 text-[#38BDF8]" /> },
+      ],
     },
     {
-      category: "🌐 SERVICES & ADMIN",
+      category: "Workspace Hub",
       items: [
-        { id: "mpesa-api", label: "Safaricom M-Pesa Console", icon: <CreditCard className="h-4 w-4 text-[#34D399]" /> },
         { id: "gmail", label: "Google Workspace Hub", icon: <Mail className="h-4 w-4 text-[#F87171]" /> },
-        { id: "website-center", label: "Website Center", icon: <Globe className="h-4 w-4 text-[#60A5FA]" /> },
-        { id: "playstore-hub", label: "Android Play Store Hub", icon: <Smartphone className="h-4 w-4 text-emerald-400" /> },
-      ]
-    }
+      ],
+    },
   ];
+
+  const groupedNavigation = rawGroupedNavigation
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (!item.section) return true;
+        return canAccessSection(currentUser, item.section);
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
 
   const handleItemClick = (id: string) => {
     onNavigate(id);
@@ -488,196 +488,37 @@ export default function Navigation({
 
   return (
     <>
-      {/* 1. DESKTOP PERMANENT LEFT SIDEBAR */}
-      <aside 
-        id="desktop_left_sidebar" 
-        className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-52 bg-[#0B254D] dark:bg-[#07142B] text-white flex-col h-full border-r border-[#123368] dark:border-slate-800 select-none text-left transition-colors"
+      {/* 1. UNIFIED RESPONSIVE TOP HEADER BAR */}
+      <header
+        id="app_top_header"
+        className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-[#0B172A]/95 backdrop-blur-md h-16 safe-area-top flex items-center justify-between gap-3 px-3 sm:px-6 lg:px-8 transition-colors"
       >
-        {/* Brand Header */}
-        <div className="p-4 border-b border-white/10">
-          <div className="flex items-center space-x-3 text-left">
-            <div className="relative shrink-0">
-              <img
-                src={globalSettings?.customLogoUrl || appLogo}
-                alt="Zion Digital"
-                className="h-9 w-9 rounded-full object-cover border border-[#F5B82E]/70 bg-slate-950 shadow-xs"
-              />
-            </div>
-             <div 
-               onClick={() => handleItemClick("store")} 
-               className="text-left hover:opacity-90 flex-grow cursor-pointer min-w-0"
-             >
-               <h1 className="text-base font-bold tracking-tight text-white font-display leading-tight truncate">
-                 Zion <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#F5B82E] font-semibold">DIGITAL</span>
-               </h1>
-               <div className="flex flex-col space-y-1 mt-0.5 text-left">
-                 <div className="flex items-center space-x-1.5">
-                   <p className="text-[9px] text-blue-200/80 uppercase tracking-widest font-mono truncate">Bungoma, Kenya</p>
-                   <span className={`text-[9px] font-semibold ${isOnline ? "text-emerald-300" : "text-amber-300"}`}>
-                     · {isOnline ? "Live" : "Offline"}
-                   </span>
-                 </div>
-                 {onToggleOfflineMode && (
-                   <button
-                     type="button"
-                     onClick={(e) => { e.stopPropagation(); onToggleOfflineMode(); }}
-                     className={`mt-1 flex items-center justify-between px-2 py-1 rounded border text-[8.5px] font-mono font-bold tracking-wider transition cursor-pointer select-none leading-none ${
-                       offlineMode
-                         ? "bg-[#F5B82E]/20 text-[#F5B82E] border-[#F5B82E]/50"
-                         : "bg-white/10 text-blue-100 border-white/15 hover:border-[#F5B82E]"
-                     }`}
-                   >
-                     <span>{offlineMode ? "Offline Study Active" : "Sync Mode"}</span>
-                   </button>
-                 )}
-               </div>
-             </div>
-          </div>
-        </div>
-
-        {/* Sidebar Navigation Options */}
-        <nav className="flex-grow py-3 px-2.5 overflow-y-auto space-y-3.5 custom-scrollbar">
-          {groupedNavigation.map((sec, idx) => {
-            return (
-              <div key={idx} className="pb-2.5 border-b border-white/10 last:border-0 last:pb-0">
-                {sec.category && (
-                  <div className="w-full flex items-center justify-between px-2.5 py-1 text-[9px] uppercase tracking-wider text-blue-200/70 font-bold mb-1 font-mono select-none">
-                    <span className="truncate">{sec.category}</span>
-                  </div>
-                )}
-                <div className="space-y-0.5">
-                  {sec.items.map((item) => {
-                    const isActive = currentView === item.id;
-                    return (
-                      <button
-                        key={`${item.id}-${item.label}`}
-                        onClick={() => handleItemClick(item.id)}
-                        className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                          isActive 
-                            ? "bg-[#155EEF] text-white shadow-xs font-bold" 
-                            : "text-blue-100/85 hover:text-white hover:bg-white/10"
-                        }`}
-                      >
-                        {item.icon && (
-                          <span className={`flex shrink-0 items-center justify-center ${isActive ? "[&_svg]:text-white" : ""}`}>
-                            {item.icon}
-                          </span>
-                        )}
-                        <span className="text-left whitespace-normal break-words leading-tight py-0.5">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-
-          {isManager && (
-            <div className="pt-2 mt-2 border-t border-white/10 space-y-1">
-              <button
-                onClick={() => handleItemClick("manager-portal")}
-                className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  currentView === "manager-portal"
-                    ? "bg-[#155EEF] text-white shadow-xs"
-                    : "text-[#F5B82E] hover:bg-white/10"
-                }`}
-              >
-                <Crown className="h-4 w-4 shrink-0" />
-                <span>Manager Portal</span>
-              </button>
-              {isAdmin && (
-                <button
-                  onClick={() => handleItemClick("admin")}
-                  className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    currentView === "admin"
-                      ? "bg-[#F5B82E] text-[#0B254D] shadow-xs"
-                      : "text-blue-100 hover:bg-white/10"
-                  }`}
-                >
-                  <ShieldCheck className="h-4 w-4 shrink-0 text-[#F5B82E]" />
-                  <span>Admin Panel</span>
-                </button>
-              )}
-            </div>
-          )}
-        </nav>
-
-        {/* Display Preferences */}
-        <div className="p-3.5 bg-black/15 border-t border-white/10 text-left space-y-2.5 select-none">
-          <span className="text-[9px] font-mono uppercase tracking-wider text-blue-200/75 font-bold block">
-            Reading Preferences
-          </span>
-
-          <div className="space-y-1">
-            <select
-              value={selectedFont}
-              onChange={(e) => setSelectedFont(e.target.value)}
-              className="w-full bg-[#081A36] text-white border border-white/15 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold focus:outline-none focus:border-[#F5B82E] cursor-pointer"
-            >
-              <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
-              <option value="Playfair Display">Playfair Display (Editorial)</option>
-              <option value="JetBrains Mono">JetBrains Mono</option>
-            </select>
-          </div>
-
-          <button
-            type="button"
-            onClick={toggleDarkMode}
-            className="w-full bg-white/10 hover:bg-white/15 text-white border border-white/15 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold flex items-center justify-between cursor-pointer transition"
-          >
-            <span className="flex items-center space-x-2">
-              {isDarkMode ? <Sun className="h-3.5 w-3.5 text-[#F5B82E] shrink-0" /> : <Moon className="h-3.5 w-3.5 text-blue-200 shrink-0" />}
-              <span>{isDarkMode ? "Dark Mode" : "Ice Slate"}</span>
-            </span>
-            <span className="text-[9px] font-mono uppercase text-[#F5B82E] font-bold">Switch</span>
-          </button>
-        </div>
-
-        {/* Vision Slogan footer */}
-        <div className="p-3.5 bg-[#071834] border-t border-white/10 text-left space-y-1">
-          <p className="text-[9px] text-blue-200/70 font-bold uppercase tracking-wider">
-            Our Promise
-          </p>
-          <p className="text-[10px] text-blue-100/80 leading-relaxed">
-            Empowering leaders through scripture, knowledge, and fellowship.
-          </p>
-          <span className="inline-block text-[9px] font-mono text-[#F5B82E] font-bold mt-0.5 tracking-wider">
-            READ · LEAD · TRANSFORM
-          </span>
-        </div>
-      </aside>
-
-      {/* 2. RESPONSIVE TOP HEADER BAR (Matches Navy & Ice-Slate Header) */}
-      <header 
-        id="app_top_header" 
-        className="sticky top-0 z-40 w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-[#0B172A]/95 backdrop-blur-md lg:pl-52 h-16 safe-area-top flex items-center justify-between px-3 sm:px-6 lg:px-8 transition-colors"
-      >
-        {/* Left Area: Adaptive Back Button & Mobile Logo Brand */}
-        <div id="top_header_left_area" className="flex items-center space-x-2.5 shrink-0">
+        {/* Left Zone: Back Button & Brand Wordmark */}
+        <div id="top_header_left_area" className="flex items-center gap-2.5 shrink-0">
           {canGoBack && (
             <button
+              type="button"
               onClick={onBack}
-              className="flex items-center space-x-1 text-[11px] font-bold text-[#0B254D] dark:text-slate-100 bg-slate-50 dark:bg-slate-800 hover:border-[#155EEF] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 transition cursor-pointer select-none shrink-0"
+              className="flex items-center gap-1 min-h-[44px] px-3 rounded-xl text-xs font-bold text-[#0B254D] dark:text-slate-100 bg-slate-50 dark:bg-slate-800 hover:border-[#155EEF] border border-slate-200 dark:border-slate-700 transition cursor-pointer select-none shrink-0 whitespace-nowrap"
               title="Return to previous screen"
             >
-              <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
+              <ArrowLeft className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline">Back</span>
             </button>
           )}
 
-          {/* Brand Mark */}
-          <button 
+          <button
             type="button"
-            onClick={() => handleItemClick("store")} 
-            className="flex items-center space-x-2 text-left cursor-pointer group"
+            onClick={() => handleItemClick("store")}
+            className="flex items-center gap-2 min-h-[44px] text-left cursor-pointer shrink-0"
           >
-            <img 
-              src={globalSettings?.customLogoUrl || appLogo} 
-              alt="Zion Digital" 
-              className="h-8 w-8 object-cover rounded-full border border-slate-200 dark:border-slate-700 lg:hidden shadow-2xs" 
+            <img
+              src={globalSettings?.customLogoUrl || appLogo}
+              alt="Zion Digital"
+              className="h-8 w-8 object-cover rounded-full border border-slate-200 dark:border-slate-700 shadow-2xs shrink-0"
               referrerPolicy="no-referrer"
             />
-            <div className="flex items-baseline space-x-1.5">
+            <div className="flex items-baseline gap-1.5">
               <span className="font-display text-base sm:text-lg font-bold tracking-tight text-[#0B254D] dark:text-white whitespace-nowrap shrink-0">
                 Zion
               </span>
@@ -688,144 +529,119 @@ export default function Navigation({
           </button>
         </div>
 
-        {/* Center Search Trigger (Desktop) */}
-        <div className="hidden md:flex items-center bg-[#F4F7FC] dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-xl w-72 lg:w-80 text-slate-500 dark:text-slate-400 focus-within:border-[#155EEF] transition">
-          <Search className="h-3.5 w-3.5 shrink-0 mr-2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              if (!isSearchOpen && e.target.value.trim().length > 0) {
-                setIsSearchOpen(true);
-              }
-            }}
-            placeholder="Search books, courses, discussions..."
-            className="w-full bg-transparent text-xs font-medium outline-none text-[#0B254D] dark:text-slate-100 placeholder:text-slate-400 mr-1 cursor-text"
-          />
-          {searchQuery && (
-            <button 
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="text-[10px] text-slate-500 hover:text-[#0B254D] mr-1.5 cursor-pointer font-bold"
-            >
-              Clear
-            </button>
-          )}
-        </div>
+        {/* Center Zone: Primary Top-Bar Navigation Links (Desktop) */}
+        <nav aria-label="Primary Navigation" className="hidden lg:flex items-center gap-1 xl:gap-2 min-w-0">
+          {([
+            { id: "store", label: "Bookstore", section: "bookstore" as SectionKey },
+            { id: "school", label: "School 1", section: "school_1" as SectionKey },
+            { id: "bible-school", label: "School 2", section: "school_2" as SectionKey },
+            { id: "evangelism-missions", label: "Mission", section: "mission" as SectionKey },
+            { id: "dashboard", label: "My Library" },
+            { id: "community", label: "Zion Connect" },
+          ] as Array<{ id: string; label: string; section?: SectionKey }>)
+            .filter((link) => !link.section || canAccessSection(currentUser, link.section))
+            .map((link) => {
+              const isActive = currentView === link.id;
+              return (
+                <button
+                  key={link.id}
+                  type="button"
+                  onClick={() => handleItemClick(link.id)}
+                  className={`min-h-[44px] px-3 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 transition cursor-pointer ${
+                    isActive
+                      ? "bg-[#EFF6FF] dark:bg-blue-950/60 text-[#155EEF] dark:text-blue-300 font-bold"
+                      : "text-slate-600 dark:text-slate-300 hover:text-[#0B254D] dark:hover:text-white hover:bg-slate-100/80 dark:hover:bg-slate-800/60"
+                  }`}
+                >
+                  {link.label}
+                </button>
+              );
+            })}
+        </nav>
 
-        {/* Right Controls */}
-        <div className="flex items-center space-x-1.5 sm:space-x-2.5">
+        {/* Right Zone: Search, Settings, User Profile & Primary Right Navigation Menu */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {broadcastAnnouncement && isBannerClosed && (
             <button
               type="button"
               onClick={() => onRestoreBanner?.()}
               title="View campus updates"
-              className="hidden sm:flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#EFF6FF] text-[#155EEF] border border-blue-200 cursor-pointer whitespace-nowrap shrink-0"
+              className="hidden xl:flex items-center gap-1.5 min-h-[44px] px-3 rounded-xl text-[11px] font-bold bg-[#EFF6FF] text-[#155EEF] border border-blue-200 cursor-pointer whitespace-nowrap shrink-0"
             >
-              <Megaphone className="h-3 w-3" />
+              <Megaphone className="h-3.5 w-3.5 shrink-0" />
               <span>Updates</span>
             </button>
           )}
 
-          {/* Quick Search Icon */}
+          {/* Global Search Trigger */}
           <button
             type="button"
             onClick={() => setIsSearchOpen(true)}
-            className="flex md:hidden items-center justify-center h-8 w-8 rounded-lg text-[#0B254D] dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
-            title="Search library"
+            className="flex items-center justify-center gap-1.5 min-h-[44px] min-w-[44px] sm:px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#F4F7FC] dark:bg-slate-900 text-[#0B254D] dark:text-slate-100 hover:border-[#155EEF] transition cursor-pointer shrink-0 whitespace-nowrap"
+            title="Search books, courses, and discussions (Ctrl+K)"
           >
-            <Search className="h-4 w-4" />
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="hidden xl:inline text-xs font-medium text-slate-500 dark:text-slate-400">Search</span>
           </button>
 
-          {/* Wishlist Shortcut */}
+          {/* Settings & Account Trigger */}
           <button
             type="button"
-            onClick={() => handleItemClick("dashboard")}
-            className="flex items-center justify-center h-8 w-8 rounded-lg text-[#0B254D] dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
-            title="Saved books & library"
+            onClick={() => {
+              setActiveSettingsTab("general");
+              setIsSettingsModalOpen(true);
+            }}
+            className="hidden sm:flex items-center justify-center min-h-[44px] min-w-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[#0B254D] dark:text-slate-100 hover:border-[#155EEF] transition cursor-pointer shrink-0"
+            title="Zion Digital Settings"
           >
-            <BookOpen className="h-4 w-4" />
+            <Settings className="h-4 w-4 shrink-0" />
           </button>
 
-          {/* Profile / Auth Button */}
+          {/* User Profile / Sign In */}
           {currentUser && currentUser.role !== "guest" ? (
             <button
               type="button"
               onClick={() => handleItemClick("dashboard")}
               title="Open My Library & Profile"
-              className="flex items-center justify-center h-8 w-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[#0B254D] dark:text-slate-100 hover:border-[#155EEF] transition cursor-pointer shrink-0"
+              className="flex items-center gap-2 min-h-[44px] px-2.5 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[#0B254D] dark:text-slate-100 hover:border-[#155EEF] transition cursor-pointer shrink-0 whitespace-nowrap"
             >
-              <UserIcon className="h-4 w-4" />
+              <span className="h-6 w-6 rounded-full bg-[#155EEF] text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                {currentUser.name?.[0]?.toUpperCase() || <UserIcon className="h-3.5 w-3.5" />}
+              </span>
+              <span className="hidden md:inline text-xs font-semibold max-w-[100px] truncate">
+                {currentUser.name.split(" ")[0]}
+              </span>
             </button>
           ) : (
             <button
               type="button"
               onClick={onLogIn}
-              className="px-3 py-1.5 rounded-lg bg-[#155EEF] hover:bg-[#0F49C7] text-white text-[11px] font-bold transition cursor-pointer shrink-0 whitespace-nowrap"
+              className="min-h-[44px] px-3.5 rounded-xl bg-[#155EEF] hover:bg-[#0F49C7] text-white text-xs font-bold transition cursor-pointer shrink-0 whitespace-nowrap"
             >
               Sign In
             </button>
           )}
 
-          {/* Zion Connect & Messages quick switch */}
+          {/* Primary Top-Right Navigation Drawer Trigger */}
           <button
-            type="button"
-            onClick={() => handleItemClick("community")}
-            title="Open Zion Connect & Messages"
-            className="hidden xs:flex sm:flex items-center px-2.5 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 bg-[#EFF6FF] dark:bg-blue-950/40 text-[#155EEF] dark:text-blue-300 text-[11px] font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition cursor-pointer shrink-0 whitespace-nowrap"
-          >
-            Zion Connect
-          </button>
-
-          {/* Manager Portal button for authorized staff */}
-          {isManager && (
-            <button
-              type="button"
-              onClick={() => handleItemClick("manager-portal")}
-              className={`flex items-center px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition cursor-pointer shrink-0 whitespace-nowrap ${
-                currentView === "manager-portal"
-                  ? "bg-[#155EEF] text-white border-[#155EEF]"
-                  : "bg-white dark:bg-slate-800 text-[#0B254D] dark:text-slate-100 border-slate-200 dark:border-slate-700 hover:border-[#155EEF]"
-              }`}
-            >
-              Manager Portal
-            </button>
-          )}
-
-          {/* Sleek Mode Quick Toggle (Desktop) */}
-          {onToggleSleekMode && (
-            <button
-              type="button"
-              onClick={onToggleSleekMode}
-              title={sleekMode ? "Sleek Mode active" : "Switch to Sleek Mode"}
-              className={`hidden xl:flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[10.5px] font-semibold border transition cursor-pointer shrink-0 whitespace-nowrap ${
-                sleekMode
-                  ? "bg-[#0B254D] text-[#F5B82E] border-[#0B254D]"
-                  : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:text-[#0B254D]"
-              }`}
-            >
-              <Sparkles className="h-3 w-3 shrink-0" />
-              <span>Sleek</span>
-            </button>
-          )}
-
-          {/* Menu Drawer Trigger */}
-          <button
+            id="top_right_menu_trigger"
             type="button"
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="rounded-lg p-1.5 text-[#0B254D] dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer shrink-0"
-            title="Open navigation menu"
+            aria-expanded={isSidebarOpen}
+            aria-controls="mobile_sidebar_content"
+            className="flex items-center gap-2 min-h-[44px] px-3 sm:px-3.5 rounded-xl bg-[#0B254D] dark:bg-[#155EEF] hover:bg-[#123368] dark:hover:bg-[#0F49C7] text-white text-xs font-bold transition cursor-pointer shrink-0 whitespace-nowrap shadow-xs"
+            title="Open full navigation menu"
           >
-            {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {isSidebarOpen ? <X className="h-4 w-4 shrink-0" /> : <Menu className="h-4 w-4 shrink-0" />}
+            <span>Menu</span>
           </button>
         </div>
       </header>
 
-      {/* 3. SUB-HEADER QUICK BAR */}
+      {/* 2. SUB-HEADER QUICK BAR */}
       {currentView !== "store" && (
-        <div id="quick_back_navigation_bar" className="w-full bg-[#F4F7FC] dark:bg-[#0F1E36] border-b border-slate-200 dark:border-slate-800 py-1.5 lg:pl-52 text-left">
-          <div className="mr-auto ml-0 max-w-6xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div id="quick_back_navigation_bar" className="w-full bg-[#F4F7FC] dark:bg-[#0F1E36] border-b border-slate-200 dark:border-slate-800 py-1.5 text-left">
+          <div className="mx-auto max-w-7xl flex items-center justify-between px-4 sm:px-6 lg:px-8">
             <button
               onClick={() => handleItemClick("store")}
               className="flex items-center space-x-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#155EEF] transition cursor-pointer"
@@ -858,170 +674,161 @@ export default function Navigation({
         </div>
       )}
 
-      {/* 4. RIGHT SLIDE-OVER MENU DRAWER */}
-      {isSidebarOpen && (
-        <div id="mobile_sidebar_backdrop" className="fixed inset-0 z-50 flex justify-end">
-          <div className="fixed inset-0 bg-[#0B254D]/55 backdrop-blur-xs" onClick={() => setIsSidebarOpen(false)} />
-          <aside id="mobile_sidebar_content" className="relative flex w-80 max-w-[85vw] flex-col bg-[#0B254D] dark:bg-[#07142B] text-white p-6 safe-area-top safe-area-bottom shadow-2xl h-full text-left border-l border-white/10">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
-              <div className="flex items-center space-x-2.5">
-                <img
-                  src={globalSettings?.customLogoUrl || appLogo}
-                  alt="Zion Digital"
-                  className="h-7 w-7 rounded-full object-cover border border-[#F5B82E]/60"
-                />
-                <span className="font-display font-bold text-white text-sm">Zion Digital</span>
-              </div>
-              <button
-                onClick={() => setIsSidebarOpen(false)}
-                className="rounded-full h-8 w-8 border border-white/20 flex items-center justify-center text-blue-100 hover:text-white cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <nav className="flex-grow space-y-1 overflow-y-auto pr-1 custom-scrollbar">
-              {[
-                { id: "store", label: "Digital Book Store" },
-                { id: "school", label: "Zion Digital School" },
-                { id: "bible-school", label: "11-Track Bible School" },
-                { id: "virtual-classroom", label: "Virtual Classroom (Live)" },
-                { id: "ai-tutor", label: "Zion AI Tutor Studio" },
-                { id: "evangelism-forum", label: "Evangelism & Ministry" },
-                { id: "community", label: "Zion Connect & Messages" },
-                { id: "professional", label: "Zion Professional" },
-                { id: "announcements", label: "Social & Notices" },
-                { id: "companion", label: "AI Study Chat" },
-                { id: "devotional", label: "Holy Bible (NIV)" },
-                { id: "offline-dictionary", label: "Bible Dictionary" },
-                { id: "sermons-motivation", label: "Sermons & Media" },
-                { id: "threed-loft", label: "3D Bookstore Loft" },
-                { id: "studio", label: "Doc Studio" },
-                { id: "dashboard", label: "My Library" },
-                { id: "campuses-map", label: "Campuses & Map" },
-                { id: "contact", label: "Contact & Campus Tour" },
-                { id: "website-center", label: "Website & App Hub" },
-                { id: "playstore-hub", label: "Android & Windows Apps" },
-              ].map((item) => {
-                const isActive = currentView === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => handleItemClick(item.id)}
-                    className={`w-full text-left px-3 py-2 rounded-xl text-sm font-medium transition cursor-pointer ${
-                      isActive
-                        ? "bg-[#155EEF] text-white font-bold"
-                        : "text-blue-100/90 hover:bg-white/10"
-                    }`}
+      {/* 3. UNIFIED RIGHT SLIDE-OVER NAVIGATION DRAWER */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <div id="mobile_sidebar_backdrop" className="fixed inset-0 z-50 flex justify-end">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-[#0B254D]/35 backdrop-blur-[1px] transition-opacity cursor-pointer"
+              onClick={() => setIsSidebarOpen(false)}
+            />
+            <motion.aside
+              id="mobile_sidebar_content"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 26, stiffness: 320 }}
+              style={{ position: "fixed", right: 0, top: 0, width: "72vw", maxWidth: "300px" }}
+              className="relative flex flex-col bg-[#0B254D] dark:bg-[#07142B] text-white p-3 sm:p-4 safe-area-top safe-area-bottom shadow-2xl h-full text-left border-l border-white/10 z-10 overflow-hidden"
+            >
+              {/* Compact Brand Header */}
+              <div className="border-b border-white/10 pb-2 mb-2 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div
+                    onClick={() => handleItemClick("store")}
+                    className="flex items-center space-x-2 cursor-pointer min-w-0"
                   >
-                    {item.label}
+                    <img
+                      src={globalSettings?.customLogoUrl || appLogo}
+                      alt="Zion Digital"
+                      className="h-7 w-7 rounded-full object-cover border border-[#F5B82E]/70 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-baseline space-x-1">
+                        <span className="font-display font-bold text-white text-xs sm:text-sm truncate">Zion</span>
+                        <span className="font-mono text-[8.5px] tracking-[0.18em] uppercase text-[#F5B82E] font-semibold">DIGITAL</span>
+                      </div>
+                      <div className="flex items-center space-x-1 text-[9px] font-mono text-blue-200/80">
+                        <span className={isOnline ? "text-emerald-300 font-semibold" : "text-amber-300 font-semibold"}>
+                          {isOnline ? "Live" : "Offline"}
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span className="truncate">Menu</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSidebarOpen(false)}
+                    className="rounded-full h-11 w-11 border border-white/20 flex items-center justify-center text-blue-100 hover:text-white hover:bg-white/10 cursor-pointer shrink-0"
+                    title="Close navigation menu"
+                  >
+                    <X className="h-4 w-4" />
                   </button>
-                );
-              })}
+                </div>
+              </div>
 
-              {isManager && (
-                <button
-                  onClick={() => handleItemClick("manager-portal")}
-                  className="w-full text-left px-3 py-2 rounded-xl text-sm font-bold text-[#F5B82E] hover:bg-white/10 transition cursor-pointer mt-2"
-                >
-                  Manager Portal
-                </button>
-              )}
+              {/* Compact 2-Column Categorized Navigation */}
+              <nav className="flex-grow space-y-1.5 overflow-y-auto pr-0.5 custom-scrollbar">
+                {groupedNavigation.map((sec) => (
+                  <div key={sec.category} className="pb-1.5 border-b border-white/10 last:border-0 last:pb-0">
+                    <div className="px-1 pb-0.5 text-[8.5px] uppercase tracking-wider text-blue-200/75 font-bold font-mono truncate">
+                      {sec.category}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1">
+                      {sec.items.map((item) => {
+                        const isActive = currentView === item.id;
+                        return (
+                          <button
+                            key={`${item.id}-${item.label}`}
+                            type="button"
+                            onClick={() => handleItemClick(item.id)}
+                            className={`w-full flex items-center space-x-1.5 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                              isActive
+                                ? "bg-[#155EEF] text-white shadow-xs font-bold"
+                                : "text-blue-100/90 hover:text-white hover:bg-white/10"
+                            }`}
+                          >
+                            {item.icon && (
+                              <span className={`flex shrink-0 items-center justify-center ${isActive ? "[&_svg]:text-white" : ""}`}>
+                                {item.icon}
+                              </span>
+                            )}
+                            <span className="text-left leading-tight line-clamp-2">{item.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
 
-              {isAdmin && (
-                <button
-                  onClick={() => handleItemClick("admin")}
-                  className="w-full text-left px-3 py-2 rounded-xl text-sm font-bold text-blue-100 hover:bg-white/10 transition cursor-pointer"
-                >
-                  Admin Panel
-                </button>
-              )}
-            </nav>
+                {isManager && (
+                  <div className="pt-2 border-t border-white/10 space-y-1.5">
+                    {isStrictManagerOnly && (
+                      <div className="px-2 py-1 rounded bg-white/5 text-[9.5px] font-mono text-blue-200">
+                        Assigned: {userAssignedSections.length > 0 ? userAssignedSections.join(", ") : "None"}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleItemClick("manager-portal")}
+                        className={`w-full flex items-center space-x-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                          currentView === "manager-portal"
+                            ? "bg-[#155EEF] text-white shadow-xs"
+                            : "text-[#F5B82E] hover:bg-white/10"
+                        }`}
+                      >
+                        <Crown className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">Manager Portal</span>
+                      </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleItemClick("admin")}
+                          className={`w-full flex items-center space-x-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                            currentView === "admin"
+                              ? "bg-[#F5B82E] text-[#0B254D] shadow-xs"
+                              : "text-blue-100 hover:bg-white/10"
+                          }`}
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#F5B82E]" />
+                          <span className="truncate">Super Admin</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </nav>
 
-            {/* Drawer Display Controls */}
-            <div className="border-t border-white/10 pt-3 space-y-2.5 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={toggleDarkMode}
-                  className="bg-white/10 border border-white/15 text-white text-[11px] font-semibold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
-                >
-                  {isDarkMode ? <Sun className="h-3.5 w-3.5 text-[#F5B82E] shrink-0" /> : <Moon className="h-3.5 w-3.5 text-blue-200 shrink-0" />}
-                  <span>{isDarkMode ? "Light" : "Dark"}</span>
-                </button>
-
+              {/* Single Umbrella Settings Trigger */}
+              <div className="border-t border-white/10 pt-2 mt-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => {
+                    setActiveSettingsTab("general");
                     setIsSettingsModalOpen(true);
                     setIsSidebarOpen(false);
                   }}
-                  className="bg-white/10 border border-white/15 text-white text-[11px] font-semibold rounded-lg py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
+                  className="w-full bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-bold rounded-xl py-2 px-3 flex items-center justify-between transition cursor-pointer"
                 >
-                  <Settings className="h-3.5 w-3.5 shrink-0" />
-                  <span>Storage</span>
+                  <span className="flex items-center space-x-2">
+                    <Settings className="h-4 w-4 text-[#F5B82E] shrink-0" />
+                    <span>Settings</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-blue-200/80 truncate max-w-[110px]">
+                    Theme · Font · Account
+                  </span>
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={handleInstallApp}
-                className="w-full bg-[#155EEF] hover:bg-[#0F49C7] text-white text-xs font-bold rounded-xl py-2 flex items-center justify-center space-x-1.5 transition cursor-pointer"
-              >
-                <Smartphone className="h-3.5 w-3.5 shrink-0" />
-                <span>Install App (Android / PC)</span>
-              </button>
-
-              {currentUser && currentUser.role !== "guest" ? (
-                <div className="space-y-2 pt-2 border-t border-white/10">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="h-8 w-8 rounded-full bg-[#155EEF] flex items-center justify-center text-white font-bold text-xs">
-                      {currentUser.name[0].toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{currentUser.name}</p>
-                      <p className="text-[10px] text-blue-200/80 truncate">{currentUser.email}</p>
-                    </div>
-                  </div>
-                  {onOpenUpgrade && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onOpenUpgrade();
-                        setIsSidebarOpen(false);
-                      }}
-                      className="flex w-full items-center justify-center space-x-2 rounded-xl bg-[#155EEF] hover:bg-[#0F49C7] py-2 text-xs font-bold text-white cursor-pointer"
-                    >
-                      <CreditCard className="h-3.5 w-3.5" />
-                      <span>M-Pesa / Card Top-Up (KES)</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onLogOut();
-                      setIsSidebarOpen(false);
-                    }}
-                    className="flex w-full justify-center rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] py-2 text-xs font-bold text-[#0B254D] cursor-pointer"
-                  >
-                    Logout
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    onLogIn();
-                    setIsSidebarOpen(false);
-                  }}
-                  className="flex w-full justify-center rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] py-2.5 text-xs font-bold text-[#0B254D] cursor-pointer"
-                >
-                  Sign In to Zion Digital
-                </button>
-              )}
-            </div>
-          </aside>
-        </div>
-      )}
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Real-time Global Search Overlay Modal (Fulfills Ctrl+K shortcut & search requirements) */}
       {isSearchOpen && (
@@ -1053,8 +860,10 @@ export default function Navigation({
             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
               {!searchQuery.trim() ? (
                 <div className="text-center py-10 space-y-2">
-                  <span className="text-3xl">🔑</span>
-                  <h4 className="font-display font-black text-slate-850 dark:text-slate-200 text-sm">Wafula Knowledge Search</h4>
+                  <div className="mx-auto w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-[#155EEF]">
+                    <KeyRound className="h-5 w-5" />
+                  </div>
+                  <h4 className="font-display font-black text-slate-850 dark:text-slate-200 text-sm">Zion Knowledge Search</h4>
                   <p className="text-stone-400 dark:text-slate-500 max-w-sm mx-auto leading-relaxed text-[11px]">
                     Type keywords above to scan and filter through books in the Digital Store, outlines saved in your Doc Studio, and community discussions.
                   </p>
@@ -1063,9 +872,11 @@ export default function Navigation({
                    searchResults.savedDocuments.length === 0 &&
                    searchResults.communityMessages.length === 0) ? (
                 <div className="text-center py-12 space-y-1.5">
-                  <span className="text-3xl">🔭</span>
+                  <div className="mx-auto w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                    <Search className="h-5 w-5" />
+                  </div>
                   <h4 className="font-bold text-slate-800 dark:text-slate-200">No matches found</h4>
-                  <p className="text-[11px] text-stone-400 dark:text-slate-500">We couldn't locate documents or discussions matching "{searchQuery}"</p>
+                  <p className="text-[11px] text-stone-400 dark:text-slate-500">We could not locate documents or discussions matching "{searchQuery}"</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1420,41 +1231,218 @@ export default function Navigation({
             </div>
 
             {/* Tabs List */}
-            <div className="flex border-b border-slate-850 bg-slate-950/60 px-4">
+            <div className="flex overflow-x-auto border-b border-slate-850 bg-slate-950/60 px-3 custom-scrollbar">
+              <button
+                type="button"
+                onClick={() => setActiveSettingsTab("general")}
+                className={`px-3 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeSettingsTab === "general"
+                    ? "border-amber-500 text-amber-500"
+                    : "border-transparent text-slate-400 hover:text-white"
+                }`}
+              >
+                <Sun className="h-3.5 w-3.5 shrink-0" />
+                <span>Display &amp; Font</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSettingsTab("account")}
+                className={`px-3 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+                  activeSettingsTab === "account"
+                    ? "border-amber-500 text-amber-500"
+                    : "border-transparent text-slate-400 hover:text-white"
+                }`}
+              >
+                <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                <span>Account &amp; Actions</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveSettingsTab("offline")}
-                className={`px-4 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-2 ${
+                className={`px-3 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeSettingsTab === "offline" 
                     ? "border-amber-500 text-amber-500" 
                     : "border-transparent text-slate-400 hover:text-white"
                 }`}
               >
                 <HardDrive className="h-3.5 w-3.5 shrink-0" />
-                <span>Offline Cache & Media</span>
+                <span>Storage</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveSettingsTab("branding")}
-                className={`px-4 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-2 ${
+                className={`px-3 py-3 text-xs font-bold border-b-2 transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
                   activeSettingsTab === "branding" 
                     ? "border-amber-500 text-amber-500" 
                     : "border-transparent text-slate-400 hover:text-white"
                 }`}
               >
                 <Database className="h-3.5 w-3.5 shrink-0" />
-                <span>Branding Presets</span>
+                <span>Branding</span>
               </button>
             </div>
+
+            {/* General Display, Theme, Font & Sync Tab */}
+            {activeSettingsTab === "general" && (
+              <div className="p-5 sm:p-6 space-y-4 max-h-[58vh] overflow-y-auto custom-scrollbar text-slate-200">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold block">
+                    Reading Font Family
+                  </label>
+                  <select
+                    value={selectedFont}
+                    onChange={(e) => setSelectedFont(e.target.value)}
+                    aria-label="Reading Font"
+                    className="w-full bg-slate-950 text-white border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-semibold focus:outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
+                    <option value="Playfair Display">Playfair Display (Editorial)</option>
+                    <option value="JetBrains Mono">JetBrains Mono</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleDarkMode}
+                    className="bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-white text-xs font-bold rounded-xl py-3 px-4 flex items-center justify-between transition cursor-pointer"
+                  >
+                    <span className="flex items-center space-x-2">
+                      {isDarkMode ? <Sun className="h-4 w-4 text-[#F5B82E]" /> : <Moon className="h-4 w-4 text-blue-300" />}
+                      <span>Theme Mode</span>
+                    </span>
+                    <span className="text-[11px] font-mono text-amber-400 uppercase">
+                      {isDarkMode ? "Dark · Switch Light" : "Light · Switch Dark"}
+                    </span>
+                  </button>
+
+                  {onToggleSleekMode && (
+                    <button
+                      type="button"
+                      onClick={onToggleSleekMode}
+                      className={`border text-xs font-bold rounded-xl py-3 px-4 flex items-center justify-between transition cursor-pointer ${
+                        sleekMode
+                          ? "bg-[#F5B82E] text-[#0B254D] border-[#F5B82E]"
+                          : "bg-slate-950/80 hover:bg-slate-800 text-white border-slate-800"
+                      }`}
+                    >
+                      <span className="flex items-center space-x-2">
+                        <Sparkles className="h-4 w-4 shrink-0" />
+                        <span>Sleek Compact Layout</span>
+                      </span>
+                      <span className="text-[11px] font-mono uppercase">{sleekMode ? "On" : "Off"}</span>
+                    </button>
+                  )}
+                </div>
+
+                {onToggleOfflineMode && (
+                  <button
+                    type="button"
+                    onClick={onToggleOfflineMode}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                      offlineMode
+                        ? "bg-[#F5B82E]/20 text-[#F5B82E] border-[#F5B82E]/50"
+                        : "bg-slate-950/80 text-blue-100 border-slate-800 hover:border-[#155EEF]"
+                    }`}
+                  >
+                    <span className="flex items-center space-x-2">
+                      <Wifi className="h-4 w-4 shrink-0" />
+                      <span>{offlineMode ? "Offline Study Mode Active" : "Cloud Sync Mode (Firebase)"}</span>
+                    </span>
+                    <span className="text-[10px] font-mono uppercase">{offlineMode ? "On" : "Auto"}</span>
+                  </button>
+                )}
+
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                  <span>Scripture · Knowledge · Fellowship</span>
+                  <span className="text-[#F5B82E] font-bold">READ · LEAD · TRANSFORM</span>
+                </div>
+              </div>
+            )}
+
+            {/* Account, Billing, Install & Logout Tab */}
+            {activeSettingsTab === "account" && (
+              <div className="p-5 sm:p-6 space-y-3.5 max-h-[58vh] overflow-y-auto custom-scrollbar text-slate-200">
+                {currentUser && currentUser.role !== "guest" ? (
+                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <div className="h-10 w-10 rounded-full bg-[#155EEF] flex items-center justify-center text-white font-bold text-sm shrink-0">
+                        {currentUser.name?.[0]?.toUpperCase() || "U"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{currentUser.name}</p>
+                        <p className="text-[11px] text-slate-400 truncate">{currentUser.email}</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono uppercase px-2 py-1 rounded bg-blue-950 text-blue-300 border border-blue-800 shrink-0">
+                      {currentUser.role}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300">
+                    Sign in with Google or email to sync your reading library, enrollments, and notes to Cloud Firestore.
+                  </div>
+                )}
+
+                <div className="space-y-2.5">
+                  {onOpenUpgrade && currentUser && currentUser.role !== "guest" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSettingsModalOpen(false);
+                        onOpenUpgrade();
+                      }}
+                      className="flex w-full items-center justify-center space-x-2 rounded-xl bg-[#155EEF] hover:bg-[#0F49C7] py-3 text-xs font-bold text-white cursor-pointer"
+                    >
+                      <CreditCard className="h-4 w-4" />
+                      <span>M-Pesa / Card Top-Up (KES)</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleInstallApp}
+                    className="w-full bg-[#155EEF] hover:bg-[#0F49C7] text-white text-xs font-bold rounded-xl py-3 flex items-center justify-center space-x-2 transition cursor-pointer"
+                  >
+                    <Smartphone className="h-4 w-4 shrink-0" />
+                    <span>Install App (Android / PC)</span>
+                  </button>
+
+                  {currentUser && currentUser.role !== "guest" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSettingsModalOpen(false);
+                        onLogOut();
+                      }}
+                      className="flex w-full justify-center rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] py-3 text-xs font-bold text-[#0B254D] cursor-pointer"
+                    >
+                      Logout
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSettingsModalOpen(false);
+                        onLogIn();
+                      }}
+                      className="flex w-full justify-center rounded-xl bg-[#F5B82E] hover:bg-[#E5A91E] py-3 text-xs font-bold text-[#0B254D] cursor-pointer"
+                    >
+                      Sign In to Zion Digital
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Offline Tab Content */}
             {activeSettingsTab === "offline" && (
               <div className="p-6 space-y-4 max-h-[55vh] overflow-y-auto custom-scrollbar text-slate-200">
                 <div className="bg-amber-950/20 border border-amber-900/30 p-3.5 rounded-xl text-amber-300 flex items-start space-x-3 text-[11px] leading-relaxed">
-                  <span className="text-sm mt-0.5">💾</span>
+                  <HardDrive className="h-4 w-4 mt-0.5 shrink-0" />
                   <div>
                     <span className="font-bold block">Offline-First Synchronization active.</span>
-                    Use this system panel to audit client-side IndexedDB databases. Pruning large cached document files free up storage on your workstation, phone, or laptop.
+                    Use this system panel to audit client-side IndexedDB databases. Pruning large cached document files frees up storage on your workstation, phone, or laptop.
                   </div>
                 </div>
 
@@ -1535,7 +1523,7 @@ export default function Navigation({
                       </div>
                     ) : offlineCaches.filter(c => c.title.toLowerCase().includes(settingsSearchQuery.toLowerCase())).length === 0 ? (
                       <div className="text-center py-8 bg-slate-950/30 border border-slate-850/60 rounded-2xl space-y-1.5">
-                        <span className="text-2xl block">📂</span>
+                        <FolderOpen className="h-6 w-6 mx-auto text-slate-400" />
                         <p className="text-xs font-bold text-slate-400">No cached documents found</p>
                         <p className="text-[10px] text-slate-500 leading-normal max-w-xs mx-auto">
                           Documents and media files will automatically cache locally in IndexedDB once opened in the eBook Reader.

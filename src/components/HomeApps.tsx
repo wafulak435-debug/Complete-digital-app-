@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Smartphone, Search, X, Minimize2, Maximize2, RefreshCw, 
-  Map, Calculator, BookOpen, Compass, Shield, Grid, HelpCircle,
+  Calculator, BookOpen, Compass, Shield, Grid, HelpCircle,
   FileText, Calendar, Plus, Trash2, CheckSquare, Play, Sparkles,
   Pin, Folder, Activity, Volume2, VolumeX, Battery, BatteryCharging, GripVertical, History
 } from "lucide-react";
@@ -17,7 +17,7 @@ import academyImg from "../assets/images/slide_computer_academy_1795421934691.jp
 interface PhoneApp {
   id: string;
   name: string;
-  category: "Utilities" | "Scholary" | "Entertainment" | "Maps";
+  category: "Utilities" | "Scholary" | "Entertainment";
   icon: React.ReactNode;
   color: string;
   description: string;
@@ -56,14 +56,6 @@ const apps: PhoneApp[] = [
     icon: <Compass className="h-6 w-6" />,
     color: "bg-indigo-100 hover:bg-indigo-200 border-indigo-300 text-indigo-705 text-indigo-700",
     description: "Explore the global web index. Browse Google Search, view visual matches, and open secure educational portals."
-  },
-  {
-    id: "maps",
-    name: "Bungoma Map View",
-    category: "Maps",
-    icon: <Map className="h-6 w-6" />,
-    color: "bg-teal-100 hover:bg-teal-200 border-teal-300 text-teal-700",
-    description: "Visual navigation of libraries and educational centers around Western Kenya."
   },
   {
     id: "store",
@@ -1846,23 +1838,6 @@ export default function HomeApps({ onNavigate }: { onNavigate?: (view: string) =
                           referrerPolicy="no-referrer"
                         />
                       )}
-                    </div>
-                  </div>
-                )}
-
-                {/* APP 5: BUNGOMA MAP VIEW */}
-                {activeAppId === "maps" && (
-                  <div className="flex-grow flex flex-col space-y-2">
-                    <span className="block text-[10.5px] font-semibold text-[#38bdf8]">🌐 ACTIVE BUNGOMA COUNTY SCHOLAR CENTER EMBED</span>
-                    <div className="border border-slate-800 rounded-xl overflow-hidden flex-grow min-h-[300px]">
-                      <iframe
-                        src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d127633.91494025178!2d34.48512198086054!3d0.5638217316718105!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x1781fc47c5dfcd2d%3A0xc3cf052b61f9eb8b!2sBungoma!5e0!3m2!1sen!2ske!4v1716942000000!5m2!1sen!2ske"
-                        className="w-full h-full border-0 min-h-[290px]"
-                        allowFullScreen={false}
-                        loading="lazy"
-                        referrerPolicy="no-referrer-when-downgrade"
-                        title="Bungoma Library Map Locator"
-                      />
                     </div>
                   </div>
                 )}

@@ -3,8 +3,9 @@ import { motion } from "motion/react";
 import { User, Book, Badge, SavedDocument, MemberUploadRequest, CommunityMessage, UserHistoryRecord, StorageFileItem } from "../types";
 import { BADGES } from "../data";
 import { Trophy, Compass, Star, Bookmark, Calendar, CheckSquare, Zap, Clock, BookOpen, Trash2, ShieldCheck, Download, Eye, Sparkles, Video, CreditCard, History, UploadCloud, FileText, Image as ImageIcon, Loader2, RefreshCw, CheckCircle2, AlertCircle, HardDrive } from "lucide-react";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { handleFirestoreError, OperationType } from "../lib/firestoreUtils";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import SecureBookReader from "./SecureBookReader";
 import VirtualTourCarousel from "./VirtualTourCarousel";
@@ -144,23 +145,22 @@ export default function Dashboard({
   };
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.role === "guest" || !auth.currentUser) return;
     
     const progressQuery = query(
       collection(db, "reading_progress"),
-      where("userId", "==", currentUser.id || "guest")
+      where("userId", "==", auth.currentUser.uid)
     );
     
     const unsubscribe = onSnapshot(progressQuery, (snapshot) => {
       const data: Record<string, { currentPage: number; percentage: number }> = {};
-      snapshot.forEach((doc) => {
-        const item = doc.data();
+      snapshot.forEach((docSnap) => {
+        const item = docSnap.data();
         if (item.bookId) {
           data[item.bookId] = {
             currentPage: item.currentPage || 1,
             percentage: item.percentage || 0
           };
-          // Heat up local storage bookmark for the reader fallback
           localStorage.setItem(`wafula_bookmark_${item.bookId}`, (item.currentPage || 1).toString());
         }
       });
@@ -176,13 +176,13 @@ export default function Dashboard({
         });
       }
     }, (err) => {
-      console.error("Error subscribing to Firestore reading progress:", err);
+      handleFirestoreError(err, OperationType.LIST, "reading_progress");
     });
     
     return () => unsubscribe();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, currentUser?.role]);
 
-  const storageOwnerKey = currentUser?.id || currentUser?.email || "";
+  const storageOwnerKey = auth.currentUser?.uid || currentUser?.id || currentUser?.email || "";
 
   // Load Supabase AI History and Private Storage Files
   useEffect(() => {
@@ -208,17 +208,13 @@ export default function Dashboard({
       const folder = file.type.startsWith("image/") ? "images" : "documents";
       const result = await uploadUserFile(storageOwnerKey, file, folder);
       const updated = await listUserFiles(storageOwnerKey);
-      setUserFiles(updated);
-      const backendLabel =
-        result.storageBackend === "supabase"
-          ? "Supabase private bucket and offline browser cache"
-          : "durable offline browser database";
+      const backendLabel = "Cloud Firestore storage and verified offline cache";
       setStorageStatusMsg(`Saved "${file.name}" securely in ${backendLabel}.`);
       recordSyncEvent({
         title: "Storage file saved",
-        detail: `Stored "${file.name}" (${result.storageBackend === "supabase" ? "Supabase + IndexedDB" : "IndexedDB vault"})`,
+        detail: `Stored "${file.name}" in verified Cloud Firestore and IndexedDB vault`,
         category: "uploads",
-        status: result.storageBackend === "supabase" ? "synced" : "queued",
+        status: "synced",
         itemCount: 1,
       });
     } catch (err: any) {
@@ -500,10 +496,10 @@ export default function Dashboard({
   }
 
   return (
-    <div id="user_dashboard" className="ml-0 mr-auto max-w-5xl px-3 sm:px-5 lg:pl-6 space-y-7">
+    <div id="user_dashboard" className="mx-auto max-w-6xl px-2.5 sm:px-5 space-y-4 sm:space-y-6">
       
       {/* Kenya KES Subscription & AI Credits Status Card */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950 border border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-white shadow-sm">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950 border border-slate-800 p-3.5 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-white shadow-sm">
         <div className="text-left space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
@@ -517,11 +513,11 @@ export default function Dashboard({
               Status: {currentUser.subscription_status || "free"}
             </span>
           </div>
-          <h3 className="font-display font-black text-base">
-            {currentUser.name} • {currentUser.credits ?? 20} Study & AI Credits
+          <h3 className="font-display font-black text-sm sm:text-base">
+            {currentUser.name} · {currentUser.credits ?? 20} Study Credits
           </h3>
           <p className="text-[11px] text-slate-300">
-            Upgrade or top up anytime in Kenyan Shillings (KES) via M-Pesa STK Push or Visa/Mastercard.
+            Top up in Kenyan Shillings (KES) via M-Pesa STK Push or card.
           </p>
         </div>
 
@@ -529,7 +525,7 @@ export default function Dashboard({
           <button
             type="button"
             onClick={onOpenUpgrade}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs px-4 py-2.5 shadow-md transition cursor-pointer shrink-0"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs px-3.5 py-2 shadow-md transition cursor-pointer shrink-0"
           >
             <CreditCard className="h-4 w-4" />
             <span>Upgrade / Top Up (KES)</span>
@@ -538,34 +534,32 @@ export default function Dashboard({
       </div>
 
       {/* Automated Inactivity Session Tracker Status Panel */}
-      <div className="bg-slate-50 dark:bg-stone-900 border border-slate-200 dark:border-stone-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4 select-none animate-in fade-in slide-in-from-top-3 duration-250">
-        <div className="flex items-center space-x-3 text-left">
-          <div className="h-9 w-9 rounded-full bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
-            <Clock className="h-5 w-5 animate-spin" style={{ animationDuration: '8s' }} />
+      <div className="bg-slate-50 dark:bg-stone-900 border border-slate-200 dark:border-stone-800 p-3 sm:p-4 rounded-xl flex flex-wrap items-center justify-between gap-3 select-none">
+        <div className="flex items-center space-x-2.5 text-left">
+          <div className="h-8 w-8 rounded-full bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50 shrink-0">
+            <Clock className="h-4 w-4" />
           </div>
           <div>
-            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">Automated Reading Session Timer</h4>
+            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-100">Reading Session Timer</h4>
             <div className="flex flex-wrap items-center gap-2 mt-0.5">
-              <span className="text-[10.5px] font-mono text-slate-500 dark:text-slate-400 font-bold">
-                Inactivity Checked: {Math.floor(inactiveSeconds / 60)}m {inactiveSeconds % 60}s
+              <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 font-bold">
+                Idle: {Math.floor(inactiveSeconds / 60)}m {inactiveSeconds % 60}s
               </span>
-              <span className="text-[10px] text-stone-400">•</span>
-              <span className="text-[10px] text-stone-500 dark:text-stone-400 font-medium">Automatic pausing & log prompt at 15m (900s) inactivity</span>
+              <span className="text-[10px] text-stone-400">·</span>
+              <span className="text-[10px] text-stone-500 dark:text-stone-400 font-medium">Auto-pause prompt at 15m</span>
             </div>
           </div>
         </div>
         <div className="flex items-center space-x-2">
-          {/* Accelerator trigger */}
           <button
             type="button"
             onClick={() => {
               setInactiveSeconds(900);
               setShowInactivityPrompt(true);
             }}
-            className="text-[10px] uppercase font-mono font-bold bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 rounded px-3 py-1.5 transition cursor-pointer"
-            title="Accelerate inactivity value to 15m instantly to test prompt dialog."
+            className="text-[10px] uppercase font-mono font-bold bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 rounded px-2.5 py-1 transition cursor-pointer"
           >
-            🧪 Simulate Inactivity Trigger
+            Test Timer Prompt
           </button>
         </div>
       </div>
@@ -657,10 +651,13 @@ export default function Dashboard({
       )}
 
       {/* THREE PILLARS SYNERGY BENTO DASHBOARD */}
-      <div className="grid gap-6 md:grid-cols-3 select-none">
+      <div 
+        id="dashboard-bento-cards-grid" 
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 select-none"
+      >
         
         {/* CARD 1: SERMONS & WORSHIP MEDIA */}
-        <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-5 text-left flex flex-col justify-between shadow-xs">
+        <div className="rounded-2xl border border-stone-200 dark:border-stone-850 bg-white dark:bg-stone-900/40 p-4 sm:p-5 text-left flex flex-col justify-between shadow-xs">
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 uppercase font-mono font-black text-[9px] px-2.5 py-0.5 rounded tracking-widest inline-flex items-center space-x-1">
@@ -875,7 +872,11 @@ export default function Dashboard({
       </div>
 
       {/* 1. Header Streaks & Quick Stats */}
-      <div className="grid gap-4 md:grid-cols-4 select-none">
+      <div 
+        id="dashboard-stats-cards-grid" 
+        className="grid gap-4 select-none"
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}
+      >
         
         {/* Streak indicator */}
         <motion.div 
@@ -987,12 +988,11 @@ export default function Dashboard({
               </div>
             </div>
 
-            {/* Dynamic context motivator statement block */}
-            <div className="mt-3 text-[10px] text-slate-500 dark:text-stone-400 leading-normal font-sans italic">
-              {loggedMinutes === 0 && "🌱 Starting your daily study! Log some minutes below."}
-              {loggedMinutes > 0 && loggedMinutes < dailyGoalMinutes * 0.5 && "📖 You've made standard starts! Keep the momentum heading high."}
-              {loggedMinutes >= dailyGoalMinutes * 0.5 && loggedMinutes < dailyGoalMinutes && "🚀 Over the halfway milestone! Almost there."}
-              {loggedMinutes >= dailyGoalMinutes && "🏆 Target achieved! Exceptional study discipline today. Streak protected!"}
+            <div className="mt-2.5 text-[10px] text-slate-500 dark:text-stone-400 leading-normal font-sans italic">
+              {loggedMinutes === 0 && "Starting your daily study. Log minutes below."}
+              {loggedMinutes > 0 && loggedMinutes < dailyGoalMinutes * 0.5 && "Good start. Keep building your study momentum."}
+              {loggedMinutes >= dailyGoalMinutes * 0.5 && loggedMinutes < dailyGoalMinutes && "Over halfway to your target today."}
+              {loggedMinutes >= dailyGoalMinutes && "Daily target achieved. Study streak protected."}
             </div>
           </div>
 
@@ -1001,21 +1001,21 @@ export default function Dashboard({
               <button
                 type="button"
                 onClick={() => handleLogMinutes(10)}
-                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
+                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
               >
                 +10 min
               </button>
               <button
                 type="button"
                 onClick={() => handleLogMinutes(25)}
-                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2.5 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
+                className="bg-stone-50 hover:bg-stone-100 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-800 dark:text-stone-200 text-[10px] font-black px-2 py-1 rounded-lg border border-stone-200 dark:border-stone-700 transition cursor-pointer"
               >
                 +25 min
               </button>
               <button
                 type="button"
                 onClick={() => handleLogMinutes(50)}
-                className="bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 text-[10px] font-black px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800 transition cursor-pointer"
+                className="bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 text-[10px] font-black px-2 py-1 rounded-lg border border-blue-200 dark:border-blue-800 transition cursor-pointer"
               >
                 +50 min
               </button>
@@ -1037,29 +1037,29 @@ export default function Dashboard({
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.3 }}
-        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-6 text-left shadow-sm space-y-4"
+        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-3.5 sm:p-5 text-left shadow-sm space-y-3"
       >
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-3 gap-2">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-2.5 gap-2">
           <div>
             <h3 className="font-display text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
               <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-              <span>Weekly Reading Performance Monitor</span>
+              <span>Weekly Reading Performance</span>
             </h3>
-            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Analytic visualizer: minutes achieved vs daily goal</p>
+            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Minutes achieved vs daily goal</p>
           </div>
           <div className="flex items-center gap-3 text-[10px] font-mono font-bold">
             <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
               <span className="h-2 w-2 rounded-full bg-indigo-650" />
-              Minutes Achieved
+              Minutes
             </span>
             <span className="flex items-center gap-1 text-red-500">
               <span className="h-2 w-2 rounded-full bg-red-550" />
-              Daily target Goal
+              Goal
             </span>
           </div>
         </div>
 
-        <div className="h-64 sm:h-72 w-full pr-2">
+        <div className="h-48 sm:h-64 w-full pr-2">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={mockWeekData}
@@ -1121,7 +1121,7 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="h-68 sm:h-76 w-full pr-2">
+        <div className="h-48 sm:h-64 w-full pr-2">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={syllabusProgress}
@@ -1163,30 +1163,26 @@ export default function Dashboard({
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.35 }}
-        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-6 text-left shadow-sm space-y-4"
+        className="rounded-2xl border border-stone-205 dark:border-stone-800 bg-white dark:bg-stone-900/60 p-3.5 sm:p-5 text-left shadow-sm space-y-3"
         id="monthly_reading_performance_section"
       >
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-3 gap-2">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-stone-100 dark:border-stone-850 pb-2.5 gap-2">
           <div>
             <h3 className="font-display text-xs font-black text-stone-900 dark:text-stone-100 flex items-center gap-1.5">
               <Compass className="h-4 w-4 text-emerald-600 dark:text-emerald-450" />
-              <span>Zion Digital • Monthly Reading Monitor</span>
+              <span>Zion Digital · Monthly Reading Monitor</span>
             </h3>
-            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Line analysis: daily logged reading minutes over the past 30 days</p>
+            <p className="text-[10px] text-stone-400 font-mono mt-0.5">Daily logged reading minutes over past 30 days</p>
           </div>
-          <div className="flex items-center gap-4 text-[10.5px] font-mono font-bold">
+          <div className="flex items-center gap-3 text-[10px] font-mono font-bold">
             <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              Logged Reading Minutes
-            </span>
-            <span className="text-[10px] text-stone-300">|</span>
-            <span className="text-stone-500 dark:text-stone-400 font-bold bg-neutral-100 dark:bg-stone-800 px-2 py-0.5 rounded">
-              30-Day Period
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              Logged Minutes
             </span>
           </div>
         </div>
 
-        <div className="h-64 sm:h-72 w-full pr-2">
+        <div className="h-48 sm:h-64 w-full pr-2">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={monthlyLogs}
@@ -1229,15 +1225,15 @@ export default function Dashboard({
         </div>
       </motion.div>
 
-      <div className="grid gap-6 lg:grid-cols-12 text-xs">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-12 text-xs">
         {/* Left Library Purchases Area */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="lg:col-span-8 space-y-4 sm:space-y-6">
           
           {/* Purchased Books */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-4">
+          <div className="rounded-2xl border border-stone-200 bg-white p-4 sm:p-6 shadow-xs space-y-4">
             <div className="border-b border-stone-100 pb-3 flex justify-between items-center text-left">
               <div>
-                <h3 className="font-display text-lg font-bold text-stone-900">My Purchased Library</h3>
+                <h3 className="font-display text-base sm:text-lg font-bold text-stone-900">My Purchased Library</h3>
                 <p className="text-[10px] text-stone-400 font-mono">Download bought publications anytime</p>
               </div>
               <span className="rounded-full bg-stone-100 text-stone-850 font-bold px-2.5 py-0.5 text-[10px] uppercase font-mono">
@@ -1246,11 +1242,11 @@ export default function Dashboard({
             </div>
 
             {myPurchasedBooks.length === 0 ? (
-              <div className="py-12 text-center rounded-xl bg-neutral-50 border border-stone-100 flex flex-col items-center justify-center">
-                <span className="text-3xl">📚</span>
+              <div className="py-8 text-center rounded-xl bg-neutral-50 border border-stone-100 flex flex-col items-center justify-center">
+                <BookOpen className="h-7 w-7 text-stone-400" />
                 <p className="text-xs text-stone-500 mt-2 font-bold">No books purchased yet</p>
                 <p className="text-[10.5px] text-stone-400 mt-1 max-w-xs leading-relaxed">
-                  Browse Kelvin Opara Wafula's active store shelf to enroll and buy premium literature books!
+                  Browse the bookstore shelf to enroll and unlock publications.
                 </p>
               </div>
             ) : (
